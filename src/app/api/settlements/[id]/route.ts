@@ -8,9 +8,10 @@ import mongoose from "mongoose";
 // GET /api/settlements/[id] - Get single settlement
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -18,7 +19,7 @@ export async function GET(
 
     await dbConnect();
 
-    const settlement = await Settlement.findById(params.id)
+    const settlement = await Settlement.findById(id)
       .populate("fromUserId", "name email profilePicture")
       .populate("toUserId", "name email profilePicture")
       .populate("groupId", "name image");
@@ -53,9 +54,10 @@ export async function GET(
 // DELETE /api/settlements/[id] - Delete settlement
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -63,7 +65,7 @@ export async function DELETE(
 
     await dbConnect();
 
-    const settlement = await Settlement.findById(params.id);
+    const settlement = await Settlement.findById(id);
 
     if (!settlement) {
       return NextResponse.json(
@@ -82,7 +84,7 @@ export async function DELETE(
       );
     }
 
-    await Settlement.findByIdAndDelete(params.id);
+    await Settlement.findByIdAndDelete(id);
 
     return NextResponse.json(
       { message: "Settlement deleted successfully" },

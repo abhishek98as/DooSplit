@@ -8,9 +8,10 @@ import mongoose from "mongoose";
 // PUT /api/notifications/[id] - Mark single notification as read
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -21,7 +22,7 @@ export async function PUT(
     const userId = new mongoose.Types.ObjectId(session.user.id);
 
     const notification = await Notification.findOneAndUpdate(
-      { _id: params.id, userId },
+      { _id: id, userId },
       { isRead: true },
       { new: true }
     );
@@ -52,9 +53,10 @@ export async function PUT(
 // DELETE /api/notifications/[id] - Delete notification
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -65,7 +67,7 @@ export async function DELETE(
     const userId = new mongoose.Types.ObjectId(session.user.id);
 
     const result = await Notification.findOneAndDelete({
-      _id: params.id,
+      _id: id,
       userId,
     });
 

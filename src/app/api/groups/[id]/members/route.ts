@@ -10,9 +10,10 @@ import mongoose from "mongoose";
 // POST /api/groups/[id]/members - Add member to group
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -34,7 +35,7 @@ export async function POST(
 
     // Check if requester is admin
     const membership = await GroupMember.findOne({
-      groupId: params.id,
+      groupId: id,
       userId,
     });
 
@@ -53,7 +54,7 @@ export async function POST(
 
     // Check if already a member
     const existingMember = await GroupMember.findOne({
-      groupId: params.id,
+      groupId: id,
       userId: newMemberId,
     });
 
@@ -66,12 +67,12 @@ export async function POST(
 
     // Add member
     await GroupMember.create({
-      groupId: params.id,
+      groupId: id,
       userId: new mongoose.Types.ObjectId(newMemberId),
       role: "member",
     });
 
-    const members = await GroupMember.find({ groupId: params.id }).populate(
+    const members = await GroupMember.find({ groupId: id }).populate(
       "userId",
       "name email profilePicture"
     );
@@ -95,9 +96,10 @@ export async function POST(
 // DELETE /api/groups/[id]/members - Remove member from group
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -119,7 +121,7 @@ export async function DELETE(
 
     // Check if requester is admin or removing themselves
     const membership = await GroupMember.findOne({
-      groupId: params.id,
+      groupId: id,
       userId,
     });
 
@@ -140,7 +142,7 @@ export async function DELETE(
     // Check if user is the only admin
     if (isAdmin && isSelfRemoval) {
       const adminCount = await GroupMember.countDocuments({
-        groupId: params.id,
+        groupId: id,
         role: "admin",
       });
 
@@ -156,11 +158,11 @@ export async function DELETE(
     }
 
     await GroupMember.findOneAndDelete({
-      groupId: params.id,
+      groupId: id,
       userId: memberIdToRemove,
     });
 
-    const members = await GroupMember.find({ groupId: params.id }).populate(
+    const members = await GroupMember.find({ groupId: id }).populate(
       "userId",
       "name email profilePicture"
     );

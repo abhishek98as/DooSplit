@@ -7,9 +7,10 @@ import mongoose from "mongoose";
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -31,7 +32,7 @@ export async function PUT(
 
     // Find the friendship where current user is the receiver
     const friendship = await Friend.findOne({
-      _id: params.id,
+      _id: id,
       userId,
       status: "pending",
     });

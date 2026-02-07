@@ -16,9 +16,10 @@ import mongoose from "mongoose";
 // GET /api/expenses/[id] - Get single expense
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -27,7 +28,7 @@ export async function GET(
     await dbConnect();
 
     const expense = await Expense.findOne({
-      _id: params.id,
+      _id: id,
       isDeleted: false,
     })
       .populate("createdBy", "name email profilePicture")
@@ -73,9 +74,10 @@ export async function GET(
 // PUT /api/expenses/[id] - Update expense
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -99,7 +101,7 @@ export async function PUT(
     await dbConnect();
 
     const expense = await Expense.findOne({
-      _id: params.id,
+      _id: id,
       isDeleted: false,
     });
 
@@ -241,9 +243,10 @@ export async function PUT(
 // DELETE /api/expenses/[id] - Soft delete expense
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -252,7 +255,7 @@ export async function DELETE(
     await dbConnect();
 
     const expense = await Expense.findOne({
-      _id: params.id,
+      _id: id,
       isDeleted: false,
     });
 

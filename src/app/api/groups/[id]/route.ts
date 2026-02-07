@@ -10,9 +10,10 @@ import mongoose from "mongoose";
 // GET /api/groups/[id] - Get single group
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -21,7 +22,7 @@ export async function GET(
     await dbConnect();
 
     const group = await Group.findOne({
-      _id: params.id,
+      _id: id,
       isActive: true,
     }).populate("createdBy", "name email profilePicture");
 
@@ -69,9 +70,10 @@ export async function GET(
 // PUT /api/groups/[id] - Update group
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -86,7 +88,7 @@ export async function PUT(
 
     // Check if user is admin
     const membership = await GroupMember.findOne({
-      groupId: params.id,
+      groupId: id,
       userId,
     });
 
@@ -98,7 +100,7 @@ export async function PUT(
     }
 
     const group = await Group.findByIdAndUpdate(
-      params.id,
+      id,
       {
         ...(name && { name }),
         ...(description !== undefined && { description }),
@@ -142,9 +144,10 @@ export async function PUT(
 // DELETE /api/groups/[id] - Delete group (soft delete)
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -156,7 +159,7 @@ export async function DELETE(
 
     // Check if user is admin
     const membership = await GroupMember.findOne({
-      groupId: params.id,
+      groupId: id,
       userId,
     });
 
@@ -169,7 +172,7 @@ export async function DELETE(
 
     // Check if there are unsettled expenses
     const unsettledExpenses = await Expense.countDocuments({
-      groupId: params.id,
+      groupId: id,
       isDeleted: false,
     });
 
@@ -183,7 +186,7 @@ export async function DELETE(
       );
     }
 
-    await Group.findByIdAndUpdate(params.id, { isActive: false });
+    await Group.findByIdAndUpdate(id, { isActive: false });
 
     return NextResponse.json(
       { message: "Group deleted successfully" },
