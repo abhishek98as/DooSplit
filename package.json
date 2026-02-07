@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@types/bcryptjs": "^2.4.6",
-    "bcryptjs": "^3.0.3",
+    "bcryptjs": "^2.4.3",
     "firebase": "^12.9.0",
     "firebase-admin": "^13.6.1",
     "jspdf": "^2.5.2",
