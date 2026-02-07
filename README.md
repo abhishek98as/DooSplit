@@ -210,6 +210,40 @@ Optional:
 - PWA & offline support
 - Dark mode toggle
 
+## 🚀 Deployment
+
+### Deploy to Vercel (Recommended)
+
+DooSplit is optimized for Vercel deployment with automatic CI/CD:
+
+1. **Push to GitHub** (Already done! ✅)
+   ```bash
+   git push origin main
+   ```
+
+2. **Connect to Vercel**
+   - Go to [vercel.com](https://vercel.com)
+   - Import the `abhishek98as/DooSplit` repository
+   - Vercel auto-detects Next.js settings
+
+3. **Configure Environment Variables**
+   - Add all env variables from `.env.local` in Vercel Dashboard
+   - See [VERCEL_DEPLOYMENT.md](VERCEL_DEPLOYMENT.md) for detailed guide
+
+4. **Deploy!**
+   - Click Deploy
+   - Get your live URL: `https://your-app.vercel.app`
+
+📖 **Detailed deployment guide**: See [VERCEL_DEPLOYMENT.md](VERCEL_DEPLOYMENT.md)
+
+### Inviting Friends
+
+No custom domain needed! Use your Vercel URL:
+- Go to `/invite` page in the app
+- Copy your invite link
+- Share via WhatsApp, Email, SMS
+- Friends register → Send friend request → Start splitting expenses!
+
 ## 🤝 Contributing
 
 This is a learning/portfolio project. Feel free to fork and experiment!
@@ -220,4 +254,5 @@ MIT License - feel free to use this for learning purposes.
 
 ---
 
-**Built with ❤️ using Next.js 14, TypeScript, MongoDB, and Tailwind CSS**
+**Built with ❤️ using Next.js 14, TypeScript, MongoDB, Firebase Auth, and Tailwind CSS**
+

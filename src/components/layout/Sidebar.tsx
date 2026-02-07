@@ -12,6 +12,7 @@ import {
   PlusCircle,
   BarChart3,
   Wallet,
+  UserPlus,
 } from "lucide-react";
 import NotificationDropdown from "./NotificationDropdown";
 
@@ -22,6 +23,7 @@ const Sidebar: React.FC = () => {
     { href: "/dashboard", icon: Home, label: "Dashboard" },
     { href: "/friends", icon: Users, label: "Friends" },
     { href: "/groups", icon: UsersRound, label: "Groups" },
+    { href: "/invite", icon: UserPlus, label: "Invite Friends" },
     { href: "/activity", icon: Activity, label: "Activity" },
     { href: "/analytics", icon: BarChart3, label: "Analytics" },
     { href: "/settlements", icon: Wallet, label: "Settlements" },
