@@ -1,0 +1,288 @@
+import { NextRequest, NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import dbConnect from "@/lib/db";
+import Expense from "@/models/Expense";
+import ExpenseParticipant from "@/models/ExpenseParticipant";
+import {
+  splitEqually,
+  splitByExactAmounts,
+  splitByPercentages,
+  splitByShares,
+  validateSplit,
+} from "@/lib/splitCalculator";
+import { authOptions } from "@/lib/auth";
+import mongoose from "mongoose";
+
+// GET /api/expenses/[id] - Get single expense
+export async function GET(
+  request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  try {
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    await dbConnect();
+
+    const expense = await Expense.findOne({
+      _id: params.id,
+      isDeleted: false,
+    })
+      .populate("createdBy", "name email profilePicture")
+      .populate("groupId", "name image");
+
+    if (!expense) {
+      return NextResponse.json({ error: "Expense not found" }, { status: 404 });
+    }
+
+    // Check if user is a participant
+    const userId = new mongoose.Types.ObjectId(session.user.id);
+    const isParticipant = await ExpenseParticipant.findOne({
+      expenseId: expense._id,
+      userId,
+    });
+
+    if (!isParticipant) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    const participants = await ExpenseParticipant.find({
+      expenseId: expense._id,
+    }).populate("userId", "name email profilePicture");
+
+    return NextResponse.json(
+      {
+        expense: {
+          ...expense.toJSON(),
+          participants,
+        },
+      },
+      { status: 200 }
+    );
+  } catch (error: any) {
+    console.error("Get expense error:", error);
+    return NextResponse.json(
+      { error: "Failed to fetch expense" },
+      { status: 500 }
+    );
+  }
+}
+
+// PUT /api/expenses/[id] - Update expense
+export async function PUT(
+  request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  try {
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const body = await request.json();
+    const {
+      amount,
+      description,
+      category,
+      date,
+      currency,
+      groupId,
+      images,
+      notes,
+      splitMethod,
+      paidBy,
+      participants,
+    } = body;
+
+    await dbConnect();
+
+    const expense = await Expense.findOne({
+      _id: params.id,
+      isDeleted: false,
+    });
+
+    if (!expense) {
+      return NextResponse.json({ error: "Expense not found" }, { status: 404 });
+    }
+
+    const userId = new mongoose.Types.ObjectId(session.user.id);
+
+    // Only creator can edit
+    if (expense.createdBy.toString() !== userId.toString()) {
+      return NextResponse.json(
+        { error: "Only expense creator can edit" },
+        { status: 403 }
+      );
+    }
+
+    // Store old values for edit history
+    const changes = [];
+    if (amount !== undefined && amount !== expense.amount) changes.push(`amount: ${expense.amount} → ${amount}`);
+    if (description !== undefined && description !== expense.description) changes.push(`description: "${expense.description}" → "${description}"`);
+    if (category !== undefined && category !== expense.category) changes.push(`category: ${expense.category} → ${category}`);
+    if (date !== undefined) changes.push(`date updated`);
+
+    const editEntry = {
+      editedAt: new Date(),
+      editedBy: userId,
+      changes: changes.length > 0 ? changes.join(', ') : 'Updated',
+    };
+
+    // Update expense fields
+    if (amount !== undefined) expense.amount = amount;
+    if (description !== undefined) expense.description = description;
+    if (category !== undefined) expense.category = category;
+    if (date !== undefined) expense.date = date;
+    if (currency !== undefined) expense.currency = currency;
+    if (groupId !== undefined) expense.groupId = groupId;
+    if (images !== undefined) expense.images = images;
+    if (notes !== undefined) expense.notes = notes;
+
+    // Add to edit history
+    expense.editHistory.push(editEntry);
+
+    await expense.save();
+
+    // If split changed, recalculate participants
+    if (splitMethod && participants) {
+      let splitParticipants;
+
+      switch (splitMethod) {
+        case "equally":
+          splitParticipants = splitEqually({
+            amount: expense.amount,
+            participants: participants.map((p: any) => p.userId || p),
+            paidBy,
+          });
+          break;
+
+        case "exact":
+          splitParticipants = splitByExactAmounts({
+            amount: expense.amount,
+            participants,
+            paidBy,
+          });
+          break;
+
+        case "percentage":
+          splitParticipants = splitByPercentages({
+            amount: expense.amount,
+            participants,
+            paidBy,
+          });
+          break;
+
+        case "shares":
+          splitParticipants = splitByShares({
+            amount: expense.amount,
+            participants,
+            paidBy,
+          });
+          break;
+
+        default:
+          return NextResponse.json(
+            { error: "Invalid split method" },
+            { status: 400 }
+          );
+      }
+
+      if (!validateSplit(splitParticipants, expense.amount)) {
+        return NextResponse.json(
+          { error: "Invalid split calculation" },
+          { status: 400 }
+        );
+      }
+
+      // Delete old participants
+      await ExpenseParticipant.deleteMany({ expenseId: expense._id });
+
+      // Create new participants
+      await ExpenseParticipant.insertMany(
+        splitParticipants.map((p) => ({
+          expenseId: expense._id,
+          userId: p.userId,
+          paidAmount: p.paidAmount,
+          owedAmount: p.owedAmount,
+          isSettled: false,
+        }))
+      );
+    }
+
+    const updatedExpense = await Expense.findById(expense._id)
+      .populate("createdBy", "name email profilePicture")
+      .populate("groupId", "name image");
+
+    const expenseParticipants = await ExpenseParticipant.find({
+      expenseId: expense._id,
+    }).populate("userId", "name email profilePicture");
+
+    return NextResponse.json(
+      {
+        message: "Expense updated successfully",
+        expense: {
+          ...updatedExpense!.toJSON(),
+          participants: expenseParticipants,
+        },
+      },
+      { status: 200 }
+    );
+  } catch (error: any) {
+    console.error("Update expense error:", error);
+    return NextResponse.json(
+      { error: error.message || "Failed to update expense" },
+      { status: 500 }
+    );
+  }
+}
+
+// DELETE /api/expenses/[id] - Soft delete expense
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  try {
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    await dbConnect();
+
+    const expense = await Expense.findOne({
+      _id: params.id,
+      isDeleted: false,
+    });
+
+    if (!expense) {
+      return NextResponse.json({ error: "Expense not found" }, { status: 404 });
+    }
+
+    const userId = new mongoose.Types.ObjectId(session.user.id);
+
+    // Only creator can delete
+    if (expense.createdBy.toString() !== userId.toString()) {
+      return NextResponse.json(
+        { error: "Only expense creator can delete" },
+        { status: 403 }
+      );
+    }
+
+    // Soft delete
+    expense.isDeleted = true;
+    await expense.save();
+
+    return NextResponse.json(
+      { message: "Expense deleted successfully" },
+      { status: 200 }
+    );
+  } catch (error: any) {
+    console.error("Delete expense error:", error);
+    return NextResponse.json(
+      { error: "Failed to delete expense" },
+      { status: 500 }
+    );
+  }
+}

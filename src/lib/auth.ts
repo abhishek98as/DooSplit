@@ -1,0 +1,165 @@
+import { AuthOptions } from "next-auth";
+import CredentialsProvider from "next-auth/providers/credentials";
+import bcrypt from "bcryptjs";
+import dbConnect from "@/lib/db";
+import User from "@/models/User";
+import { seedAdminUser } from "./seedAdmin";
+import { adminAuth } from "./firebase-admin";
+
+export const authOptions: AuthOptions = {
+  providers: [
+    CredentialsProvider({
+      id: "firebase",
+      name: "Firebase",
+      credentials: {
+        idToken: { label: "ID Token", type: "text" },
+        email: { label: "Email", type: "email" },
+        name: { label: "Name", type: "text" },
+        image: { label: "Image", type: "text" },
+      },
+      async authorize(credentials) {
+        if (!credentials?.idToken) {
+          throw new Error("No Firebase ID token provided");
+        }
+
+        try {
+          // Verify Firebase ID token
+          const decodedToken = await adminAuth.verifyIdToken(credentials.idToken);
+          const firebaseUid = decodedToken.uid;
+          const email = decodedToken.email || credentials.email;
+          const name = decodedToken.name || credentials.name || "User";
+          const image = decodedToken.picture || credentials.image || null;
+
+          if (!email) {
+            throw new Error("No email associated with this account");
+          }
+
+          await dbConnect();
+          
+          // Seed admin user on first login attempt
+          await seedAdminUser();
+
+          // Find or create user in MongoDB
+          let user = await User.findOne({ email: email.toLowerCase() });
+
+          if (!user) {
+            // Create new user from Firebase auth
+            const randomPassword = await bcrypt.hash(
+              Math.random().toString(36).slice(-12) + firebaseUid,
+              10
+            );
+
+            user = await User.create({
+              email: email.toLowerCase(),
+              name,
+              profilePicture: image || undefined,
+              password: randomPassword,
+              emailVerified: decodedToken.email_verified || false,
+              isActive: true,
+            });
+          } else {
+            // Update profile picture if changed
+            if (image && user.profilePicture !== image) {
+              user.profilePicture = image;
+              await user.save();
+            }
+          }
+
+          if (!user.isActive) {
+            throw new Error("Account is deactivated");
+          }
+
+          return {
+            id: user._id.toString(),
+            email: user.email,
+            name: user.name,
+            image: user.profilePicture,
+            role: user.role,
+          };
+        } catch (error: any) {
+          console.error("Firebase auth error:", error.message);
+          throw new Error(error.message || "Authentication failed");
+        }
+      },
+    }),
+    // Legacy credentials provider (email/password directly against MongoDB)
+    CredentialsProvider({
+      id: "credentials",
+      name: "Credentials",
+      credentials: {
+        email: { label: "Email", type: "email" },
+        password: { label: "Password", type: "password" },
+      },
+      async authorize(credentials) {
+        if (!credentials?.email || !credentials?.password) {
+          throw new Error("Email and password are required");
+        }
+
+        await dbConnect();
+        await seedAdminUser();
+
+        const user = await User.findOne({ email: credentials.email }).select(
+          "+password"
+        );
+
+        if (!user) {
+          throw new Error("Invalid email or password");
+        }
+
+        if (!user.isActive) {
+          throw new Error("Account is deactivated");
+        }
+
+        const isPasswordValid = await bcrypt.compare(
+          credentials.password,
+          user.password
+        );
+
+        if (!isPasswordValid) {
+          throw new Error("Invalid email or password");
+        }
+
+        return {
+          id: user._id.toString(),
+          email: user.email,
+          name: user.name,
+          image: user.profilePicture,
+          role: user.role,
+        };
+      },
+    }),
+  ],
+  callbacks: {
+    async jwt({ token, user, trigger, session }) {
+      if (user) {
+        token.id = user.id;
+        token.role = user.role;
+      }
+
+      // Update token if session update is triggered
+      if (trigger === "update" && session) {
+        token = { ...token, ...session };
+      }
+
+      return token;
+    },
+    async session({ session, token }) {
+      if (session?.user) {
+        session.user.id = token.id as string;
+        session.user.role = token.role as string;
+      }
+      return session;
+    },
+  },
+  pages: {
+    signIn: "/auth/login",
+    signOut: "/auth/login",
+    error: "/auth/error",
+  },
+  session: {
+    strategy: "jwt",
+    maxAge: 30 * 24 * 60 * 60, // 30 days
+  },
+  secret: process.env.NEXTAUTH_SECRET,
+  debug: false,
+};

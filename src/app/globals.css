@@ -1,26 +1,74 @@
-@import "tailwindcss";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+@layer base {
+  body {
+    @apply bg-neutral-50 text-neutral-900 antialiased;
+  }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+  .dark body {
+    @apply bg-dark-bg text-dark-text;
+  }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  /* Number formatting */
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@layer components {
+  /* Touch target minimum size */
+  .touch-target {
+    @apply min-h-[44px] min-w-[44px];
+  }
+
+  /* Button base styles */
+  .btn {
+    @apply touch-target px-6 py-3 rounded-md text-button font-medium transition-all duration-200;
+  }
+
+  .btn-primary {
+    @apply btn bg-primary text-white hover:bg-primary-dark active:scale-[0.98] shadow-sm;
+  }
+
+  .btn-secondary {
+    @apply btn bg-white text-primary border-2 border-primary hover:bg-primary/10;
+  }
+
+  .btn-destructive {
+    @apply btn bg-error text-white hover:bg-error/90;
+  }
+
+  /* Card styles */
+  .card {
+    @apply bg-white rounded-lg shadow-sm border border-neutral-200 p-4;
+  }
+
+  .dark .card {
+    @apply bg-dark-bg-secondary border-dark-border;
+  }
+
+  /* Input styles */
+  .input {
+    @apply h-[44px] px-4 border-2 border-neutral-200 rounded-md text-body 
+           focus:outline-none focus:border-primary focus:ring-4 focus:ring-primary/10
+           disabled:bg-neutral-50 disabled:text-neutral-400;
+  }
+
+  .dark .input {
+    @apply bg-dark-bg-secondary border-dark-border text-dark-text;
+  }
+}
+
+@layer utilities {
+  /* Custom scrollbar */
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
 }
