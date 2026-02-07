@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import dbConnect from "@/lib/db";
 import Friend from "@/models/Friend";
 import User from "@/models/User";
+
 import ExpenseParticipant from "@/models/ExpenseParticipant";
 import { authOptions } from "@/lib/auth";
 import mongoose from "mongoose";
