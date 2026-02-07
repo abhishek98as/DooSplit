@@ -126,27 +126,23 @@ export default function AnalyticsPage() {
       const fileName = `analytics_${timeframe}_${new Date().toISOString().split('T')[0]}.xlsx`;
       XLSX.writeFile(wb, fileName);
     } catch (error) {
-      consodiv className="flex items-center gap-3">
-            <Button
-              variant="secondary"
-              onClick={handleExportAnalytics}
-              className="flex items-center gap-2"
-            >
-              <Download className="h-4 w-4" />
-              Export
-            </Button>
-            <select
-              value={timeframe}
-              onChange={(e) => setTimeframe(e.target.value)}
-              className="px-4 py-2 rounded-lg border border-neutral-300 dark:border-dark-border bg-white dark:bg-dark-bg-secondary text-neutral-900 dark:text-dark-text"
-            >
-              <option value="week">Last Week</option>
-              <option value="month">Last Month</option>
-              <option value="quarter">Last Quarter</option>
-              <option value="year">This Year</option>
-              <option value="all">All Time</option>
-            </select>
-          </div
+      console.error('Failed to export analytics:', error);
+    }
+  };
+
+  if (loading) {
+    return (
+      <AppShell>
+        <div className="p-4 md:p-8">
+          <div className="animate-pulse space-y-6">
+            <div className="h-8 bg-neutral-200 dark:bg-dark-border rounded w-48" />
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {[...Array(4)].map((_, i) => (
+                <div key={i} className="h-24 bg-neutral-200 dark:bg-dark-border rounded-lg" />
+              ))}
+            </div>
+          </div>
+        </div>
       </AppShell>
     );
   }
@@ -193,17 +189,27 @@ export default function AnalyticsPage() {
               View insights and spending patterns
             </p>
           </div>
-          <select
-            value={timeframe}
-            onChange={(e) => setTimeframe(e.target.value)}
-            className="px-4 py-2 rounded-lg border border-neutral-300 dark:border-dark-border bg-white dark:bg-dark-bg-secondary text-neutral-900 dark:text-dark-text"
-          >
-            <option value="week">Last Week</option>
-            <option value="month">Last Month</option>
-            <option value="quarter">Last Quarter</option>
-            <option value="year">This Year</option>
-            <option value="all">All Time</option>
-          </select>
+          <div className="flex items-center gap-3">
+            <Button
+              variant="secondary"
+              onClick={handleExportAnalytics}
+              className="flex items-center gap-2"
+            >
+              <Download className="h-4 w-4" />
+              Export
+            </Button>
+            <select
+              value={timeframe}
+              onChange={(e) => setTimeframe(e.target.value)}
+              className="px-4 py-2 rounded-lg border border-neutral-300 dark:border-dark-border bg-white dark:bg-dark-bg-secondary text-neutral-900 dark:text-dark-text"
+            >
+              <option value="week">Last Week</option>
+              <option value="month">Last Month</option>
+              <option value="quarter">Last Quarter</option>
+              <option value="year">This Year</option>
+              <option value="all">All Time</option>
+            </select>
+          </div>
         </div>
 
         {/* Summary Cards */}
