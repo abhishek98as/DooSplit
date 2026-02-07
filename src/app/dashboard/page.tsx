@@ -22,6 +22,12 @@ interface Friend {
   balance: number;
 }
 
+interface Group {
+  _id: string;
+  name: string;
+  memberCount: number;
+}
+
 export default function DashboardPage() {
   const { data: session } = useSession();
   const [balance, setBalance] = useState<BalanceData>({
@@ -30,6 +36,8 @@ export default function DashboardPage() {
     youAreOwed: 0,
   });
   const [friends, setFriends] = useState<Friend[]>([]);
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [monthlySpending, setMonthlySpending] = useState(0);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -60,6 +68,37 @@ export default function DashboardPage() {
           youOwe,
           youAreOwed,
         });
+      }
+
+      // Fetch groups
+      const groupsRes = await fetch("/api/groups");
+      if (groupsRes.ok) {
+        const groupsData = await groupsRes.json();
+        setGroups(groupsData.groups || []);
+      }
+
+      // Fetch this month's expenses
+      const now = new Date();
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+
+      const expensesRes = await fetch(
+        `/api/expenses?startDate=${startOfMonth.toISOString()}&endDate=${endOfMonth.toISOString()}&limit=1000`
+      );
+      if (expensesRes.ok) {
+        const expensesData = await expensesRes.json();
+        const expenses = expensesData.expenses || [];
+        
+        // Calculate total spending for this month
+        const total = expenses.reduce((sum: number, expense: any) => {
+          // Find user's share in this expense
+          const userParticipant = expense.participants.find(
+            (p: any) => p.userId._id === session?.user?.id || p.userId === session?.user?.id
+          );
+          return sum + (userParticipant?.owedAmount || 0);
+        }, 0);
+        
+        setMonthlySpending(total);
       }
     } catch (error) {
       console.error("Failed to fetch dashboard data:", error);
@@ -142,7 +181,9 @@ export default function DashboardPage() {
                 <p className="text-sm text-neutral-500 dark:text-dark-text-secondary">
                   This Month
                 </p>
-                <p className="text-2xl font-semibold mt-1 font-mono">₹0</p>
+                <p className="text-2xl font-semibold mt-1 font-mono">
+                  {formatCurrency(monthlySpending)}
+                </p>
               </div>
               <div className="h-12 w-12 bg-primary/10 rounded-full flex items-center justify-center">
                 <TrendingUp className="h-6 w-6 text-primary" />
@@ -155,7 +196,7 @@ export default function DashboardPage() {
                 <p className="text-sm text-neutral-500 dark:text-dark-text-secondary">
                   Active Groups
                 </p>
-                <p className="text-2xl font-semibold mt-1">0</p>
+                <p className="text-2xl font-semibold mt-1">{groups.length}</p>
               </div>
               <div className="h-12 w-12 bg-success/10 rounded-full flex items-center justify-center">
                 <span className="text-2xl">👥</span>

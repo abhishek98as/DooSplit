@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
 import AppShell from "@/components/layout/AppShell";
 import Card, { CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
-import { TrendingUp, PieChart, Calendar } from "lucide-react";
+import Button from "@/components/ui/Button";
+import { TrendingUp, PieChart, Calendar, Download } from "lucide-react";
 
 interface AnalyticsData {
   summary: {
@@ -73,12 +74,79 @@ export default function AnalyticsPage() {
     return icons[category] || "📦";
   };
 
-  if (loading) {
-    return (
-      <AppShell>
-        <div className="flex items-center justify-center min-h-[400px]">
-          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary"></div>
-        </div>
+  const handleExportAnalytics = async () => {
+    if (!analytics) return;
+
+    try {
+      const XLSX = await import('xlsx');
+      
+      // Create summary sheet
+      const summaryData = [
+        ['Metric', 'Value'],
+        ['Total Expenses', analytics.summary.totalExpenses],
+        ['Total Spent', `₹${analytics.summary.totalSpent.toFixed(2)}`],
+        ['Total Paid', `₹${analytics.summary.totalPaid.toFixed(2)}`],
+        ['Total Settled', `₹${analytics.summary.totalSettled.toFixed(2)}`],
+        ['Average Expense', `₹${analytics.summary.averageExpense.toFixed(2)}`],
+      ];
+
+      // Create category breakdown sheet
+      const categoryData = [
+        ['Category', 'Count', 'Total Amount', 'Percentage'],
+        ...analytics.categoryBreakdown.map(cat => [
+          cat.category,
+          cat.count,
+          `₹${cat.total.toFixed(2)}`,
+          `${((cat.total / analytics.summary.totalSpent) * 100).toFixed(1)}%`,
+        ]),
+      ];
+
+      // Create monthly trend sheet
+      const monthlyData = [
+        ['Month', 'Expenses', 'Total Amount'],
+        ...analytics.monthlyTrend.map(month => [
+          month.month,
+          month.expenses,
+          `₹${month.total.toFixed(2)}`,
+        ]),
+      ];
+
+      // Create workbook
+      const wb = XLSX.utils.book_new();
+      
+      const summaryWs = XLSX.utils.aoa_to_sheet(summaryData);
+      const categoryWs = XLSX.utils.aoa_to_sheet(categoryData);
+      const monthlyWs = XLSX.utils.aoa_to_sheet(monthlyData);
+
+      XLSX.utils.book_append_sheet(wb, summaryWs, 'Summary');
+      XLSX.utils.book_append_sheet(wb, categoryWs, 'Categories');
+      XLSX.utils.book_append_sheet(wb, monthlyWs, 'Monthly Trend');
+
+      // Download file
+      const fileName = `analytics_${timeframe}_${new Date().toISOString().split('T')[0]}.xlsx`;
+      XLSX.writeFile(wb, fileName);
+    } catch (error) {
+      consodiv className="flex items-center gap-3">
+            <Button
+              variant="secondary"
+              onClick={handleExportAnalytics}
+              className="flex items-center gap-2"
+            >
+              <Download className="h-4 w-4" />
+              Export
+            </Button>
+            <select
+              value={timeframe}
+              onChange={(e) => setTimeframe(e.target.value)}
+              className="px-4 py-2 rounded-lg border border-neutral-300 dark:border-dark-border bg-white dark:bg-dark-bg-secondary text-neutral-900 dark:text-dark-text"
+            >
+              <option value="week">Last Week</option>
+              <option value="month">Last Month</option>
+              <option value="quarter">Last Quarter</option>
+              <option value="year">This Year</option>
+              <option value="all">All Time</option>
+            </select>
+          </div
       </AppShell>
     );
   }

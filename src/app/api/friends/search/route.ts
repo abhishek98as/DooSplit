@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
     }
 
     const searchParams = request.nextUrl.searchParams;
-    const query = searchParams.get("q");
+    const query = searchParams.get("q") || searchParams.get("query");
 
     if (!query || query.trim().length < 2) {
       return NextResponse.json(
@@ -29,10 +29,11 @@ export async function GET(request: NextRequest) {
 
     const userId = new mongoose.Types.ObjectId(session.user.id);
 
-    // Search users by name or email (case-insensitive)
+    // Search users by name or email (case-insensitive), exclude dummy users
     const users = await User.find({
       $and: [
         { _id: { $ne: userId } }, // Exclude current user
+        { isDummy: { $ne: true } }, // Exclude dummy users
         {
           $or: [
             { name: { $regex: query, $options: "i" } },

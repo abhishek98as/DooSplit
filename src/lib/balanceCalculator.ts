@@ -211,3 +211,157 @@ export async function getTotalBalance(
     youAreOwed: Number(youAreOwed.toFixed(2)),
   };
 }
+
+/**
+ * Simplified debt structure for a group of users
+ * Uses greedy algorithm to minimize number of transactions
+ */
+export interface SimplifiedDebt {
+  from: string;
+  to: string;
+  amount: number;
+}
+
+export interface SimplifiedDebts {
+  transactions: SimplifiedDebt[];
+  originalCount: number;
+  optimizedCount: number;
+}
+
+/**
+ * Simplify debts among a group of users to minimize transactions
+ * @param userIds - Array of user IDs to simplify debts for
+ * @returns Simplified list of transactions
+ */
+export async function simplifyGroupDebts(
+  userIds: (string | mongoose.Types.ObjectId)[]
+): Promise<SimplifiedDebts> {
+  // Get all balances between users
+  const balanceMap = new Map<string, number>();
+
+  // Calculate net balance for each user
+  for (const userId of userIds) {
+    const userBalance = await getUserBalances(userId);
+    const id = userId.toString();
+
+    if (!balanceMap.has(id)) {
+      balanceMap.set(id, 0);
+    }
+
+    userBalance.forEach((balance, otherId) => {
+      if (userIds.some((uid) => uid.toString() === otherId)) {
+        const currentBalance = balanceMap.get(id) || 0;
+        balanceMap.set(id, currentBalance + balance);
+
+        const otherBalance = balanceMap.get(otherId) || 0;
+        balanceMap.set(otherId, otherBalance - balance);
+      }
+    });
+  }
+
+  // Count original transactions (every non-zero balance pair)
+  let originalCount = 0;
+  balanceMap.forEach((balance) => {
+    if (Math.abs(balance) > 0.01) originalCount++;
+  });
+  originalCount = Math.floor(originalCount / 2);
+
+  // Separate debtors and creditors
+  const debtors: Array<{ id: string; amount: number }> = [];
+  const creditors: Array<{ id: string; amount: number }> = [];
+
+  balanceMap.forEach((balance, userId) => {
+    const roundedBalance = Number(balance.toFixed(2));
+    if (roundedBalance < -0.01) {
+      debtors.push({ id: userId, amount: Math.abs(roundedBalance) });
+    } else if (roundedBalance > 0.01) {
+      creditors.push({ id: userId, amount: roundedBalance });
+    }
+  });
+
+  // Sort for greedy algorithm
+  debtors.sort((a, b) => b.amount - a.amount);
+  creditors.sort((a, b) => b.amount - a.amount);
+
+  // Greedy algorithm to minimize transactions
+  const transactions: SimplifiedDebt[] = [];
+  let i = 0,
+    j = 0;
+
+  while (i < debtors.length && j < creditors.length) {
+    const debtor = debtors[i];
+    const creditor = creditors[j];
+
+    const settleAmount = Math.min(debtor.amount, creditor.amount);
+
+    if (settleAmount > 0.01) {
+      transactions.push({
+        from: debtor.id,
+        to: creditor.id,
+        amount: Number(settleAmount.toFixed(2)),
+      });
+    }
+
+    debtor.amount -= settleAmount;
+    creditor.amount -= settleAmount;
+
+    if (debtor.amount < 0.01) i++;
+    if (creditor.amount < 0.01) j++;
+  }
+
+  return {
+    transactions,
+    originalCount: Math.max(originalCount, transactions.length),
+    optimizedCount: transactions.length,
+  };
+}
+
+/**
+ * Get simplified debts for a specific group
+ * @param groupId - Group ID
+ * @returns Simplified debts with user information
+ */
+export async function getGroupSimplifiedDebts(
+  groupId: string | mongoose.Types.ObjectId
+) {
+  const GroupMember = (await import("@/models/GroupMember")).default;
+  const User = (await import("@/models/User")).default;
+
+  const members = await GroupMember.find({ groupId }).select("userId");
+  const userIds = members.map((m: any) => m.userId);
+
+  const simplified = await simplifyGroupDebts(userIds);
+
+  // Populate user information
+  const transactionsWithUsers = await Promise.all(
+    simplified.transactions.map(async (t) => {
+      const [fromUser, toUser] = await Promise.all([
+        User.findById(t.from).select("name email profilePicture"),
+        User.findById(t.to).select("name email profilePicture"),
+      ]);
+
+      return {
+        from: {
+          id: t.from,
+          name: fromUser?.name || "Unknown",
+          email: fromUser?.email || "",
+          profilePicture: fromUser?.profilePicture,
+        },
+        to: {
+          id: t.to,
+          name: toUser?.name || "Unknown",
+          email: toUser?.email || "",
+          profilePicture: toUser?.profilePicture,
+        },
+        amount: t.amount,
+      };
+    })
+  );
+
+  return {
+    transactions: transactionsWithUsers,
+    originalCount: simplified.originalCount,
+    optimizedCount: simplified.optimizedCount,
+    savings: simplified.originalCount - simplified.optimizedCount,
+  };
+}

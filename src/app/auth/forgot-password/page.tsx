@@ -3,7 +3,8 @@
 import { useState } from "react";
 import Link from "next/link";
 import { Button, Input } from "@/components/ui";
-import { Mail, ArrowLeft, Wallet } from "lucide-react";
+import Image from "next/image";
+import { Mail, ArrowLeft } from "lucide-react";
 import { auth, sendPasswordResetEmail } from "@/lib/firebase";
 
 export default function ForgotPasswordPage() {
@@ -51,9 +52,13 @@ export default function ForgotPasswordPage() {
       <div className="w-full max-w-md">
         {/* Logo/Brand */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center h-16 w-16 bg-primary rounded-2xl mb-4">
-            <Wallet className="h-8 w-8 text-white" />
-          </div>
+          <Image
+            src="/logo.webp"
+            alt="DooSplit"
+            width={64}
+            height={64}
+            className="h-16 w-16 rounded-2xl mb-4 inline-block"
+          />
           <h1 className="text-h1 font-bold text-neutral-900">
             Forgot Password?
           </h1>

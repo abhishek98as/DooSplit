@@ -5,12 +5,8 @@ import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button, Input } from "@/components/ui";
-import { Mail, Lock, User, Wallet } from "lucide-react";
-import {
-  auth,
-  createUserWithEmailAndPassword,
-  updateProfile,
-} from "@/lib/firebase";
+import Image from "next/image";
+import { Mail, Lock, User } from "lucide-react";
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -49,23 +45,8 @@ export default function RegisterPage() {
     setIsLoading(true);
 
     try {
-      // Create user in Firebase
-      const userCredential = await createUserWithEmailAndPassword(
-        auth,
-        formData.email,
-        formData.password
-      );
-
-      // Update Firebase profile with name
-      await updateProfile(userCredential.user, {
-        displayName: formData.name,
-      });
-
-      // Get Firebase ID token
-      const idToken = await userCredential.user.getIdToken();
-
-      // Also register in MongoDB via API (for backward compatibility)
-      await fetch("/api/auth/register", {
+      // Register user directly in MongoDB
+      const res = await fetch("/api/auth/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -75,11 +56,17 @@ export default function RegisterPage() {
         }),
       });
 
-      // Auto sign-in via NextAuth with Firebase token
-      const result = await signIn("firebase", {
-        idToken,
-        email: userCredential.user.email,
-        name: formData.name,
+      const data = await res.json();
+
+      if (!res.ok) {
+        setError(data.error || "Registration failed");
+        return;
+      }
+
+      // Auto sign-in via NextAuth credentials provider
+      const result = await signIn("credentials", {
+        email: formData.email,
+        password: formData.password,
         redirect: false,
       });
 
@@ -91,20 +78,7 @@ export default function RegisterPage() {
         router.refresh();
       }
     } catch (err: any) {
-      const errorCode = err?.code;
-      switch (errorCode) {
-        case "auth/email-already-in-use":
-          setError("An account with this email already exists");
-          break;
-        case "auth/weak-password":
-          setError("Password is too weak. Use at least 6 characters.");
-          break;
-        case "auth/invalid-email":
-          setError("Invalid email address");
-          break;
-        default:
-          setError(err.message || "Registration failed. Please try again.");
-      }
+      setError(err.message || "Registration failed. Please try again.");
     } finally {
       setIsLoading(false);
     }
@@ -115,9 +89,13 @@ export default function RegisterPage() {
       <div className="w-full max-w-md">
         {/* Logo/Brand */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center h-16 w-16 bg-primary rounded-2xl mb-4">
-            <Wallet className="h-8 w-8 text-white" />
-          </div>
+          <Image
+            src="/logo.webp"
+            alt="DooSplit"
+            width={64}
+            height={64}
+            className="h-16 w-16 rounded-2xl mb-4 inline-block"
+          />
           <h1 className="text-h1 font-bold text-neutral-900">Get Started</h1>
           <p className="text-body text-neutral-500 mt-2">
             Create your DooSplit account

@@ -8,8 +8,8 @@ import {
   Users,
   UsersRound,
   Activity,
-  Settings,
   PlusCircle,
+  Receipt,
 } from "lucide-react";
 
 const MobileNav: React.FC = () => {
@@ -18,9 +18,8 @@ const MobileNav: React.FC = () => {
   const navItems = [
     { href: "/dashboard", icon: Home, label: "Home" },
     { href: "/friends", icon: Users, label: "Friends" },
-    { href: "/groups", icon: UsersRound, label: "Groups" },
+    { href: "/expenses", icon: Receipt, label: "Expenses" },
     { href: "/activity", icon: Activity, label: "Activity" },
-    { href: "/settings", icon: Settings, label: "Settings" },
   ];
 
   const isActive = (href: string) => pathname === href;

@@ -11,7 +11,9 @@ import {
   validateSplit,
 } from "@/lib/splitCalculator";
 import { authOptions } from "@/lib/auth";
+import { notifyExpenseUpdated, notifyExpenseDeleted } from "@/lib/notificationService";
 import mongoose from "mongoose";
+import User from "@/models/User";
 
 // GET /api/expenses/[id] - Get single expense
 export async function GET(
@@ -221,6 +223,19 @@ export async function PUT(
       expenseId: expense._id,
     }).populate("userId", "name email profilePicture");
 
+    // Send notifications to participants
+    try {
+      const updater = await User.findById(userId).select("name");
+      await notifyExpenseUpdated(
+        expense._id,
+        expense.description,
+        { id: userId, name: updater?.name || "Someone" },
+        expenseParticipants.map((p: any) => p.userId._id)
+      );
+    } catch (notifError) {
+      console.error("Failed to send notifications:", notifError);
+    }
+
     return NextResponse.json(
       {
         message: "Expense updated successfully",
@@ -273,9 +288,26 @@ export async function DELETE(
       );
     }
 
+    // Get participants before deleting
+    const participants = await ExpenseParticipant.find({
+      expenseId: expense._id,
+    }).select("userId");
+
     // Soft delete
     expense.isDeleted = true;
     await expense.save();
+
+    // Send notifications
+    try {
+      const deleter = await User.findById(userId).select("name");
+      await notifyExpenseDeleted(
+        expense.description,
+        { id: userId, name: deleter?.name || "Someone" },
+        participants.map((p: any) => p.userId)
+      );
+    } catch (notifError) {
+      console.error("Failed to send notifications:", notifError);
+    }
 
     return NextResponse.json(
       { message: "Expense deleted successfully" },

@@ -11,6 +11,10 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: "DooSplit - Share Expenses with Friends",
   description: "Track and split expenses with friends and roommates. Manage group finances efficiently with DooSplit.",
+  icons: {
+    icon: "/logo.webp",
+    apple: "/logo.webp",
+  },
 };
 
 export default function RootLayout({

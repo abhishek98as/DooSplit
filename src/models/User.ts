@@ -11,6 +11,8 @@ export interface IUser {
   timezone?: string;
   language: string;
   isActive: boolean;
+  isDummy: boolean;
+  createdBy?: mongoose.Types.ObjectId;
   role: "user" | "admin";
   emailVerified: boolean;
   resetPasswordToken?: string;
@@ -27,11 +29,10 @@ const UserSchema = new Schema<IUser>(
       unique: true,
       lowercase: true,
       trim: true,
-      match: [/^\S+@\S+\.\S+$/, "Please enter a valid email"],
     },
     password: {
       type: String,
-      required: [true, "Password is required"],
+      required: function(this: IUser) { return !this.isDummy; },
       minlength: [6, "Password must be at least 6 characters"],
     },
     name: {
@@ -66,6 +67,15 @@ const UserSchema = new Schema<IUser>(
     isActive: {
       type: Boolean,
       default: true,
+    },
+    isDummy: {
+      type: Boolean,
+      default: false,
+    },
+    createdBy: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
     },
     role: {
       type: String,

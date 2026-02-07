@@ -5,7 +5,10 @@ import Expense from "@/models/Expense";
 import ExpenseParticipant from "@/models/ExpenseParticipant";
 import {splitEqually, splitByExactAmounts, splitByPercentages, splitByShares, validateSplit } from "@/lib/splitCalculator";
 import { authOptions } from "@/lib/auth";
+import { notifyExpenseCreated } from "@/lib/notificationService";
 import mongoose from "mongoose";
+import Group from "@/models/Group";
+import User from "@/models/User";
 
 export const dynamic = 'force-dynamic';
 
@@ -213,6 +216,30 @@ export async function POST(request: NextRequest) {
     const expenseParticipants = await ExpenseParticipant.find({
       expenseId: expense._id,
     }).populate("userId", "name email profilePicture");
+
+    // Get creator's name and group name for notification
+    const creator = await User.findById(userId).select("name");
+    let groupName: string | undefined;
+    if (groupId) {
+      const group = await Group.findById(groupId).select("name");
+      groupName = group?.name;
+    }
+
+    // Create notifications for all participants except the creator
+    try {
+      await notifyExpenseCreated(
+        expense._id,
+        description,
+        amount,
+        currency || "INR",
+        { id: userId, name: creator?.name || "Someone" },
+        splitParticipants.map((p) => p.userId),
+        groupName
+      );
+    } catch (notifError) {
+      console.error("Failed to send notifications:", notifError);
+      // Don't fail the expense creation if notifications fail
+    }
 
     return NextResponse.json(
       {

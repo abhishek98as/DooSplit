@@ -5,10 +5,10 @@ import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button, Input } from "@/components/ui";
-import { Mail, Lock, Wallet } from "lucide-react";
+import Image from "next/image";
+import { Mail, Lock } from "lucide-react";
 import {
   auth,
-  signInWithEmailAndPassword,
   signInWithPopup,
   googleProvider,
 } from "@/lib/firebase";
@@ -23,52 +23,27 @@ export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
 
-  const handleFirebaseLogin = async (e: React.FormEvent) => {
+  const handleCredentialsLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     setIsLoading(true);
 
     try {
-      // Sign in with Firebase
-      const userCredential = await signInWithEmailAndPassword(
-        auth,
-        formData.email,
-        formData.password
-      );
-      const idToken = await userCredential.user.getIdToken();
-
-      // Pass Firebase token to NextAuth for session management
-      const result = await signIn("firebase", {
-        idToken,
-        email: userCredential.user.email,
-        name: userCredential.user.displayName,
-        image: userCredential.user.photoURL,
+      // Sign in directly against MongoDB via NextAuth credentials provider
+      const result = await signIn("credentials", {
+        email: formData.email,
+        password: formData.password,
         redirect: false,
       });
 
       if (result?.error) {
-        setError(result.error);
+        setError("Invalid email or password");
       } else {
         router.push("/dashboard");
         router.refresh();
       }
     } catch (err: any) {
-      const errorCode = err?.code;
-      switch (errorCode) {
-        case "auth/invalid-credential":
-        case "auth/user-not-found":
-        case "auth/wrong-password":
-          setError("Invalid email or password");
-          break;
-        case "auth/too-many-requests":
-          setError("Too many attempts. Please try again later.");
-          break;
-        case "auth/user-disabled":
-          setError("This account has been disabled.");
-          break;
-        default:
-          setError(err.message || "An error occurred. Please try again.");
-      }
+      setError(err.message || "An error occurred. Please try again.");
     } finally {
       setIsLoading(false);
     }
@@ -110,9 +85,13 @@ export default function LoginPage() {
       <div className="w-full max-w-md">
         {/* Logo/Brand */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center h-16 w-16 bg-primary rounded-2xl mb-4">
-            <Wallet className="h-8 w-8 text-white" />
-          </div>
+          <Image
+            src="/logo.webp"
+            alt="DooSplit"
+            width={64}
+            height={64}
+            className="h-16 w-16 rounded-2xl mb-4 inline-block"
+          />
           <h1 className="text-h1 font-bold text-neutral-900">Welcome Back</h1>
           <p className="text-body text-neutral-500 mt-2">
             Sign in to DooSplit
@@ -121,7 +100,7 @@ export default function LoginPage() {
 
         {/* Login Form */}
         <div className="bg-white rounded-xl shadow-md p-6 md:p-8">
-          <form onSubmit={handleFirebaseLogin} className="space-y-5">
+          <form onSubmit={handleCredentialsLogin} className="space-y-5">
             {error && (
               <div className="bg-error/10 border border-error/20 text-error px-4 py-3 rounded-md text-sm">
                 {error}

@@ -3,6 +3,7 @@
 import React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import Image from "next/image";
 import {
   Home,
   Users,
@@ -13,6 +14,7 @@ import {
   BarChart3,
   Wallet,
   UserPlus,
+  Receipt,
 } from "lucide-react";
 import NotificationDropdown from "./NotificationDropdown";
 
@@ -21,6 +23,7 @@ const Sidebar: React.FC = () => {
 
   const navItems = [
     { href: "/dashboard", icon: Home, label: "Dashboard" },
+    { href: "/expenses", icon: Receipt, label: "Expenses" },
     { href: "/friends", icon: Users, label: "Friends" },
     { href: "/groups", icon: UsersRound, label: "Groups" },
     { href: "/invite", icon: UserPlus, label: "Invite Friends" },
@@ -37,9 +40,13 @@ const Sidebar: React.FC = () => {
       {/* Logo */}
       <div className="flex items-center justify-between h-16 px-6 border-b border-neutral-200 dark:border-dark-border">
         <Link href="/dashboard" className="flex items-center space-x-2">
-          <div className="h-8 w-8 bg-primary rounded-lg flex items-center justify-center">
-            <Wallet className="h-5 w-5 text-white" />
-          </div>
+          <Image
+            src="/logo.webp"
+            alt="DooSplit"
+            width={32}
+            height={32}
+            className="h-8 w-8 rounded-lg"
+          />
           <span className="text-h4 font-bold text-neutral-900 dark:text-dark-text">
             DooSplit
           </span>

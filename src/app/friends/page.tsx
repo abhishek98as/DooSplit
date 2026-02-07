@@ -2,55 +2,97 @@
 
 import { useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
+import { useRouter } from "next/navigation";
 import AppShell from "@/components/layout/AppShell";
 import Card, { CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
-import { UserPlus, Search, Users, Check, X } from "lucide-react";
+import {
+  UserPlus, Search, Users, Check, X, Mail, Send, Link2,
+  Copy, CheckCircle2, AlertCircle, Trash2, UserRoundPlus,
+  Clock, Loader2,
+} from "lucide-react";
 import Modal from "@/components/ui/Modal";
 
-interface Friend {
-  _id: string;
-  name: string;
-  email: string;
-  profilePicture?: string;
+interface FriendItem {
+  id: string;
+  friend: {
+    id: string;
+    name: string;
+    email: string;
+    profilePicture?: string;
+    isDummy?: boolean;
+  };
   balance: number;
 }
 
 interface FriendRequest {
-  _id: string;
-  userId: {
-    _id: string;
+  id: string;
+  from: {
+    id: string;
     name: string;
     email: string;
     profilePicture?: string;
   };
-  status: string;
   createdAt: string;
 }
 
 interface SearchUser {
-  _id: string;
+  id: string;
   name: string;
   email: string;
   profilePicture?: string;
   friendshipStatus: string;
 }
 
+interface InvitationItem {
+  _id: string;
+  email: string;
+  status: "pending" | "accepted" | "expired";
+  createdAt: string;
+  expiresAt: string;
+}
+
 export default function FriendsPage() {
   const { data: session } = useSession();
-  const [friends, setFriends] = useState<Friend[]>([]);
+  const router = useRouter();
+  const [friends, setFriends] = useState<FriendItem[]>([]);
   const [requests, setRequests] = useState<FriendRequest[]>([]);
+  const [invitations, setInvitations] = useState<InvitationItem[]>([]);
   const [searchResults, setSearchResults] = useState<SearchUser[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [searching, setSearching] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
+  const [removingId, setRemovingId] = useState<string | null>(null);
+
+  // Dummy friend state
+  const [dummyName, setDummyName] = useState("");
+  const [creatingDummy, setCreatingDummy] = useState(false);
+  const [dummyResult, setDummyResult] = useState<{
+    type: "success" | "error";
+    message: string;
+  } | null>(null);
+
+  // Invite state
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [sendingInvite, setSendingInvite] = useState(false);
+  const [inviteResult, setInviteResult] = useState<{
+    type: "success" | "error";
+    message: string;
+    inviteLink?: string;
+  } | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  // Tab in modal
+  const [modalTab, setModalTab] = useState<"search" | "dummy" | "invite">("search");
 
   useEffect(() => {
     if (session) {
       fetchFriends();
       fetchRequests();
+      fetchInvitations();
     }
   }, [session]);
 
@@ -80,13 +122,28 @@ export default function FriendsPage() {
     }
   };
 
+  const fetchInvitations = async () => {
+    try {
+      const res = await fetch("/api/invitations");
+      if (res.ok) {
+        const data = await res.json();
+        setInvitations(data.invitations || []);
+      }
+    } catch {
+      // silent
+    }
+  };
+
   const searchUsers = async () => {
     if (!searchQuery.trim()) {
       setSearchResults([]);
+      setHasSearched(false);
       return;
     }
 
     setSearching(true);
+    setHasSearched(true);
+    setInviteResult(null);
     try {
       const res = await fetch(
         `/api/friends/search?query=${encodeURIComponent(searchQuery)}`
@@ -107,14 +164,13 @@ export default function FriendsPage() {
       const res = await fetch("/api/friends", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ friendId }),
+        body: JSON.stringify({ userId: friendId }),
       });
 
       if (res.ok) {
-        // Update search results
         setSearchResults((prev) =>
           prev.map((user) =>
-            user._id === friendId
+            user.id === friendId
               ? { ...user, friendshipStatus: "pending" }
               : user
           )
@@ -122,6 +178,84 @@ export default function FriendsPage() {
       }
     } catch (error) {
       console.error("Failed to send friend request:", error);
+    }
+  };
+
+  const createDummyFriend = async () => {
+    if (!dummyName.trim()) return;
+    setCreatingDummy(true);
+    setDummyResult(null);
+    try {
+      const res = await fetch("/api/friends", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dummyName: dummyName.trim() }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setDummyResult({ type: "success", message: `"${dummyName.trim()}" added as a placeholder friend!` });
+        setDummyName("");
+        fetchFriends();
+      } else {
+        setDummyResult({ type: "error", message: data.error || "Failed to create dummy friend" });
+      }
+    } catch {
+      setDummyResult({ type: "error", message: "Something went wrong" });
+    } finally {
+      setCreatingDummy(false);
+    }
+  };
+
+  const sendInviteFromModal = async (emailToInvite?: string) => {
+    const targetEmail = emailToInvite || inviteEmail;
+    if (!targetEmail.trim()) return;
+
+    setSendingInvite(true);
+    setInviteResult(null);
+    try {
+      const res = await fetch("/api/invitations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: targetEmail }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setInviteResult({ type: "error", message: data.error });
+        return;
+      }
+
+      setInviteResult({
+        type: "success",
+        message: data.emailSent
+          ? `Invitation sent to ${targetEmail}!`
+          : `Invitation created! Share the link manually.`,
+        inviteLink: data.invitation?.inviteLink,
+      });
+      setInviteEmail("");
+      fetchInvitations();
+    } catch {
+      setInviteResult({ type: "error", message: "Something went wrong" });
+    } finally {
+      setSendingInvite(false);
+    }
+  };
+
+  const removeFriend = async (friendshipId: string) => {
+    if (!confirm("Remove this friend? This cannot be undone.")) return;
+    setRemovingId(friendshipId);
+    try {
+      const res = await fetch(`/api/friends/${friendshipId}`, {
+        method: "DELETE",
+      });
+      if (res.ok) {
+        setFriends((prev) => prev.filter((f) => f.id !== friendshipId));
+      }
+    } catch (error) {
+      console.error("Failed to remove friend:", error);
+    } finally {
+      setRemovingId(null);
     }
   };
 
@@ -142,12 +276,40 @@ export default function FriendsPage() {
     }
   };
 
+  const copyToClipboard = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error("Failed to copy:", err);
+    }
+  };
+
+  const isEmailQuery = (q: string) => /^\S+@\S+\.\S+$/.test(q.trim());
+
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat("en-IN", {
       style: "currency",
       currency: "INR",
     }).format(amount);
   };
+
+  const resetModal = () => {
+    setShowAddModal(false);
+    setSearchQuery("");
+    setSearchResults([]);
+    setHasSearched(false);
+    setInviteEmail("");
+    setInviteResult(null);
+    setDummyName("");
+    setDummyResult(null);
+    setModalTab("search");
+  };
+
+  const pendingInvitations = invitations.filter(
+    (inv) => inv.status === "pending" && new Date(inv.expiresAt) > new Date()
+  );
 
   if (loading) {
     return (
@@ -182,46 +344,85 @@ export default function FriendsPage() {
         {requests.length > 0 && (
           <Card>
             <CardHeader>
-              <CardTitle>Friend Requests</CardTitle>
+              <CardTitle>Friend Requests ({requests.length})</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="space-y-3">
                 {requests.map((request) => (
                   <div
-                    key={request._id}
+                    key={request.id}
                     className="flex items-center justify-between py-2 border-b border-neutral-200 dark:border-dark-border last:border-0"
                   >
                     <div className="flex items-center gap-3">
                       <div className="h-10 w-10 rounded-full bg-primary/20 flex items-center justify-center">
                         <span className="text-primary font-semibold">
-                          {request.userId.name.charAt(0).toUpperCase()}
+                          {request.from.name.charAt(0).toUpperCase()}
                         </span>
                       </div>
                       <div>
                         <p className="font-medium text-neutral-900 dark:text-dark-text">
-                          {request.userId.name}
+                          {request.from.name}
                         </p>
                         <p className="text-sm text-neutral-500">
-                          {request.userId.email}
+                          {request.from.email}
                         </p>
                       </div>
                     </div>
                     <div className="flex gap-2">
                       <Button
-                        onClick={() => handleRequest(request._id, "accept")}
+                        onClick={() => handleRequest(request.id, "accept")}
                         variant="primary"
                         className="!px-3 !py-1"
                       >
                         <Check className="h-4 w-4" />
                       </Button>
                       <Button
-                        onClick={() => handleRequest(request._id, "reject")}
+                        onClick={() => handleRequest(request.id, "reject")}
                         variant="destructive"
                         className="!px-3 !py-1"
                       >
                         <X className="h-4 w-4" />
                       </Button>
                     </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Pending Invitations */}
+        {pendingInvitations.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Pending Invitations ({pendingInvitations.length})</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                {pendingInvitations.map((inv) => (
+                  <div
+                    key={inv._id}
+                    className="flex items-center justify-between py-2 border-b border-neutral-200 dark:border-dark-border last:border-0"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="h-10 w-10 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
+                        <Mail className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+                      </div>
+                      <div>
+                        <p className="font-medium text-neutral-900 dark:text-dark-text">
+                          {inv.email}
+                        </p>
+                        <p className="text-xs text-neutral-400">
+                          Invited {new Date(inv.createdAt).toLocaleDateString("en-US", {
+                            month: "short", day: "numeric",
+                          })}
+                        </p>
+                      </div>
+                    </div>
+                    <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+                      <Clock className="h-3 w-3" />
+                      Pending
+                    </span>
                   </div>
                 ))}
               </div>
@@ -244,40 +445,81 @@ export default function FriendsPage() {
                 <p className="text-sm text-neutral-400 dark:text-dark-text-tertiary mt-2">
                   Start by adding friends to track expenses together
                 </p>
+                <div className="flex flex-col sm:flex-row gap-2 justify-center mt-4">
+                  <Button onClick={() => { setModalTab("search"); setShowAddModal(true); }} variant="primary">
+                    <Search className="h-4 w-4 mr-2" />
+                    Search &amp; Add
+                  </Button>
+                  <Button onClick={() => { setModalTab("dummy"); setShowAddModal(true); }} variant="secondary">
+                    <UserRoundPlus className="h-4 w-4 mr-2" />
+                    Add Demo Friend
+                  </Button>
+                  <Button onClick={() => { setModalTab("invite"); setShowAddModal(true); }} variant="secondary">
+                    <Mail className="h-4 w-4 mr-2" />
+                    Invite
+                  </Button>
+                </div>
               </div>
             ) : (
               <div className="space-y-3">
-                {friends.map((friend) => (
+                {friends.map((item) => (
                   <div
-                    key={friend._id}
+                    key={item.id}
                     className="flex items-center justify-between py-2 border-b border-neutral-200 dark:border-dark-border last:border-0"
                   >
                     <div className="flex items-center gap-3">
-                      <div className="h-10 w-10 rounded-full bg-primary/20 flex items-center justify-center">
-                        <span className="text-primary font-semibold">
-                          {friend.name.charAt(0).toUpperCase()}
+                      <div className={`h-10 w-10 rounded-full flex items-center justify-center ${
+                        item.friend.isDummy
+                          ? "bg-amber-100 dark:bg-amber-900/30"
+                          : "bg-primary/20"
+                      }`}>
+                        <span className={`font-semibold ${
+                          item.friend.isDummy ? "text-amber-600" : "text-primary"
+                        }`}>
+                          {item.friend.name.charAt(0).toUpperCase()}
                         </span>
                       </div>
                       <div>
-                        <p className="font-medium text-neutral-900 dark:text-dark-text">
-                          {friend.name}
+                        <p className="font-medium text-neutral-900 dark:text-dark-text flex items-center gap-2">
+                          {item.friend.name}
+                          {item.friend.isDummy && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 font-normal">
+                              Demo
+                            </span>
+                          )}
                         </p>
-                        <p className="text-sm text-neutral-500">{friend.email}</p>
+                        {!item.friend.isDummy && (
+                          <p className="text-sm text-neutral-500">{item.friend.email}</p>
+                        )}
                       </div>
                     </div>
-                    <div
-                      className={`text-lg font-semibold ${
-                        friend.balance === 0
-                          ? "text-neutral-500"
-                          : friend.balance > 0
-                          ? "text-success"
-                          : "text-coral"
-                      }`}
-                    >
-                      {friend.balance === 0
-                        ? "Settled up"
-                        : (friend.balance > 0 ? "+" : "") +
-                          formatCurrency(friend.balance)}
+                    <div className="flex items-center gap-3">
+                      <div
+                        className={`text-lg font-semibold ${
+                          item.balance === 0
+                            ? "text-neutral-500"
+                            : item.balance > 0
+                            ? "text-success"
+                            : "text-coral"
+                        }`}
+                      >
+                        {item.balance === 0
+                          ? "Settled"
+                          : (item.balance > 0 ? "+" : "") +
+                            formatCurrency(item.balance)}
+                      </div>
+                      <button
+                        onClick={() => removeFriend(item.id)}
+                        disabled={removingId === item.id}
+                        className="p-1.5 rounded-md text-neutral-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                        title="Remove friend"
+                      >
+                        {removingId === item.id ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Trash2 className="h-4 w-4" />
+                        )}
+                      </button>
                     </div>
                   </div>
                 ))}
@@ -289,80 +531,244 @@ export default function FriendsPage() {
         {/* Add Friend Modal */}
         <Modal
           isOpen={showAddModal}
-          onClose={() => {
-            setShowAddModal(false);
-            setSearchQuery("");
-            setSearchResults([]);
-          }}
+          onClose={resetModal}
           title="Add Friend"
+          size="md"
         >
           <div className="space-y-4">
-            <div className="flex gap-2">
-              <Input
-                type="text"
-                placeholder="Search by name or email..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && searchUsers()}
-              />
-              <Button onClick={searchUsers} disabled={searching}>
-                <Search className="h-4 w-4" />
-              </Button>
+            {/* Tabs */}
+            <div className="flex border-b border-neutral-200 dark:border-dark-border">
+              {[
+                { key: "search" as const, label: "Search", icon: Search },
+                { key: "dummy" as const, label: "Demo Friend", icon: UserRoundPlus },
+                { key: "invite" as const, label: "Invite", icon: Mail },
+              ].map((tab) => {
+                const Icon = tab.icon;
+                return (
+                  <button
+                    key={tab.key}
+                    onClick={() => setModalTab(tab.key)}
+                    className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+                      modalTab === tab.key
+                        ? "border-primary text-primary"
+                        : "border-transparent text-neutral-500 hover:text-neutral-700 dark:hover:text-dark-text-secondary"
+                    }`}
+                  >
+                    <Icon className="h-4 w-4" />
+                    {tab.label}
+                  </button>
+                );
+              })}
             </div>
 
-            {searching && (
-              <div className="text-center py-8">
-                <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-primary mx-auto"></div>
+            {/* Search Tab */}
+            {modalTab === "search" && (
+              <div className="space-y-4">
+                <div className="flex gap-2">
+                  <Input
+                    type="text"
+                    placeholder="Search by name or email..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && searchUsers()}
+                  />
+                  <Button onClick={searchUsers} disabled={searching}>
+                    <Search className="h-4 w-4" />
+                  </Button>
+                </div>
+
+                {searching && (
+                  <div className="text-center py-8">
+                    <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-primary mx-auto"></div>
+                  </div>
+                )}
+
+                {searchResults.length > 0 && (
+                  <div className="space-y-2">
+                    {searchResults.map((user) => (
+                      <div
+                        key={user.id}
+                        className="flex items-center justify-between p-3 rounded-lg bg-neutral-50 dark:bg-dark-bg-secondary"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="h-10 w-10 rounded-full bg-primary/20 flex items-center justify-center">
+                            <span className="text-primary font-semibold">
+                              {user.name.charAt(0).toUpperCase()}
+                            </span>
+                          </div>
+                          <div>
+                            <p className="font-medium text-neutral-900 dark:text-dark-text">
+                              {user.name}
+                            </p>
+                            <p className="text-sm text-neutral-500">{user.email}</p>
+                          </div>
+                        </div>
+                        {user.friendshipStatus === "none" && (
+                          <Button
+                            onClick={() => sendFriendRequest(user.id)}
+                            variant="primary"
+                          >
+                            <UserPlus className="h-4 w-4 mr-2" />
+                            Add
+                          </Button>
+                        )}
+                        {user.friendshipStatus === "pending" && (
+                          <span className="text-sm text-neutral-500">Pending</span>
+                        )}
+                        {user.friendshipStatus === "accepted" && (
+                          <span className="text-sm text-success">Friends</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {!searching && hasSearched && searchResults.length === 0 && (
+                  <div className="text-center py-6 text-neutral-500">
+                    <UserPlus className="h-10 w-10 mx-auto mb-2 text-neutral-300" />
+                    <p className="font-medium">No users found</p>
+                    <p className="text-sm text-neutral-400 mt-1">
+                      Try the <b>Invite</b> tab to invite via email, or <b>Demo Friend</b> to add a placeholder.
+                    </p>
+                  </div>
+                )}
+
+                {!hasSearched && !searching && (
+                  <p className="text-sm text-neutral-400 text-center py-4">
+                    Search for existing DooSplit users by name or email
+                  </p>
+                )}
               </div>
             )}
 
-            {searchResults.length > 0 && (
-              <div className="space-y-2">
-                {searchResults.map((user) => (
+            {/* Dummy/Demo Friend Tab */}
+            {modalTab === "dummy" && (
+              <div className="space-y-4">
+                <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3 text-sm text-amber-700 dark:text-amber-400">
+                  <p className="font-medium mb-1">What is a Demo Friend?</p>
+                  <p className="text-amber-600 dark:text-amber-500">
+                    Add someone by name as a placeholder. You can track expenses with them now.
+                    When they join DooSplit later via your invite, the demo account merges into their real account automatically.
+                  </p>
+                </div>
+
+                <Input
+                  label="Friend's Name"
+                  type="text"
+                  placeholder="e.g. Rahul, Priya..."
+                  value={dummyName}
+                  onChange={(e) => setDummyName(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && createDummyFriend()}
+                />
+
+                <Button
+                  onClick={createDummyFriend}
+                  variant="primary"
+                  className="w-full"
+                  isLoading={creatingDummy}
+                >
+                  <UserRoundPlus className="h-4 w-4 mr-2" />
+                  Add Demo Friend
+                </Button>
+
+                {dummyResult && (
                   <div
-                    key={user._id}
-                    className="flex items-center justify-between p-3 rounded-lg bg-neutral-50 dark:bg-dark-bg-secondary"
+                    className={`p-3 rounded-lg text-sm flex items-center gap-2 ${
+                      dummyResult.type === "success"
+                        ? "bg-green-50 text-green-700 border border-green-200 dark:bg-green-900/20 dark:text-green-400 dark:border-green-800"
+                        : "bg-red-50 text-red-600 border border-red-200 dark:bg-red-900/20 dark:text-red-400 dark:border-red-800"
+                    }`}
                   >
-                    <div className="flex items-center gap-3">
-                      <div className="h-10 w-10 rounded-full bg-primary/20 flex items-center justify-center">
-                        <span className="text-primary font-semibold">
-                          {user.name.charAt(0).toUpperCase()}
-                        </span>
-                      </div>
-                      <div>
-                        <p className="font-medium text-neutral-900 dark:text-dark-text">
-                          {user.name}
-                        </p>
-                        <p className="text-sm text-neutral-500">{user.email}</p>
+                    {dummyResult.type === "success" ? (
+                      <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
+                    ) : (
+                      <AlertCircle className="h-4 w-4 flex-shrink-0" />
+                    )}
+                    {dummyResult.message}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Invite Tab */}
+            {modalTab === "invite" && (
+              <div className="space-y-4">
+                <div className="bg-neutral-50 dark:bg-dark-bg-tertiary rounded-lg p-4 space-y-3">
+                  <div className="flex items-center gap-2 text-sm font-medium text-neutral-700 dark:text-dark-text-secondary">
+                    <Mail className="h-4 w-4 text-primary" />
+                    Send Email Invitation
+                  </div>
+                  <div className="flex gap-2">
+                    <Input
+                      type="email"
+                      placeholder="friend@example.com"
+                      value={inviteEmail}
+                      onChange={(e) => setInviteEmail(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && sendInviteFromModal()}
+                    />
+                    <Button
+                      onClick={() => sendInviteFromModal()}
+                      disabled={sendingInvite || !inviteEmail.trim()}
+                      variant="primary"
+                    >
+                      {sendingInvite ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Send className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </div>
+
+                  {inviteResult && (
+                    <div
+                      className={`p-3 rounded-lg text-sm ${
+                        inviteResult.type === "success"
+                          ? "bg-green-50 border border-green-200 text-green-700 dark:bg-green-900/20 dark:border-green-800 dark:text-green-400"
+                          : "bg-red-50 border border-red-200 text-red-600 dark:bg-red-900/20 dark:border-red-800 dark:text-red-400"
+                      }`}
+                    >
+                      <div className="flex items-start gap-2">
+                        {inviteResult.type === "success" ? (
+                          <CheckCircle2 className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                        ) : (
+                          <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                        )}
+                        <div>
+                          <p>{inviteResult.message}</p>
+                          {inviteResult.inviteLink && (
+                            <button
+                              onClick={() => copyToClipboard(inviteResult.inviteLink!)}
+                              className="mt-1 inline-flex items-center gap-1 text-primary text-xs hover:underline"
+                            >
+                              {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                              {copied ? "Copied!" : "Copy invite link"}
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
-                    {user.friendshipStatus === "none" && (
-                      <Button
-                        onClick={() => sendFriendRequest(user._id)}
-                        variant="primary"
-                      >
-                        <UserPlus className="h-4 w-4 mr-2" />
-                        Add
-                      </Button>
-                    )}
-                    {user.friendshipStatus === "pending" && (
-                      <span className="text-sm text-neutral-500">Pending</span>
-                    )}
-                    {user.friendshipStatus === "friends" && (
-                      <span className="text-sm text-success">Friends</span>
-                    )}
+                  )}
+                </div>
+
+                <div className="relative">
+                  <div className="absolute inset-0 flex items-center">
+                    <div className="w-full border-t border-neutral-200 dark:border-dark-border"></div>
                   </div>
-                ))}
+                  <div className="relative flex justify-center text-xs">
+                    <span className="px-2 bg-white dark:bg-dark-bg-secondary text-neutral-400">or</span>
+                  </div>
+                </div>
+
+                <Button
+                  onClick={() => { resetModal(); router.push("/invite"); }}
+                  variant="secondary"
+                  className="w-full"
+                >
+                  <Link2 className="h-4 w-4 mr-2" />
+                  Full Invite Page (Link + WhatsApp)
+                </Button>
               </div>
             )}
-
-            {!searching &&
-              searchQuery &&
-              searchResults.length === 0 && (
-                <div className="text-center py-8 text-neutral-500">
-                  <p>No users found</p>
-                </div>
-              )}
           </div>
         </Modal>
       </div>

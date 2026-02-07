@@ -2,10 +2,18 @@ import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import dbConnect from "@/lib/db";
 import User from "@/models/User";
+import { sendPasswordResetEmail } from "@/lib/email";
+import { checkRateLimit, createRateLimitResponse, RATE_LIMITS } from "@/lib/rateLimit";
 
 export const dynamic = 'force-dynamic';
 
 export async function POST(request: NextRequest) {
+  // Apply strict rate limiting for password reset
+  const rateLimitResult = checkRateLimit(request, RATE_LIMITS.passwordReset);
+  if (!rateLimitResult.allowed) {
+    return createRateLimitResponse(rateLimitResult);
+  }
+
   try {
     const body = await request.json();
     const { email } = body;
@@ -36,20 +44,48 @@ export async function POST(request: NextRequest) {
     user.resetPasswordExpires = resetTokenExpires;
     await user.save();
 
-    // TODO: Send email with reset link
-    // For now, just return the token in development
-    const resetUrl =
-      process.env.NODE_ENV === "development"
-        ? `http://localhost:3000/auth/reset-password?token=${resetToken}`
-        : undefined;
+    // Build reset link
+    const appUrl =
+      process.env.NEXT_PUBLIC_APP_URL ||
+      process.env.NEXTAUTH_URL ||
+      "http://localhost:3000";
+    const resetUrl = `${appUrl}/auth/reset-password?token=${resetToken}`;
 
-    return NextResponse.json(
-      {
-        message: "Password reset email sent",
-        ...(process.env.NODE_ENV === "development" && { resetUrl }),
-      },
-      { status: 200 }
-    );
+    // Send email with reset link
+    try {
+      await sendPasswordResetEmail({
+        to: user.email,
+        userName: user.name || "User",
+        resetLink: resetUrl,
+      });
+
+      return NextResponse.json(
+        {
+          message: "Password reset email sent successfully. Please check your inbox.",
+        },
+        { status: 200 }
+      );
+    } catch (emailError) {
+      console.error("Failed to send password reset email:", emailError);
+      
+      // Still return success with the link for development
+      if (process.env.NODE_ENV === "development") {
+        return NextResponse.json(
+          {
+            message: "Password reset email could not be sent, but you can use this link",
+            resetUrl,
+          },
+          { status: 200 }
+        );
+      }
+
+      return NextResponse.json(
+        {
+          message: "Failed to send reset email. Please try again later.",
+        },
+        { status: 500 }
+      );
+    }
   } catch (error: any) {
     console.error("Forgot password error:", error);
     return NextResponse.json(

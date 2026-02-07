@@ -4,6 +4,7 @@ import dbConnect from "@/lib/db";
 import Settlement from "@/models/Settlement";
 import ExpenseParticipant from "@/models/ExpenseParticipant";
 import { authOptions } from "@/lib/auth";
+import { notifySettlement } from "@/lib/notificationService";
 import mongoose from "mongoose";
 
 export const dynamic = 'force-dynamic';
@@ -149,6 +150,26 @@ export async function POST(request: NextRequest) {
       .populate("fromUserId", "name email profilePicture")
       .populate("toUserId", "name email profilePicture")
       .populate("groupId", "name image");
+
+    // Send notification to the other party
+    try {
+      await notifySettlement(
+        settlement._id,
+        {
+          id: populatedSettlement!.fromUserId._id,
+          name: (populatedSettlement!.fromUserId as any).name,
+        },
+        {
+          id: populatedSettlement!.toUserId._id,
+          name: (populatedSettlement!.toUserId as any).name,
+        },
+        amount,
+        currency || "INR",
+        userId
+      );
+    } catch (notifError) {
+      console.error("Failed to send notifications:", notifError);
+    }
 
     return NextResponse.json(
       {
