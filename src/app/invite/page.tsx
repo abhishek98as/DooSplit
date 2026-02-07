@@ -87,7 +87,7 @@ export default function InvitePage() {
               <Button
                 onClick={copyToClipboard}
                 className="px-4"
-                variant="outline"
+                variant="secondary"
               >
                 {copied ? (
                   <Check className="h-4 w-4 text-success" />
@@ -106,7 +106,7 @@ export default function InvitePage() {
           <div className="space-y-2">
             <Button
               onClick={shareViaEmail}
-              variant="outline"
+              variant="secondary"
               className="w-full justify-start"
             >
               <Mail className="h-4 w-4 mr-2" />
@@ -114,16 +114,16 @@ export default function InvitePage() {
             </Button>
             <Button
               onClick={shareViaWhatsApp}
-              variant="outline"
+              variant="secondary"
               className="w-full justify-start"
             >
               <MessageCircle className="h-4 w-4 mr-2" />
               Share via WhatsApp
             </Button>
-            {typeof navigator !== "undefined" && navigator.share && (
+            {typeof navigator !== "undefined" && "share" in navigator && (
               <Button
                 onClick={shareViaNativeShare}
-                variant="outline"
+                variant="secondary"
                 className="w-full justify-start"
               >
                 <Share2 className="h-4 w-4 mr-2" />
