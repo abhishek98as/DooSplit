@@ -37,7 +37,12 @@ export default function LoginPage() {
       });
 
       if (result?.error) {
-        setError("Invalid email or password");
+        // Show actual error from server for better debugging
+        setError(result.error === "CredentialsSignin" 
+          ? "Invalid email or password" 
+          : result.error);
+      } else if (!result?.ok) {
+        setError("Login failed. Please try again.");
       } else {
         router.push("/dashboard");
         router.refresh();

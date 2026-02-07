@@ -114,34 +114,53 @@ export const authOptions: AuthOptions = {
           console.warn("⚠️ Admin seed skipped:", seedError.message);
         }
 
-        const user = await User.findOne({ email: credentials.email.toLowerCase() }).select(
-          "+password"
-        );
+        try {
+          const user = await User.findOne({ email: credentials.email.toLowerCase() }).select(
+            "+password"
+          );
 
-        if (!user) {
-          throw new Error("Invalid email or password");
+          if (!user) {
+            console.log(`❌ Login failed: User not found for email ${credentials.email.toLowerCase()}`);
+            throw new Error("Invalid email or password");
+          }
+
+          if (!user.isActive) {
+            console.log(`❌ Login failed: Account deactivated for ${credentials.email.toLowerCase()}`);
+            throw new Error("Account is deactivated");
+          }
+
+          if (!user.password) {
+            console.log(`❌ Login failed: No password set for ${credentials.email.toLowerCase()}`);
+            throw new Error("Invalid email or password");
+          }
+
+          const isPasswordValid = await bcrypt.compare(
+            credentials.password,
+            user.password
+          );
+
+          if (!isPasswordValid) {
+            console.log(`❌ Login failed: Password mismatch for ${credentials.email.toLowerCase()}`);
+            throw new Error("Invalid email or password");
+          }
+
+          console.log(`✅ Login successful for ${user.email} (role: ${user.role})`);
+
+          return {
+            id: user._id.toString(),
+            email: user.email,
+            name: user.name,
+            image: user.profilePicture,
+            role: user.role,
+          };
+        } catch (error: any) {
+          // Re-throw auth errors as-is, wrap unexpected errors
+          if (error.message.includes("Invalid") || error.message.includes("deactivated")) {
+            throw error;
+          }
+          console.error("❌ Unexpected error during login:", error.message);
+          throw new Error("Login failed. Please try again.");
         }
-
-        if (!user.isActive) {
-          throw new Error("Account is deactivated");
-        }
-
-        const isPasswordValid = await bcrypt.compare(
-          credentials.password,
-          user.password
-        );
-
-        if (!isPasswordValid) {
-          throw new Error("Invalid email or password");
-        }
-
-        return {
-          id: user._id.toString(),
-          email: user.email,
-          name: user.name,
-          image: user.profilePicture,
-          role: user.role,
-        };
       },
     }),
   ],
@@ -177,5 +196,5 @@ export const authOptions: AuthOptions = {
     maxAge: 30 * 24 * 60 * 60, // 30 days
   },
   secret: process.env.NEXTAUTH_SECRET,
-  debug: false,
+  debug: process.env.NODE_ENV !== "production" || process.env.NEXTAUTH_DEBUG === "true",
 };
