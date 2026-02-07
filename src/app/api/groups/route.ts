@@ -6,6 +6,8 @@ import GroupMember from "@/models/GroupMember";
 import { authOptions } from "@/lib/auth";
 import mongoose from "mongoose";
 
+export const dynamic = 'force-dynamic';
+
 // GET /api/groups - List groups
 export async function GET(request: NextRequest) {
   try {
@@ -147,3 +149,4 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+

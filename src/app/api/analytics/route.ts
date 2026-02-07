@@ -7,6 +7,8 @@ import Settlement from "@/models/Settlement";
 import { authOptions } from "@/lib/auth";
 import mongoose from "mongoose";
 
+export const dynamic = 'force-dynamic';
+
 // GET /api/analytics - Get analytics data
 export async function GET(request: NextRequest) {
   try {
@@ -153,3 +155,4 @@ export async function GET(request: NextRequest) {
     );
   }
 }
+

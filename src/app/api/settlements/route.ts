@@ -6,6 +6,8 @@ import ExpenseParticipant from "@/models/ExpenseParticipant";
 import { authOptions } from "@/lib/auth";
 import mongoose from "mongoose";
 
+export const dynamic = 'force-dynamic';
+
 // GET /api/settlements - List settlements
 export async function GET(request: NextRequest) {
   try {
@@ -163,3 +165,4 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+

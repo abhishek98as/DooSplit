@@ -7,6 +7,8 @@ import {splitEqually, splitByExactAmounts, splitByPercentages, splitByShares, va
 import { authOptions } from "@/lib/auth";
 import mongoose from "mongoose";
 
+export const dynamic = 'force-dynamic';
+
 // GET /api/expenses - List expenses
 export async function GET(request: NextRequest) {
   try {
@@ -230,3 +232,4 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+

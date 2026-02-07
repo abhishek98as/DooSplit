@@ -3,6 +3,8 @@ import crypto from "crypto";
 import dbConnect from "@/lib/db";
 import User from "@/models/User";
 
+export const dynamic = 'force-dynamic';
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
@@ -56,3 +58,4 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+

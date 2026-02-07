@@ -5,6 +5,8 @@ import Notification from "@/models/Notification";
 import { authOptions } from "@/lib/auth";
 import mongoose from "mongoose";
 
+export const dynamic = 'force-dynamic';
+
 // GET /api/notifications - Get user notifications
 export async function GET(request: NextRequest) {
   try {
@@ -80,3 +82,4 @@ export async function PUT(request: NextRequest) {
     );
   }
 }
+

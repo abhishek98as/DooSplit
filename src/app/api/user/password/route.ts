@@ -5,6 +5,8 @@ import dbConnect from "@/lib/db";
 import User from "@/models/User";
 import { authOptions } from "@/lib/auth";
 
+export const dynamic = 'force-dynamic';
+
 export async function PUT(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions);

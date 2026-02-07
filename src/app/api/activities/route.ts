@@ -8,6 +8,8 @@ import Friend from "@/models/Friend";
 import { authOptions } from "@/lib/auth";
 import mongoose from "mongoose";
 
+export const dynamic = 'force-dynamic';
+
 // GET /api/activities - Get activity feed
 export async function GET(request: NextRequest) {
   try {
@@ -133,3 +135,4 @@ export async function GET(request: NextRequest) {
     );
   }
 }
+

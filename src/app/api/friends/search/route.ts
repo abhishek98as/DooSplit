@@ -6,6 +6,8 @@ import Friend from "@/models/Friend";
 import { authOptions } from "@/lib/auth";
 import mongoose from "mongoose";
 
+export const dynamic = 'force-dynamic';
+
 export async function GET(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
@@ -75,3 +77,4 @@ export async function GET(request: NextRequest) {
     );
   }
 }
+

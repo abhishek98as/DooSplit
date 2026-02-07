@@ -7,6 +7,8 @@ import ExpenseParticipant from "@/models/ExpenseParticipant";
 import { authOptions } from "@/lib/auth";
 import mongoose from "mongoose";
 
+export const dynamic = 'force-dynamic';
+
 // GET /api/friends - List all friends
 export async function GET(request: NextRequest) {
   try {
@@ -197,3 +199,4 @@ async function calculateBalance(
 
   return balance;
 }
+
