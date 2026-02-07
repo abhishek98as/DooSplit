@@ -4,7 +4,7 @@ import bcrypt from "bcryptjs";
 import dbConnect from "@/lib/db";
 import User from "@/models/User";
 import { seedAdminUser } from "./seedAdmin";
-import { adminAuth } from "./firebase-admin";
+import { adminAuth, initError as firebaseInitError } from "./firebase-admin";
 
 export const authOptions: AuthOptions = {
   providers: [
@@ -20,6 +20,11 @@ export const authOptions: AuthOptions = {
       async authorize(credentials) {
         if (!credentials?.idToken) {
           throw new Error("No Firebase ID token provided");
+        }
+
+        if (!adminAuth) {
+          console.error("Firebase Admin SDK not initialized:", firebaseInitError);
+          throw new Error("Google sign-in is unavailable. Please use email/password login.");
         }
 
         try {
@@ -95,10 +100,21 @@ export const authOptions: AuthOptions = {
           throw new Error("Email and password are required");
         }
 
-        await dbConnect();
-        await seedAdminUser();
+        try {
+          await dbConnect();
+        } catch (dbError: any) {
+          console.error("❌ Database connection failed during login:", dbError.message);
+          throw new Error("Service temporarily unavailable. Please try again.");
+        }
 
-        const user = await User.findOne({ email: credentials.email }).select(
+        try {
+          await seedAdminUser();
+        } catch (seedError: any) {
+          // Non-blocking: just log, don't fail login
+          console.warn("⚠️ Admin seed skipped:", seedError.message);
+        }
+
+        const user = await User.findOne({ email: credentials.email.toLowerCase() }).select(
           "+password"
         );
 
