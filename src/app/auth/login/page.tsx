@@ -14,6 +14,7 @@ export default function LoginPage() {
     email: "",
     password: "",
   });
+  const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
@@ -31,6 +32,7 @@ export default function LoginPage() {
       const result = await signIn("credentials", {
         email: formData.email,
         password: formData.password,
+        rememberMe: rememberMe.toString(),
         redirect: false,
       });
 
@@ -259,7 +261,22 @@ export default function LoginPage() {
                   </button>
                 </div>
 
-                <div className="flex items-center justify-end">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center">
+                    <input
+                      type="checkbox"
+                      id="rememberMe"
+                      checked={rememberMe}
+                      onChange={(e) => setRememberMe(e.target.checked)}
+                      className="h-4 w-4 text-primary border-neutral-300 rounded focus:ring-primary focus:ring-2"
+                    />
+                    <label
+                      htmlFor="rememberMe"
+                      className="ml-2 text-sm text-neutral-600"
+                    >
+                      Remember me
+                    </label>
+                  </div>
                   <Link
                     href="/auth/forgot-password"
                     className="text-sm text-primary hover:underline"

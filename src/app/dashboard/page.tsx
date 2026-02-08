@@ -445,7 +445,7 @@ export default function DashboardPage() {
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
-                {activities.slice(0, 10).map((activity) => (
+                {activities.slice(0, 20).map((activity) => (
                   <div
                     key={activity.id}
                     className="flex items-start gap-3 p-3 rounded-lg border border-neutral-200 dark:border-dark-border hover:bg-neutral-50 dark:hover:bg-dark-bg-secondary transition-colors"

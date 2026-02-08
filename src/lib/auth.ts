@@ -100,11 +100,14 @@ export const authOptions: AuthOptions = {
       credentials: {
         email: { label: "Email", type: "email" },
         password: { label: "Password", type: "password" },
+        rememberMe: { label: "Remember Me", type: "text" },
       },
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) {
           throw new Error("Email and password are required");
         }
+
+        const rememberMe = credentials.rememberMe === "true";
 
         try {
           await dbConnect();
@@ -151,11 +154,10 @@ export const authOptions: AuthOptions = {
           }
 
           // Check email verification for email/password accounts
-          // TEMPORARILY DISABLED FOR DEVELOPMENT - Re-enable when email service is fully configured
-          // if (user.authProvider === "email" && !user.emailVerified) {
-          //   console.log(`❌ Login failed: Email not verified for ${credentials.email.toLowerCase()}`);
-          //   throw new Error("Please verify your email address before signing in. Check your inbox for the verification link.");
-          // }
+          if (user.authProvider === "email" && !user.emailVerified) {
+            console.log(`❌ Login failed: Email not verified for ${credentials.email.toLowerCase()}`);
+            throw new Error("Please verify your email address before signing in. Check your inbox for the verification link.");
+          }
 
           console.log(`✅ Login successful for ${user.email} (role: ${user.role}, verified: ${user.emailVerified})`);
 
@@ -165,6 +167,7 @@ export const authOptions: AuthOptions = {
             name: user.name,
             image: user.profilePicture,
             role: user.role,
+            rememberMe,
           };
         } catch (error: any) {
           // Re-throw auth errors as-is, wrap unexpected errors
@@ -181,7 +184,8 @@ export const authOptions: AuthOptions = {
     async jwt({ token, user, trigger, session }) {
       if (user) {
         token.id = user.id;
-        token.role = user.role;
+        token.role = (user as any).role;
+        token.rememberMe = (user as any).rememberMe || false;
       }
 
       // Update token if session update is triggered
@@ -196,6 +200,16 @@ export const authOptions: AuthOptions = {
         session.user.id = token.id as string;
         session.user.role = token.role as string;
       }
+
+      // Set custom session expiry based on rememberMe preference
+      if (token.rememberMe) {
+        // Extend session to 90 days for "remember me"
+        session.expires = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString();
+      } else {
+        // Default to 30 days
+        session.expires = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+      }
+
       return session;
     },
   },

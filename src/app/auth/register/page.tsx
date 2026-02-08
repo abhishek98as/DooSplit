@@ -27,10 +27,57 @@ export default function RegisterPage() {
   const [registrationSuccess, setRegistrationSuccess] = useState(false);
 
   const getPasswordStrength = (password: string) => {
-    if (password.length < 6) return { strength: 0, label: "" };
-    if (password.length < 8) return { strength: 1, label: "Weak" };
-    if (password.length < 12) return { strength: 2, label: "Medium" };
-    return { strength: 3, label: "Strong" };
+    if (!password) return { strength: 0, label: "", feedback: [] };
+
+    let score = 0;
+    const feedback: string[] = [];
+
+    // Length check
+    if (password.length >= 8) score += 1;
+    else feedback.push("Use at least 8 characters");
+
+    if (password.length >= 12) score += 1;
+
+    // Character variety checks
+    if (/[a-z]/.test(password)) score += 1;
+    else feedback.push("Add lowercase letters");
+
+    if (/[A-Z]/.test(password)) score += 1;
+    else feedback.push("Add uppercase letters");
+
+    if (/\d/.test(password)) score += 1;
+    else feedback.push("Add numbers");
+
+    if (/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password)) score += 1;
+    else feedback.push("Add special characters");
+
+    // Common patterns to avoid
+    if (password.toLowerCase().includes("password") ||
+        password.toLowerCase().includes("123456") ||
+        password.toLowerCase().includes("qwerty")) {
+      score = Math.max(0, score - 2);
+      feedback.push("Avoid common words or patterns");
+    }
+
+    // Determine strength level
+    let strength = 0;
+    let label = "";
+
+    if (score <= 2) {
+      strength = 1;
+      label = "Weak";
+    } else if (score <= 4) {
+      strength = 2;
+      label = "Fair";
+    } else if (score <= 6) {
+      strength = 3;
+      label = "Good";
+    } else {
+      strength = 4;
+      label = "Strong";
+    }
+
+    return { strength, label, feedback };
   };
 
   const passwordStrength = getPasswordStrength(formData.password);
@@ -282,7 +329,7 @@ export default function RegisterPage() {
               {formData.password && (
                 <div className="mt-2">
                   <div className="flex gap-1">
-                    {[1, 2, 3].map((level) => (
+                    {[1, 2, 3, 4].map((level) => (
                       <div
                         key={level}
                         className={`h-1 flex-1 rounded-full transition-colors ${
@@ -290,6 +337,8 @@ export default function RegisterPage() {
                             ? level === 1
                               ? "bg-error"
                               : level === 2
+                              ? "bg-orange-400"
+                              : level === 3
                               ? "bg-warning"
                               : "bg-success"
                             : "bg-neutral-200"
@@ -298,9 +347,26 @@ export default function RegisterPage() {
                     ))}
                   </div>
                   {passwordStrength.label && (
-                    <p className="text-xs text-neutral-500 mt-1">
-                      Password strength: {passwordStrength.label}
-                    </p>
+                    <div className="mt-2">
+                      <p className={`text-xs font-medium ${
+                        passwordStrength.strength === 1 ? "text-error" :
+                        passwordStrength.strength === 2 ? "text-orange-600" :
+                        passwordStrength.strength === 3 ? "text-warning" :
+                        "text-success"
+                      }`}>
+                        Password strength: {passwordStrength.label}
+                      </p>
+                      {passwordStrength.feedback && passwordStrength.feedback.length > 0 && (
+                        <ul className="text-xs text-neutral-500 mt-1 space-y-1">
+                          {passwordStrength.feedback.slice(0, 2).map((item, index) => (
+                            <li key={index} className="flex items-center gap-1">
+                              <span className="text-neutral-400">•</span>
+                              {item}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
                   )}
                 </div>
               )}

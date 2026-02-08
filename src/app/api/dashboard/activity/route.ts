@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
     const userId = new mongoose.Types.ObjectId(session.user.id);
     const activities: any[] = [];
 
-    // Get recent expenses where user is involved (last 5)
+    // Get recent expenses where user is involved (last 12)
     const participantRecords = await ExpenseParticipant.find({ userId }).select("expenseId");
     const expenseIds = participantRecords.map((p) => p.expenseId);
 
@@ -37,7 +37,7 @@ export async function GET(request: NextRequest) {
       .populate("createdBy", "name profilePicture")
       .populate("groupId", "name")
       .sort({ createdAt: -1 })
-      .limit(5)
+      .limit(12)
       .lean();
 
     expenses.forEach((expense: any) => {
@@ -71,14 +71,14 @@ export async function GET(request: NextRequest) {
       });
     });
 
-    // Get recent settlements where user is involved (last 5)
+    // Get recent settlements where user is involved (last 8)
     const settlements = await Settlement.find({
       $or: [{ fromUserId: userId }, { toUserId: userId }],
     })
       .populate("fromUserId", "name profilePicture")
       .populate("toUserId", "name profilePicture")
       .sort({ createdAt: -1 })
-      .limit(5)
+      .limit(8)
       .lean();
 
     settlements.forEach((settlement: any) => {
@@ -127,9 +127,9 @@ export async function GET(request: NextRequest) {
       });
     });
 
-    // Sort all activities by createdAt and take the most recent 15
+    // Sort all activities by createdAt and take the most recent 20
     activities.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    const recentActivities = activities.slice(0, 15);
+    const recentActivities = activities.slice(0, 20);
 
     return NextResponse.json({
       activities: recentActivities
