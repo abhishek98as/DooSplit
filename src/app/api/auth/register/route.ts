@@ -70,40 +70,47 @@ export async function POST(request: NextRequest) {
     const verificationToken = crypto.randomBytes(32).toString("hex");
     const verificationTokenExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
 
+    // In development, auto-verify emails to simplify testing
+    const isDevelopment = process.env.NODE_ENV === "development" || process.env.NEXTAUTH_URL?.includes("localhost");
+
     // Create user
     const user = await User.create({
       name: name.trim(),
       email: email.toLowerCase().trim(),
       password: hashedPassword,
-      emailVerified: false,
+      emailVerified: isDevelopment ? true : false, // Auto-verify in development
       authProvider: "email",
       resetPasswordToken: verificationToken,
       resetPasswordExpires: verificationTokenExpires,
     });
 
-    // Send email verification
-    try {
-      const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.NEXTAUTH_URL || "http://localhost:3000";
-      const verificationUrl = `${appUrl}/api/auth/verify-email?token=${verificationToken}`;
+    // Send email verification (only in production)
+    if (!isDevelopment) {
+      try {
+        const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.NEXTAUTH_URL || "http://localhost:3000";
+        const verificationUrl = `${appUrl}/api/auth/verify-email?token=${verificationToken}`;
 
-      await sendEmailVerification({
-        to: user.email,
-        userName: user.name,
-        verificationUrl,
-      });
-    } catch (emailError) {
-      console.error("Failed to send verification email:", emailError);
-      // Don't fail registration if email fails
+        await sendEmailVerification({
+          to: user.email,
+          userName: user.name,
+          verificationUrl,
+        });
+      } catch (emailError) {
+        console.error("Failed to send verification email:", emailError);
+        // Don't fail registration if email fails
+      }
     }
 
-    // Return user without password
-    const responseData: any = {
-      message: "User registered successfully. Please check your email to verify your account.",
+    // Return uisDevelopment 
+        ? "User registered successfully. You can now log in." 
+        : "User registered successfully. Please check your email to verify your account.",
       user: {
         id: user._id,
         name: user.name,
         email: user.email,
-        emailVerified: false,
+        emailVerified: user.emailVerified,
+      },
+      requiresEmailVerification: !isDevelopment
       },
       requiresEmailVerification: true,
     };

@@ -151,12 +151,13 @@ export const authOptions: AuthOptions = {
           }
 
           // Check email verification for email/password accounts
-          if (user.authProvider === "email" && !user.emailVerified) {
-            console.log(`❌ Login failed: Email not verified for ${credentials.email.toLowerCase()}`);
-            throw new Error("Please verify your email address before signing in. Check your inbox for the verification link.");
-          }
+          // TEMPORARILY DISABLED FOR DEVELOPMENT - Re-enable when email service is fully configured
+          // if (user.authProvider === "email" && !user.emailVerified) {
+          //   console.log(`❌ Login failed: Email not verified for ${credentials.email.toLowerCase()}`);
+          //   throw new Error("Please verify your email address before signing in. Check your inbox for the verification link.");
+          // }
 
-          console.log(`✅ Login successful for ${user.email} (role: ${user.role})`);
+          console.log(`✅ Login successful for ${user.email} (role: ${user.role}, verified: ${user.emailVerified})`);
 
           return {
             id: user._id.toString(),

@@ -4,7 +4,7 @@ import Invitation from "@/models/Invitation";
 
 export const dynamic = "force-dynamic";
 
-// GET /api/invitations/[token] - Validate an invitation token
+// GET /api/invitations/token/[token] - Validate an invitation token
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ token: string }> }

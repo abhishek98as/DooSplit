@@ -47,7 +47,7 @@ export default function AcceptInvitePage() {
   useEffect(() => {
     async function validateToken() {
       try {
-        const res = await fetch(`/api/invitations/${token}`);
+        const res = await fetch(`/api/invitations/token/${token}`);
         const data = await res.json();
 
         if (data.valid) {
