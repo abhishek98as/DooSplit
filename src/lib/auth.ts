@@ -44,8 +44,13 @@ export const authOptions: AuthOptions = {
           // Seed admin user on first login attempt
           await seedAdminUser();
 
-          // Find or create user in MongoDB
-          let user = await User.findOne({ email: email.toLowerCase() });
+          // Check if user already exists with email/password auth
+          let user = await User.findOne({ email: email.toLowerCase(), isDummy: { $ne: true } });
+
+          if (user && user.authProvider === "email") {
+            // Email account exists - prevent Firebase sign-in
+            throw new Error("An account with this email already exists using email/password login. Please use email/password to sign in instead.");
+          }
 
           if (!user) {
             // Create new user from Firebase auth
@@ -60,10 +65,11 @@ export const authOptions: AuthOptions = {
               profilePicture: image || undefined,
               password: randomPassword,
               emailVerified: decodedToken.email_verified || false,
+              authProvider: "firebase",
               isActive: true,
             });
           } else {
-            // Update profile picture if changed
+            // Existing Firebase user - update profile picture if changed
             if (image && user.profilePicture !== image) {
               user.profilePicture = image;
               await user.save();
@@ -142,6 +148,12 @@ export const authOptions: AuthOptions = {
           if (!isPasswordValid) {
             console.log(`❌ Login failed: Password mismatch for ${credentials.email.toLowerCase()}`);
             throw new Error("Invalid email or password");
+          }
+
+          // Check email verification for email/password accounts
+          if (user.authProvider === "email" && !user.emailVerified) {
+            console.log(`❌ Login failed: Email not verified for ${credentials.email.toLowerCase()}`);
+            throw new Error("Please verify your email address before signing in. Check your inbox for the verification link.");
           }
 
           console.log(`✅ Login successful for ${user.email} (role: ${user.role})`);

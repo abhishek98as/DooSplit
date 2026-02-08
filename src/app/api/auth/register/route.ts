@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
+import crypto from "crypto";
 import mongoose from "mongoose";
 import dbConnect from "@/lib/db";
 import User from "@/models/User";
 import Invitation from "@/models/Invitation";
 import Friend from "@/models/Friend";
+import { sendEmailVerification } from "@/lib/email";
 import { checkRateLimit, createRateLimitResponse, RATE_LIMITS } from "@/lib/rateLimit";
 
 export const dynamic = 'force-dynamic';
@@ -48,8 +50,15 @@ export async function POST(request: NextRequest) {
     // Check if user already exists (non-dummy)
     const existingUser = await User.findOne({ email: email.toLowerCase(), isDummy: { $ne: true } });
     if (existingUser) {
+      // Determine which auth method to recommend based on existing account
+      const loginMethod = existingUser.authProvider === "firebase" ? "Google" : "email/password";
       return NextResponse.json(
-        { error: "User with this email already exists" },
+        {
+          error: "An account with this email already exists",
+          conflict: true,
+          recommendedMethod: loginMethod,
+          message: `This email is already registered with ${loginMethod} login. Please use ${loginMethod} to sign in instead.`
+        },
         { status: 409 }
       );
     }
@@ -57,22 +66,46 @@ export async function POST(request: NextRequest) {
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
+    // Generate email verification token
+    const verificationToken = crypto.randomBytes(32).toString("hex");
+    const verificationTokenExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+
     // Create user
     const user = await User.create({
       name: name.trim(),
       email: email.toLowerCase().trim(),
       password: hashedPassword,
       emailVerified: false,
+      authProvider: "email",
+      resetPasswordToken: verificationToken,
+      resetPasswordExpires: verificationTokenExpires,
     });
+
+    // Send email verification
+    try {
+      const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.NEXTAUTH_URL || "http://localhost:3000";
+      const verificationUrl = `${appUrl}/api/auth/verify-email?token=${verificationToken}`;
+
+      await sendEmailVerification({
+        to: user.email,
+        userName: user.name,
+        verificationUrl,
+      });
+    } catch (emailError) {
+      console.error("Failed to send verification email:", emailError);
+      // Don't fail registration if email fails
+    }
 
     // Return user without password
     const responseData: any = {
-      message: "User registered successfully",
+      message: "User registered successfully. Please check your email to verify your account.",
       user: {
         id: user._id,
         name: user.name,
         email: user.email,
+        emailVerified: false,
       },
+      requiresEmailVerification: true,
     };
 
     // If registered via invitation, mark it accepted and auto-add as friends

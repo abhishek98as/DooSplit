@@ -1,30 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
+import { getServerSession } from "next-auth/next";
+import mongoose from "mongoose";
 import dbConnect from "@/lib/db";
 import Friend from "@/models/Friend";
-import { authOptions } from "@/lib/auth";
-import { notifyFriendAccepted } from "@/lib/notificationService";
-import mongoose from "mongoose";
 import User from "@/models/User";
+import { authOptions } from "@/lib/auth";
 
-export async function PUT(
+export const dynamic = 'force-dynamic';
+
+// GET /api/friends/[id] - Get friend details
+export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await params;
   try {
-    const { id } = await params;
     const session = await getServerSession(authOptions);
+
     if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const body = await request.json();
-    const { action } = body; // "accept" or "reject"
-
-    if (!action || !["accept", "reject"].includes(action)) {
       return NextResponse.json(
-        { error: "Invalid action. Must be 'accept' or 'reject'" },
-        { status: 400 }
+        { error: "Unauthorized" },
+        { status: 401 }
       );
     }
 
@@ -32,122 +28,98 @@ export async function PUT(
 
     const userId = new mongoose.Types.ObjectId(session.user.id);
 
-    // Find the friendship where current user is the receiver
+    // Find the friendship record
     const friendship = await Friend.findOne({
-      _id: id,
-      userId,
-      status: "pending",
-    });
-
-    if (!friendship) {
-      return NextResponse.json(
-        { error: "Friend request not found" },
-        { status: 404 }
-      );
-    }
-
-    // Check if current user is NOT the one who sent the request
-    if (friendship.requestedBy.toString() === session.user.id) {
-      return NextResponse.json(
-        { error: "You cannot accept your own friend request" },
-        { status: 400 }
-      );
-    }
-
-    if (action === "accept") {
-      // Update both entries to accepted
-      await Friend.updateMany(
-        {
-          $or: [
-            { userId, friendId: friendship.friendId },
-            { userId: friendship.friendId, friendId: userId },
-          ],
-        },
-        { status: "accepted" }
-      );
-
-      // Send notification to the requester
-      try {
-        const accepter = await User.findById(userId).select("name");
-        await notifyFriendAccepted(
-          { id: userId, name: accepter?.name || "Someone" },
-          friendship.requestedBy
-        );
-      } catch (notifError) {
-        console.error("Failed to send notification:", notifError);
-      }
-
-      return NextResponse.json(
-        { message: "Friend request accepted" },
-        { status: 200 }
-      );
-    } else {
-      // Delete both entries
-      await Friend.deleteMany({
-        $or: [
-          { userId, friendId: friendship.friendId },
-          { userId: friendship.friendId, friendId: userId },
-        ],
-      });
-
-      return NextResponse.json(
-        { message: "Friend request rejected" },
-        { status: 200 }
-      );
-    }
-  } catch (error: any) {
-    console.error("Update friend request error:", error);
-    return NextResponse.json(
-      { error: "Failed to update friend request" },
-      { status: 500 }
-    );
-  }
-}
-
-// DELETE /api/friends/[id] - Remove a friend
-export async function DELETE(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const { id } = await params;
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    await dbConnect();
-    const userId = new mongoose.Types.ObjectId(session.user.id);
-
-    // Find the friendship
-    const friendship = await Friend.findOne({
-      _id: id,
-      $or: [{ userId }, { friendId: userId }],
-    });
-
-    if (!friendship) {
-      return NextResponse.json(
-        { error: "Friendship not found" },
-        { status: 404 }
-      );
-    }
-
-    // Delete both directions of the friendship
-    await Friend.deleteMany({
       $or: [
-        { userId: friendship.userId, friendId: friendship.friendId },
-        { userId: friendship.friendId, friendId: friendship.userId },
+        { userId: session.user.id, friendId: id },
+        { userId: id, friendId: session.user.id }
       ],
+      status: "accepted"
     });
 
-    return NextResponse.json(
-      { message: "Friend removed successfully" },
-      { status: 200 }
+    if (!friendship) {
+      return NextResponse.json(
+        { error: "Friend not found" },
+        { status: 404 }
+      );
+    }
+
+    // Get friend details
+    const friendId = friendship.userId.toString() === session.user.id
+      ? friendship.friendId
+      : friendship.userId;
+
+    const friend = await User.findById(friendId).select(
+      "name email profilePicture createdAt"
     );
+
+    if (!friend) {
+      return NextResponse.json(
+        { error: "Friend not found" },
+        { status: 404 }
+      );
+    }
+
+    // Calculate balance between friends from expenses and settlements
+    const ExpenseParticipant = (await import("@/models/ExpenseParticipant")).default;
+    const Settlement = (await import("@/models/Settlement")).default;
+
+    const friendObjectId = new mongoose.Types.ObjectId(friendId.toString());
+
+    // Get all expenses where both users are participants
+    const expenseParticipants = await ExpenseParticipant.find({
+      userId: { $in: [userId, friendObjectId] }
+    });
+
+    const expenseIds = [...new Set(expenseParticipants.map(ep => ep.expenseId.toString()))];
+
+    // Calculate balance from expenses
+    let balance = 0;
+
+    for (const expenseId of expenseIds) {
+      const participants = expenseParticipants.filter(ep => ep.expenseId.toString() === expenseId);
+      if (participants.length >= 2) { // Both users are in this expense
+        const userParticipant = participants.find(p => p.userId.toString() === session.user.id);
+        const friendParticipant = participants.find(p => p.userId.toString() === friendId.toString());
+
+        if (userParticipant && friendParticipant) {
+          balance += userParticipant.owedAmount;
+        }
+      }
+    }
+
+    // Subtract settlements
+    const settlements = await Settlement.find({
+      $or: [
+        { fromUserId: userId, toUserId: friendObjectId },
+        { fromUserId: friendObjectId, toUserId: userId }
+      ]
+    });
+
+    settlements.forEach((settlement: any) => {
+      if (settlement.fromUserId.toString() === session.user.id) {
+        // User paid friend
+        balance -= settlement.amount;
+      } else {
+        // Friend paid user
+        balance += settlement.amount;
+      }
+    });
+
+    return NextResponse.json({
+      friend: {
+        _id: friend._id,
+        name: friend.name,
+        email: friend.email,
+        profilePicture: friend.profilePicture,
+        balance: balance,
+        friendsSince: friendship.createdAt
+      }
+    });
   } catch (error: any) {
-    console.error("Remove friend error:", error);
+    console.error("Friend details error:", error);
     return NextResponse.json(
-      { error: "Failed to remove friend" },
+      { error: "Failed to fetch friend details" },
       { status: 500 }
     );
   }

@@ -43,8 +43,6 @@ export async function GET(request: NextRequest) {
     "FIREBASE_CLIENT_EMAIL",
     "FIREBASE_PRIVATE_KEY",
     "FIREBASE_SERVICE_ACCOUNT_KEY",
-    "ADMIN_EMAIL",
-    "ADMIN_PASSWORD",
   ];
 
   let envPassed = true;
@@ -72,6 +70,14 @@ export async function GET(request: NextRequest) {
   envTest.passed = envPassed;
   if (!envPassed) allPassed = false;
   results.tests.envVars = envTest;
+
+  // Add admin credentials info
+  results.tests.envVars.checks.ADMIN_CREDENTIALS = {
+    present: true,
+    required: false,
+    preview: "Hardcoded (abhishek98as@gmail.com)",
+    note: "Admin credentials are hardcoded in seedAdmin.ts"
+  };
 
   // ═══════════════════════════════════════════
   // TEST 2: MongoDB Connection
@@ -139,45 +145,42 @@ export async function GET(request: NextRequest) {
   };
 
   try {
-    const adminEmail = process.env.ADMIN_EMAIL;
-    if (!adminEmail) {
-      adminTest.passed = false;
-      adminTest.error = "ADMIN_EMAIL not set in environment";
-    } else {
-      // Try to seed the admin user
-      await seedAdminUser();
+    // Hardcoded admin credentials
+    const adminEmail = "abhishek98as@gmail.com";
+    const adminPassword = "Abhi@1357#";
 
-      const adminUser = await User.findOne({
-        email: adminEmail.toLowerCase(),
-      }).select("+password");
+    // Try to seed the admin user
+    await seedAdminUser();
 
-      if (adminUser) {
-        adminTest.passed = true;
-        adminTest.email = adminUser.email;
-        adminTest.role = adminUser.role;
-        adminTest.isActive = adminUser.isActive;
-        adminTest.hasPassword = !!adminUser.password;
-        adminTest.passwordHash = adminUser.password
-          ? `${adminUser.password.substring(0, 10)}...`
-          : "MISSING";
-        adminTest.createdAt = adminUser.createdAt;
+    const adminUser = await User.findOne({
+      email: adminEmail.toLowerCase(),
+    }).select("+password");
 
-        // Verify admin password matches
-        const adminPassword = process.env.ADMIN_PASSWORD;
-        if (adminPassword && adminUser.password) {
-          const passwordMatch = await bcrypt.compare(
-            adminPassword,
-            adminUser.password
-          );
-          adminTest.passwordMatchesEnv = passwordMatch;
-          if (!passwordMatch) {
-            adminTest.hint = "Password in DB doesn't match ADMIN_PASSWORD env var. Set ADMIN_PASSWORD_UPDATE=true to force update.";
-          }
+    if (adminUser) {
+      adminTest.passed = true;
+      adminTest.email = adminUser.email;
+      adminTest.role = adminUser.role;
+      adminTest.isActive = adminUser.isActive;
+      adminTest.hasPassword = !!adminUser.password;
+      adminTest.passwordHash = adminUser.password
+        ? `${adminUser.password.substring(0, 10)}...`
+        : "MISSING";
+      adminTest.createdAt = adminUser.createdAt;
+
+      // Verify admin password matches hardcoded value
+      if (adminUser.password) {
+        const passwordMatch = await bcrypt.compare(
+          adminPassword,
+          adminUser.password
+        );
+        adminTest.passwordMatches = passwordMatch;
+        if (!passwordMatch) {
+          adminTest.hint = "Admin password doesn't match hardcoded value - will be updated on next seed.";
         }
-      } else {
-        adminTest.passed = false;
-        adminTest.error = `Admin user ${adminEmail} not found in database after seed attempt`;
       }
+    } else {
+      adminTest.passed = false;
+      adminTest.error = `Admin user ${adminEmail} not found in database after seed attempt`;
     }
   } catch (error: any) {
     adminTest.passed = false;
@@ -195,13 +198,9 @@ export async function GET(request: NextRequest) {
   };
 
   try {
-    const adminEmail = process.env.ADMIN_EMAIL;
-    const adminPassword = process.env.ADMIN_PASSWORD;
-
-    if (!adminEmail || !adminPassword) {
-      authTest.passed = false;
-      authTest.error = "ADMIN_EMAIL or ADMIN_PASSWORD not set";
-    } else {
+    // Hardcoded admin credentials for testing
+    const adminEmail = "abhishek98as@gmail.com";
+    const adminPassword = "Abhi@1357#";
       // Simulate the exact same flow as the credentials provider
       const user = await User.findOne({
         email: adminEmail.toLowerCase(),
@@ -221,7 +220,7 @@ export async function GET(request: NextRequest) {
           authTest.passed = false;
           authTest.step = "comparePassword";
           authTest.error = "Password does not match";
-          authTest.hint = "The admin user in the database has a different password than ADMIN_PASSWORD env var";
+          authTest.hint = "The admin user in the database has a different password than the hardcoded value";
         } else {
           authTest.passed = true;
           authTest.message = "Login simulation successful";
@@ -234,11 +233,10 @@ export async function GET(request: NextRequest) {
           };
         }
       }
+    } catch (error: any) {
+      authTest.passed = false;
+      authTest.error = error.message;
     }
-  } catch (error: any) {
-    authTest.passed = false;
-    authTest.error = error.message;
-  }
 
   if (!authTest.passed) allPassed = false;
   results.tests.authFlow = authTest;

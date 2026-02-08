@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import AppShell from "@/components/layout/AppShell";
 import Card, { CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
-import { ArrowUpCircle, ArrowDownCircle, TrendingUp, Users, Receipt, AlertCircle } from "lucide-react";
+import { ArrowUpCircle, ArrowDownCircle, TrendingUp, Users, Receipt, AlertCircle, Clock, User, Users as UsersIcon } from "lucide-react";
 import Link from "next/link";
 
 interface BalanceData {
@@ -29,6 +29,36 @@ interface Group {
   memberCount: number;
 }
 
+interface GroupBalance {
+  _id: string;
+  name: string;
+  balance: number;
+  memberCount: number;
+}
+
+interface ActivityItem {
+  id: string;
+  type: string;
+  description: string;
+  amount?: number;
+  currency?: string;
+  createdAt: string;
+  user?: {
+    id: string;
+    name: string;
+    profilePicture?: string;
+  };
+  targetUser?: {
+    id: string;
+    name: string;
+    profilePicture?: string;
+  };
+  group?: {
+    id: string;
+    name: string;
+  };
+}
+
 export default function DashboardPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
@@ -39,7 +69,9 @@ export default function DashboardPage() {
   });
   const [friends, setFriends] = useState<FriendDisplay[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
+  const [groupBalances, setGroupBalances] = useState<GroupBalance[]>([]);
   const [monthlySpending, setMonthlySpending] = useState(0);
+  const [activities, setActivities] = useState<ActivityItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -95,6 +127,49 @@ export default function DashboardPage() {
       if (groupsRes.ok) {
         const groupsData = await groupsRes.json();
         setGroups(groupsData.groups || []);
+
+        // Calculate group balances by fetching expenses for each group
+        const groupsWithBalances: GroupBalance[] = [];
+
+        for (const group of groupsData.groups || []) {
+          try {
+            // Fetch expenses for this group
+            const expensesRes = await fetch(`/api/expenses?groupId=${group._id}&limit=100`);
+            if (expensesRes.ok) {
+              const expensesData = await expensesRes.json();
+              const expenses = expensesData.expenses || [];
+
+              // Calculate user's balance in this group
+              let groupBalance = 0;
+              expenses.forEach((expense: any) => {
+                const userParticipant = expense.participants?.find(
+                  (p: any) => p.userId?._id === session?.user?.id || p.userId === session?.user?.id
+                );
+                if (userParticipant) {
+                  groupBalance += userParticipant.owedAmount;
+                }
+              });
+
+              if (groupBalance !== 0) {
+                groupsWithBalances.push({
+                  _id: group._id,
+                  name: group.name,
+                  balance: groupBalance,
+                  memberCount: group.members?.length || 0
+                });
+              }
+            }
+          } catch (err) {
+            console.warn(`Failed to calculate balance for group ${group._id}:`, err);
+          }
+        }
+
+        // Sort by absolute balance and take top 3
+        groupsWithBalances
+          .sort((a, b) => Math.abs(b.balance) - Math.abs(a.balance))
+          .splice(3); // Keep only top 3
+
+        setGroupBalances(groupsWithBalances);
       }
 
       // Fetch this month's expenses
@@ -119,6 +194,13 @@ export default function DashboardPage() {
         }, 0);
         
         setMonthlySpending(total);
+      }
+
+      // Fetch recent activities
+      const activitiesRes = await fetch("/api/dashboard/activity");
+      if (activitiesRes.ok) {
+        const activitiesData = await activitiesRes.json();
+        setActivities(activitiesData.activities || []);
       }
     } catch (err: any) {
       console.error("Failed to fetch dashboard data:", err);
@@ -307,7 +389,110 @@ export default function DashboardPage() {
           </Card>
         )}
 
+        {/* Group Balances */}
+        {groupBalances.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Group Balances</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                {groupBalances.map((group) => (
+                  <div
+                    key={group._id}
+                    className="flex items-center justify-between py-2 border-b border-neutral-200 dark:border-dark-border last:border-0"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="h-10 w-10 rounded-full bg-primary/20 flex items-center justify-center">
+                        <span className="text-primary font-semibold">
+                          {group.name.charAt(0).toUpperCase()}
+                        </span>
+                      </div>
+                      <div>
+                        <p className="font-medium text-neutral-900 dark:text-dark-text">
+                          {group.name}
+                        </p>
+                        <p className="text-sm text-neutral-500">
+                          {group.memberCount} members
+                        </p>
+                      </div>
+                    </div>
+                    <div
+                      className={`text-lg font-semibold ${
+                        group.balance > 0
+                          ? "text-success"
+                          : "text-coral"
+                      }`}
+                    >
+                      {group.balance > 0 ? "+" : ""}
+                      {formatCurrency(group.balance)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <Link href="/groups" className="block mt-4">
+                <Button variant="secondary" className="w-full">
+                  View All Groups
+                </Button>
+              </Link>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Recent Activity */}
+        {activities.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Recent Activity</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                {activities.slice(0, 10).map((activity) => (
+                  <div
+                    key={activity.id}
+                    className="flex items-start gap-3 p-3 rounded-lg border border-neutral-200 dark:border-dark-border hover:bg-neutral-50 dark:hover:bg-dark-bg-secondary transition-colors"
+                  >
+                    <div className="flex-shrink-0">
+                      {activity.type === "expense_added" && <Receipt className="h-5 w-5 text-primary" />}
+                      {activity.type === "settlement" && <ArrowUpCircle className="h-5 w-5 text-success" />}
+                      {activity.type === "friend_added" && <User className="h-5 w-5 text-info" />}
+                      {activity.type === "group_created" && <UsersIcon className="h-5 w-5 text-warning" />}
+                      {!["expense_added", "settlement", "friend_added", "group_created"].includes(activity.type) && <Clock className="h-5 w-5 text-neutral-400" />}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-neutral-900 dark:text-dark-text">
+                        {activity.description}
+                      </p>
+                      <p className="text-xs text-neutral-500 dark:text-dark-text-secondary mt-1">
+                        {new Date(activity.createdAt).toLocaleDateString('en-US', {
+                          month: 'short',
+                          day: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        })}
+                      </p>
+                    </div>
+                    {activity.amount && (
+                      <div className="flex-shrink-0 text-right">
+                        <p className="text-sm font-semibold font-mono text-neutral-900 dark:text-dark-text">
+                          {formatCurrency(activity.amount)}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <div className="mt-4 pt-4 border-t border-neutral-200 dark:border-dark-border">
+                <Link href="/activity">
+                  <Button variant="secondary" className="w-full">
+                    View All Activity
+                  </Button>
+                </Link>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {friends.length === 0 && (
           <Card>
             <CardHeader>

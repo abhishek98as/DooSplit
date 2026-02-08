@@ -36,6 +36,34 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Handle Firebase OAuth users differently
+    if (user.authProvider === "firebase") {
+      // For Firebase users, send a different email explaining they need to use Google sign-in
+      try {
+        await sendPasswordResetEmail({
+          to: user.email,
+          userName: user.name || "User",
+          resetLink: "", // Empty link for Firebase users
+          isFirebaseUser: true, // Special flag for Firebase users
+        });
+
+        return NextResponse.json(
+          {
+            message: "This account uses Google sign-in. Please use Google to sign in, or check your email for instructions to set a password.",
+          },
+          { status: 200 }
+        );
+      } catch (emailError) {
+        console.error("Failed to send Firebase user email:", emailError);
+        return NextResponse.json(
+          {
+            message: "This account uses Google sign-in. Please use Google to sign in to your account.",
+          },
+          { status: 200 }
+        );
+      }
+    }
+
     // Generate reset token
     const resetToken = crypto.randomBytes(32).toString("hex");
     const resetTokenExpires = new Date(Date.now() + 3600000); // 1 hour

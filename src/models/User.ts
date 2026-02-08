@@ -15,6 +15,7 @@ export interface IUser {
   createdBy?: mongoose.Types.ObjectId;
   role: "user" | "admin";
   emailVerified: boolean;
+  authProvider: "email" | "firebase"; // Track which auth method created this account
   resetPasswordToken?: string;
   resetPasswordExpires?: Date;
   createdAt: Date;
@@ -85,6 +86,11 @@ const UserSchema = new Schema<IUser>(
     emailVerified: {
       type: Boolean,
       default: false,
+    },
+    authProvider: {
+      type: String,
+      enum: ["email", "firebase"],
+      default: "email",
     },
     resetPasswordToken: {
       type: String,

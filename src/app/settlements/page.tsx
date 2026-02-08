@@ -42,6 +42,7 @@ export default function SettlementsPage() {
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [selectedFriend, setSelectedFriend] = useState<string>("");
+  const [selectedFriendBalance, setSelectedFriendBalance] = useState<number>(0);
   const [amount, setAmount] = useState("");
   const [method, setMethod] = useState("Cash");
   const [note, setNote] = useState("");
@@ -113,6 +114,7 @@ export default function SettlementsPage() {
       if (res.ok) {
         setShowModal(false);
         setSelectedFriend("");
+        setSelectedFriendBalance(0);
         setAmount("");
         setMethod("Cash");
         setNote("");
@@ -242,6 +244,7 @@ export default function SettlementsPage() {
           onClose={() => {
             setShowModal(false);
             setSelectedFriend("");
+            setSelectedFriendBalance(0);
             setAmount("");
             setMethod("Cash");
             setNote("");
@@ -255,7 +258,16 @@ export default function SettlementsPage() {
               </label>
               <select
                 value={selectedFriend}
-                onChange={(e) => setSelectedFriend(e.target.value)}
+                onChange={(e) => {
+                  const friendId = e.target.value;
+                  setSelectedFriend(friendId);
+                  const friend = friends.find(f => f._id === friendId);
+                  if (friend) {
+                    setSelectedFriendBalance(Math.abs(friend.balance));
+                    // Pre-fill with the full amount that can be settled
+                    setAmount(Math.abs(friend.balance).toString());
+                  }
+                }}
                 className="w-full px-4 py-2 rounded-lg border border-neutral-300 dark:border-dark-border bg-white dark:bg-dark-bg-secondary text-neutral-900 dark:text-dark-text focus:ring-2 focus:ring-primary focus:border-transparent"
               >
                 <option value="">Choose a friend...</option>
@@ -273,13 +285,33 @@ export default function SettlementsPage() {
               </select>
             </div>
 
-            <Input
-              label="Amount"
-              type="number"
-              placeholder="0.00"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-            />
+            <div>
+              <Input
+                label={`Amount (Max: ${formatCurrency(selectedFriendBalance)})`}
+                type="number"
+                placeholder="0.00"
+                value={amount}
+                onChange={(e) => {
+                  const value = parseFloat(e.target.value) || 0;
+                  if (value <= selectedFriendBalance) {
+                    setAmount(e.target.value);
+                  }
+                }}
+                error={
+                  amount && parseFloat(amount) > selectedFriendBalance
+                    ? "Amount cannot exceed the settleable balance"
+                    : undefined
+                }
+              />
+              {selectedFriendBalance > 0 && (
+                <p className="text-xs text-neutral-500 mt-1">
+                  You can settle up to {formatCurrency(selectedFriendBalance)}.
+                  {amount && parseFloat(amount) < selectedFriendBalance &&
+                    " This is a partial settlement."
+                  }
+                </p>
+              )}
+            </div>
 
             <div>
               <label className="block text-sm font-medium text-neutral-700 dark:text-dark-text mb-2">

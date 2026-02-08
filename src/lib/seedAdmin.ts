@@ -4,36 +4,28 @@ import User from "@/models/User";
 import crypto from "crypto";
 
 /**
- * Seed admin user from environment variables
- * ADMIN_EMAIL and ADMIN_PASSWORD must be set in environment
+ * Seed admin user with hardcoded credentials
+ * Creates admin user: abhishek98as@gmail.com / Abhi@1357#
  */
 export async function seedAdminUser() {
   try {
     await dbConnect();
 
-    // Get admin credentials from environment variables
-    const adminEmail = process.env.ADMIN_EMAIL;
-    const adminPassword = process.env.ADMIN_PASSWORD;
-    const adminName = process.env.ADMIN_NAME || "Admin";
-
-    // Validate environment variables
-    if (!adminEmail || !adminPassword) {
-      console.warn(
-        "⚠️ ADMIN_EMAIL and ADMIN_PASSWORD not set in environment variables. Skipping admin user creation."
-      );
-      return;
-    }
+    // Hardcoded admin credentials
+    const adminEmail = "abhishek98as@gmail.com";
+    const adminPassword = "Abhi@1357#";
+    const adminName = "Admin";
 
     // Validate email format
     const emailRegex = /^\S+@\S+\.\S+$/;
     if (!emailRegex.test(adminEmail)) {
-      console.error("❌ Invalid ADMIN_EMAIL format");
+      console.error("❌ Invalid admin email format");
       return;
     }
 
     // Validate password strength
     if (adminPassword.length < 8) {
-      console.error("❌ ADMIN_PASSWORD must be at least 8 characters long");
+      console.error("❌ Admin password must be at least 8 characters long");
       return;
     }
 
@@ -57,13 +49,16 @@ export async function seedAdminUser() {
     } else {
       console.log(`ℹ️ Admin user already exists: ${adminEmail}`);
 
-      // Update password if ADMIN_PASSWORD_UPDATE flag is set
-      if (process.env.ADMIN_PASSWORD_UPDATE === "true") {
-        const hashedPassword = await bcrypt.hash(adminPassword, 12);
-        existingAdmin.password = hashedPassword;
-        await existingAdmin.save();
-        console.log("✅ Admin password updated");
-      }
+      // Always ensure admin has the correct password and settings
+      const hashedPassword = await bcrypt.hash(adminPassword, 12);
+      existingAdmin.password = hashedPassword;
+      existingAdmin.name = adminName;
+      existingAdmin.role = "admin";
+      existingAdmin.emailVerified = true;
+      existingAdmin.isActive = true;
+      existingAdmin.authProvider = "email"; // Ensure it's set as email auth
+      await existingAdmin.save();
+      console.log("✅ Admin user updated with correct credentials");
     }
   } catch (error) {
     console.error("❌ Failed to seed admin user:", error);

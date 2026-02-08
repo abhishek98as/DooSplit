@@ -138,19 +138,19 @@ export async function sendInviteEmail({
 }
 
 /**
- * Send password reset email
+ * Send email verification
  */
-interface SendPasswordResetEmailParams {
+interface SendEmailVerificationParams {
   to: string;
   userName: string;
-  resetLink: string;
+  verificationUrl: string;
 }
 
-export async function sendPasswordResetEmail({
+export async function sendEmailVerification({
   to,
   userName,
-  resetLink,
-}: SendPasswordResetEmailParams) {
+  verificationUrl,
+}: SendEmailVerificationParams) {
   const html = `
 <!DOCTYPE html>
 <html lang="en">
@@ -163,7 +163,173 @@ export async function sendPasswordResetEmail({
     <tr>
       <td align="center">
         <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width: 560px; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 24px rgba(0,0,0,0.08);">
-          
+
+          <tr>
+            <td style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); padding: 48px 40px; text-align: center;">
+              <div style="display: inline-block; background: rgba(255,255,255,0.2); border-radius: 16px; padding: 14px; margin-bottom: 20px;">
+                <span style="font-size: 40px;">✅</span>
+              </div>
+              <h1 style="color: #ffffff; font-size: 28px; margin: 0 0 8px 0; font-weight: 700;">Verify Your Email</h1>
+              <p style="color: rgba(255,255,255,0.85); font-size: 16px; margin: 0;">Welcome to DooSplit!</p>
+            </td>
+          </tr>
+
+          <tr>
+            <td style="padding: 40px;">
+              <p style="color: #374151; font-size: 16px; line-height: 1.7; margin: 0 0 20px 0;">
+                Hi ${userName},
+              </p>
+              <p style="color: #374151; font-size: 16px; line-height: 1.7; margin: 0 0 28px 0;">
+                Welcome to DooSplit! To get started, please verify your email address by clicking the button below:
+              </p>
+
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+                <tr>
+                  <td align="center" style="padding: 16px 0;">
+                    <a href="${verificationUrl}" target="_blank" style="display: inline-block; background: linear-gradient(135deg, #10b981, #059669); color: #ffffff; text-decoration: none; font-size: 16px; font-weight: 600; padding: 16px 48px; border-radius: 12px; box-shadow: 0 4px 14px rgba(16,185,129,0.4);">
+                      Verify Email Address
+                    </a>
+                  </td>
+                </tr>
+              </table>
+
+              <p style="color: #9ca3af; font-size: 13px; text-align: center; margin: 24px 0 0 0; line-height: 1.6;">
+                Or copy this link into your browser:<br />
+                <a href="${verificationUrl}" style="color: #10b981; word-break: break-all;">${verificationUrl}</a>
+              </p>
+
+              <div style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 16px; margin: 32px 0;">
+                <p style="color: #92400e; font-size: 14px; margin: 0; line-height: 1.6;">
+                  <strong>⚠️ Security Notice:</strong> This verification link will expire in 24 hours. If you didn't create an account, you can safely ignore this email.
+                </p>
+              </div>
+            </td>
+          </tr>
+
+          <tr>
+            <td style="padding: 24px 40px; background: #f9fafb; border-top: 1px solid #e5e7eb; text-align: center;">
+              <p style="color: #d1d5db; font-size: 11px; margin: 0;">
+                DooSplit — Split expenses, not friendships ❤️
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+  `;
+
+  await transporter.sendMail({
+    from: `"DooSplit" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`,
+    to,
+    subject: "Welcome to DooSplit - Verify Your Email",
+    html,
+  });
+}
+
+/**
+ * Send password reset email
+ */
+interface SendPasswordResetEmailParams {
+  to: string;
+  userName: string;
+  resetLink: string;
+  isFirebaseUser?: boolean;
+}
+
+export async function sendPasswordResetEmail({
+  to,
+  userName,
+  resetLink,
+  isFirebaseUser = false,
+}: SendPasswordResetEmailParams) {
+  const html = isFirebaseUser ? `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+</head>
+<body style="margin: 0; padding: 0; background-color: #f3f4f6; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color: #f3f4f6; padding: 40px 20px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width: 560px; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 24px rgba(0,0,0,0.08);">
+
+          <tr>
+            <td style="background: linear-gradient(135deg, #4285f4 0%, #34a853 100%); padding: 48px 40px; text-align: center;">
+              <div style="display: inline-block; background: rgba(255,255,255,0.2); border-radius: 16px; padding: 14px; margin-bottom: 20px;">
+                <span style="font-size: 40px;">🔵</span>
+              </div>
+              <h1 style="color: #ffffff; font-size: 28px; margin: 0 0 8px 0; font-weight: 700;">Google Account Login</h1>
+              <p style="color: rgba(255,255,255,0.85); font-size: 16px; margin: 0;">Your DooSplit account uses Google sign-in</p>
+            </td>
+          </tr>
+
+          <tr>
+            <td style="padding: 40px;">
+              <p style="color: #374151; font-size: 16px; line-height: 1.7; margin: 0 0 20px 0;">
+                Hi ${userName},
+              </p>
+              <p style="color: #374151; font-size: 16px; line-height: 1.7; margin: 0 0 28px 0;">
+                Your DooSplit account was created using Google sign-in. You don't have a password set for this account.
+              </p>
+
+              <div style="background: #eff6ff; border-radius: 12px; padding: 24px; margin-bottom: 24px; text-align: center;">
+                <p style="color: #1e40af; font-size: 18px; margin: 0 0 8px 0; font-weight: 600;">🔵 Use Google Sign-In</p>
+                <p style="color: #3730a3; font-size: 14px; margin: 0; line-height: 1.6;">
+                  To access your account, please use the "Continue with Google" button on the login page.
+                </p>
+              </div>
+
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+                <tr>
+                  <td align="center" style="padding: 16px 0;">
+                    <a href="${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/auth/login" target="_blank" style="display: inline-block; background: linear-gradient(135deg, #4285f4, #34a853); color: #ffffff; text-decoration: none; font-size: 16px; font-weight: 600; padding: 16px 48px; border-radius: 12px; box-shadow: 0 4px 14px rgba(66,133,244,0.4);">
+                      Go to Login Page
+                    </a>
+                  </td>
+                </tr>
+              </table>
+
+              <div style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 16px; margin: 32px 0;">
+                <p style="color: #92400e; font-size: 14px; margin: 0; line-height: 1.6;">
+                  <strong>💡 Want to use email/password?</strong> You can set a password by logging in with Google first, then going to Settings to add a password.
+                </p>
+              </div>
+            </td>
+          </tr>
+
+          <tr>
+            <td style="padding: 24px 40px; background: #f9fafb; border-top: 1px solid #e5e7eb; text-align: center;">
+              <p style="color: #d1d5db; font-size: 11px; margin: 0;">
+                DooSplit — Split expenses, not friendships ❤️
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+  ` : `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+</head>
+<body style="margin: 0; padding: 0; background-color: #f3f4f6; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color: #f3f4f6; padding: 40px 20px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width: 560px; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 24px rgba(0,0,0,0.08);">
+
           <tr>
             <td style="background: linear-gradient(135deg, #f59e0b 0%, #ef4444 100%); padding: 48px 40px; text-align: center;">
               <div style="display: inline-block; background: rgba(255,255,255,0.2); border-radius: 16px; padding: 14px; margin-bottom: 20px;">
@@ -228,7 +394,7 @@ export async function sendPasswordResetEmail({
   await transporter.sendMail({
     from: `"DooSplit Security" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`,
     to,
-    subject: "Reset your DooSplit password 🔐",
+    subject: isFirebaseUser ? "DooSplit Google Account Login Information 🔵" : "Reset your DooSplit password 🔐",
     html,
   });
 }
