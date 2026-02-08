@@ -142,11 +142,19 @@ class IndexedDB {
   private dbPromise: Promise<IDBDatabase> | null = null;
 
   constructor() {
-    this.initDB();
+    // Only initialize if we're in the browser
+    if (typeof window !== 'undefined' && typeof indexedDB !== 'undefined') {
+      this.initDB();
+    }
   }
 
   private async initDB(): Promise<IDBDatabase> {
     if (this.dbPromise) return this.dbPromise;
+
+    // Check if we're in the browser
+    if (typeof window === 'undefined' || typeof indexedDB === 'undefined') {
+      throw new Error('IndexedDB is not available in this environment');
+    }
 
     this.dbPromise = new Promise((resolve, reject) => {
       const request = indexedDB.open(DB_NAME, DB_VERSION);
@@ -188,6 +196,11 @@ class IndexedDB {
   }
 
   private async getDB(): Promise<IDBDatabase> {
+    // Check if IndexedDB is available (browser environment)
+    if (typeof window === 'undefined' || typeof indexedDB === 'undefined') {
+      throw new Error('IndexedDB is not available in this environment');
+    }
+
     if (!this.db) {
       await this.initDB();
     }

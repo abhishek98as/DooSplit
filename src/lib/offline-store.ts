@@ -48,7 +48,7 @@ export interface DashboardData {
 
 class OfflineStore {
   private indexedDB = getIndexedDB();
-  private onlineStatus: boolean = navigator.onLine;
+  private onlineStatus: boolean = typeof window !== 'undefined' ? navigator.onLine : true;
   private syncInProgress: boolean = false;
 
   constructor() {
@@ -163,15 +163,24 @@ class OfflineStore {
     try {
       const response: ExpenseApiResponse = await this.fetchWithCache(url, {}, cacheKey);
 
-      // Cache in IndexedDB
+      // Cache in IndexedDB (only if available)
       if (response.expenses.length > 0) {
-        await this.indexedDB.putMany('expenses', response.expenses);
+        try {
+          await this.indexedDB.putMany('expenses', response.expenses);
+        } catch (dbError) {
+          console.log('IndexedDB not available, skipping cache');
+        }
       }
 
       return response.expenses;
     } catch (error) {
-      console.log('Falling back to IndexedDB for expenses');
-      return this.indexedDB.getExpenses(query);
+      console.log('API call failed, trying IndexedDB fallback');
+      try {
+        return this.indexedDB.getExpenses(query);
+      } catch (dbError) {
+        console.log('IndexedDB not available, returning empty array');
+        return [];
+      }
     }
   }
 
@@ -209,9 +218,13 @@ class OfflineStore {
 
         if (response.ok) {
           const data = await response.json();
-          // Replace temp expense with real one
-          await this.indexedDB.delete('expenses', tempId);
-          await this.indexedDB.putExpense(data.expense);
+          // Replace temp expense with real one (only if IndexedDB available)
+          try {
+            await this.indexedDB.delete('expenses', tempId);
+            await this.indexedDB.putExpense(data.expense);
+          } catch (dbError) {
+            console.log('IndexedDB not available, skipping cache update');
+          }
           return data.expense;
         }
       } catch (error) {
@@ -219,20 +232,32 @@ class OfflineStore {
       }
     }
 
-    // Offline: store locally and queue for sync
-    await this.indexedDB.putExpense(expense);
-    await this.queueForSync({
-      type: 'create',
-      entityType: 'expense',
-      entityId: tempId,
-      data: expenseData,
-    });
+    // Offline: store locally and queue for sync (only if IndexedDB available)
+    try {
+      await this.indexedDB.putExpense(expense);
+      await this.queueForSync({
+        type: 'create',
+        entityType: 'expense',
+        entityId: tempId,
+        data: expenseData,
+      });
+    } catch (dbError) {
+      console.log('IndexedDB not available, cannot store offline');
+      throw new Error('Cannot create expense offline - IndexedDB not available');
+    }
 
     return expense;
   }
 
   async updateExpense(expenseId: string, updates: Partial<ExpenseRecord>): Promise<ExpenseRecord> {
-    const existing = await this.indexedDB.get<ExpenseRecord>('expenses', expenseId);
+    let existing: ExpenseRecord | null = null;
+    try {
+      existing = await this.indexedDB.get<ExpenseRecord>('expenses', expenseId);
+    } catch (dbError) {
+      console.log('IndexedDB not available, cannot update offline');
+      throw new Error('Cannot update expense - IndexedDB not available');
+    }
+
     if (!existing) {
       throw new Error('Expense not found');
     }
@@ -255,7 +280,11 @@ class OfflineStore {
 
         if (response.ok) {
           const data = await response.json();
-          await this.indexedDB.putExpense(data.expense);
+          try {
+            await this.indexedDB.putExpense(data.expense);
+          } catch (dbError) {
+            console.log('IndexedDB not available, skipping cache update');
+          }
           return data.expense;
         }
       } catch (error) {
@@ -264,13 +293,18 @@ class OfflineStore {
     }
 
     // Offline: update locally and queue for sync
-    await this.indexedDB.putExpense(updated);
-    await this.queueForSync({
-      type: 'update',
-      entityType: 'expense',
-      entityId: expenseId,
-      data: updates,
-    });
+    try {
+      await this.indexedDB.putExpense(updated);
+      await this.queueForSync({
+        type: 'update',
+        entityType: 'expense',
+        entityId: expenseId,
+        data: updates,
+      });
+    } catch (dbError) {
+      console.log('IndexedDB not available, cannot store offline update');
+      throw new Error('Cannot update expense offline - IndexedDB not available');
+    }
 
     return updated;
   }
@@ -314,15 +348,24 @@ class OfflineStore {
     try {
       const response: SettlementApiResponse = await this.fetchWithCache(url, {}, cacheKey);
 
-      // Cache in IndexedDB
+      // Cache in IndexedDB (only if available)
       if (response.settlements.length > 0) {
-        await this.indexedDB.putMany('settlements', response.settlements);
+        try {
+          await this.indexedDB.putMany('settlements', response.settlements);
+        } catch (dbError) {
+          console.log('IndexedDB not available, skipping cache');
+        }
       }
 
       return response.settlements;
     } catch (error) {
-      console.log('Falling back to IndexedDB for settlements');
-      return this.indexedDB.getSettlements();
+      console.log('API call failed, trying IndexedDB fallback');
+      try {
+        return this.indexedDB.getSettlements();
+      } catch (dbError) {
+        console.log('IndexedDB not available, returning empty array');
+        return [];
+      }
     }
   }
 
@@ -384,15 +427,24 @@ class OfflineStore {
     try {
       const response: FriendApiResponse = await this.fetchWithCache(url, {}, cacheKey);
 
-      // Cache in IndexedDB
+      // Cache in IndexedDB (only if available)
       if (response.friends.length > 0) {
-        await this.indexedDB.putMany('friends', response.friends);
+        try {
+          await this.indexedDB.putMany('friends', response.friends);
+        } catch (dbError) {
+          console.log('IndexedDB not available, skipping cache');
+        }
       }
 
       return response.friends;
     } catch (error) {
-      console.log('Falling back to IndexedDB for friends');
-      return this.indexedDB.getFriends();
+      console.log('API call failed, trying IndexedDB fallback');
+      try {
+        return this.indexedDB.getFriends();
+      } catch (dbError) {
+        console.log('IndexedDB not available, returning empty array');
+        return [];
+      }
     }
   }
 
@@ -404,15 +456,24 @@ class OfflineStore {
     try {
       const response: GroupApiResponse = await this.fetchWithCache(url, {}, cacheKey);
 
-      // Cache in IndexedDB
+      // Cache in IndexedDB (only if available)
       if (response.groups.length > 0) {
-        await this.indexedDB.putMany('groups', response.groups);
+        try {
+          await this.indexedDB.putMany('groups', response.groups);
+        } catch (dbError) {
+          console.log('IndexedDB not available, skipping cache');
+        }
       }
 
       return response.groups;
     } catch (error) {
-      console.log('Falling back to IndexedDB for groups');
-      return this.indexedDB.getGroups();
+      console.log('API call failed, trying IndexedDB fallback');
+      try {
+        return this.indexedDB.getGroups();
+      } catch (dbError) {
+        console.log('IndexedDB not available, returning empty array');
+        return [];
+      }
     }
   }
 
