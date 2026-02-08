@@ -101,7 +101,9 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Return uisDevelopment 
+    // Return user without password
+    const responseData: any = {
+      message: isDevelopment 
         ? "User registered successfully. You can now log in." 
         : "User registered successfully. Please check your email to verify your account.",
       user: {
@@ -110,9 +112,7 @@ export async function POST(request: NextRequest) {
         email: user.email,
         emailVerified: user.emailVerified,
       },
-      requiresEmailVerification: !isDevelopment
-      },
-      requiresEmailVerification: true,
+      requiresEmailVerification: !isDevelopment,
     };
 
     // If registered via invitation, mark it accepted and auto-add as friends
