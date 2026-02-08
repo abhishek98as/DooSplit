@@ -24,8 +24,8 @@ export default function ForgotPasswordPage() {
       setMessage(
         "If your email is registered, you will receive a password reset link shortly."
       );
-    } catch (err: any) {
-      const errorCode = err?.code;
+    } catch (err) {
+      const errorCode = (err as any)?.code;
       switch (errorCode) {
         case "auth/user-not-found":
           // Don't reveal that user doesn't exist

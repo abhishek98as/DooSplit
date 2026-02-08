@@ -108,7 +108,7 @@ export default function FriendProfilePage() {
         const statsData = await statsRes.json();
         setStats(statsData);
       }
-    } catch (err: any) {
+    } catch (err) {
       console.error("Failed to fetch friend data:", err);
       setError("Failed to load friend data. Please try refreshing the page.");
     } finally {

@@ -200,7 +200,7 @@ export default function DashboardPage() {
         const activitiesData = await activitiesRes.json();
         setActivities(activitiesData.activities || []);
       }
-    } catch (err: any) {
+    } catch (err) {
       console.error("Failed to fetch dashboard data:", err);
       setError("Failed to load dashboard data. Please try refreshing the page.");
     } finally {

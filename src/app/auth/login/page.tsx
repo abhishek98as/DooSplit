@@ -54,8 +54,8 @@ export default function LoginPage() {
         router.push("/dashboard");
         router.refresh();
       }
-    } catch (err: any) {
-      setError(err.message || "An error occurred. Please try again.");
+    } catch (err) {
+      setError((err as any).message || "An error occurred. Please try again.");
     } finally {
       setIsLoading(false);
     }
@@ -82,7 +82,7 @@ export default function LoginPage() {
       } else {
         setError("Verification email sent! Please check your inbox.");
       }
-    } catch (err: any) {
+    } catch (err) {
       setError("Failed to resend verification email. Please try again.");
     } finally {
       setIsLoading(false);
@@ -104,7 +104,7 @@ export default function LoginPage() {
       } else if (!result?.url) {
         setError("Google sign-in failed. Please try again.");
       }
-    } catch (err: any) {
+    } catch (err) {
       setError("An error occurred during Google sign-in.");
     } finally {
       setIsGoogleLoading(false);

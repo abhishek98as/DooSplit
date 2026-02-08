@@ -88,8 +88,8 @@ export default function RegisterPage() {
       // Registration successful - show email verification message
       setRegistrationSuccess(true);
       setConflictInfo(null);
-    } catch (err: any) {
-      setError(err.message || "Registration failed. Please try again.");
+    } catch (err) {
+      setError((err as any).message || "Registration failed. Please try again.");
     } finally {
       setIsLoading(false);
     }

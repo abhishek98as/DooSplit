@@ -123,8 +123,8 @@ export default function AcceptInvitePage() {
           router.refresh();
         }, 2000);
       }
-    } catch (err: any) {
-      setFormError(err.message || "Registration failed");
+    } catch (err) {
+      setFormError((err as any).message || "Registration failed");
     } finally {
       setIsSubmitting(false);
     }
