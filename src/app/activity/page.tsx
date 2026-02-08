@@ -73,7 +73,7 @@ export default function ActivityPage() {
 
     // Date filter
     if (dateFilter !== "all") {
-      const activityDate = new Date(activity.createdAt || activity.timestamp);
+      const activityDate = new Date(activity.createdAt);
       const now = new Date();
 
       switch (dateFilter) {
@@ -96,7 +96,7 @@ export default function ActivityPage() {
       const query = searchQuery.toLowerCase();
       return activity.description?.toLowerCase().includes(query) ||
              activity.user?.name?.toLowerCase().includes(query) ||
-             (activity.data?.description || "").toLowerCase().includes(query);
+             activity.group?.name?.toLowerCase().includes(query);
     }
 
     return true;
@@ -128,7 +128,7 @@ export default function ActivityPage() {
   };
 
   const renderActivity = (activity: Activity) => {
-    const { type, data, timestamp } = activity;
+    const { type } = activity;
 
     switch (type) {
       case "expense_added":
@@ -192,8 +192,6 @@ export default function ActivityPage() {
         );
 
       case "friend_request":
-        const isReceived = data.friendId._id === session?.user?.id;
-        const friendData = isReceived ? data.userId : data.friendId;
         return (
           <div className="flex items-start gap-3">
             <div className="h-10 w-10 rounded-full bg-info/20 flex items-center justify-center flex-shrink-0">
@@ -201,12 +199,10 @@ export default function ActivityPage() {
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm text-neutral-900 dark:text-dark-text">
-                {isReceived
-                  ? `${friendData.name} sent you a friend request`
-                  : `You sent ${friendData.name} a friend request`}
+                {activity.description}
               </p>
               <span className="text-xs text-neutral-500">
-                {formatDate(timestamp)}
+                {formatDate(activity.createdAt)}
               </span>
             </div>
           </div>
@@ -346,7 +342,7 @@ export default function ActivityPage() {
               )}
               {searchQuery.trim() && (
                 <span className="inline-flex items-center gap-1 px-2 py-1 bg-primary/10 text-primary rounded-full text-xs">
-                  "{searchQuery}"
+                  &quot;{searchQuery}&quot;
                   <button onClick={() => setSearchQuery("")} className="ml-1 hover:bg-primary/20 rounded-full p-0.5">
                     <X className="h-3 w-3" />
                   </button>

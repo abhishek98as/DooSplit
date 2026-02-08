@@ -108,9 +108,11 @@ export default function SettlementsPage() {
 
   const fetchSettlements = async () => {
     try {
-      const offlineStore = getOfflineStore();
-      const settlements = await offlineStore.getSettlements();
-      setSettlements(settlements || []);
+      const res = await fetch("/api/settlements");
+      if (res.ok) {
+        const data = await res.json();
+        setSettlements(data.settlements || []);
+      }
     } catch (error) {
       console.error("Failed to fetch settlements:", error);
     } finally {

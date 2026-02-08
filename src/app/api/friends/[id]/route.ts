@@ -4,6 +4,7 @@ import mongoose from "mongoose";
 import dbConnect from "@/lib/db";
 import Friend from "@/models/Friend";
 import User from "@/models/User";
+import Expense from "@/models/Expense";
 import { authOptions } from "@/lib/auth";
 
 export const dynamic = 'force-dynamic';

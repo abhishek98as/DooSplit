@@ -45,12 +45,6 @@ export async function GET(request: NextRequest) {
       let expenseType = "non-group";
       if (expense.groupId) {
         expenseType = "group";
-      } else {
-        // Check if it's a personal expense (only one participant)
-        const participants = expenseParticipants.filter(ep => ep.expenseId.toString() === expense._id.toString());
-        if (participants.length === 1) {
-          expenseType = "personal";
-        }
       }
 
       activities.push({

@@ -102,9 +102,11 @@ export default function FriendsPage() {
 
   const fetchFriends = async () => {
     try {
-      const offlineStore = getOfflineStore();
-      const friends = await offlineStore.getFriends();
-      setFriends(friends || []);
+      const res = await fetch("/api/friends");
+      if (res.ok) {
+        const data = await res.json();
+        setFriends(data.friends || []);
+      }
     } catch (error) {
       console.error("Failed to fetch friends:", error);
     } finally {

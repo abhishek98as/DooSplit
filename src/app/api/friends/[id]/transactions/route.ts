@@ -86,14 +86,14 @@ export async function GET(
               isSettlement: false,
               settled: isSettled,
               group: expense.groupId ? {
-                id: expense.groupId._id,
-                name: expense.groupId.name
+                id: (expense.groupId as any)._id,
+                name: (expense.groupId as any).name
               } : null,
               isPositive,
               user: {
-                id: expense.createdBy._id,
-                name: expense.createdBy.name,
-                profilePicture: expense.createdBy.profilePicture
+                id: (expense.createdBy as any)._id,
+                name: (expense.createdBy as any).name,
+                profilePicture: (expense.createdBy as any).profilePicture
               }
             });
           }

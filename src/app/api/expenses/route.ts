@@ -66,9 +66,9 @@ export async function GET(request: NextRequest) {
 
         // Add version vector to each expense
         const versionVector = {
-          version: expense.version || 1,
-          lastModified: expense.lastModified || expense.updatedAt,
-          modifiedBy: expense.modifiedBy || expense.createdBy,
+          version: 1,
+          lastModified: expense.updatedAt,
+          modifiedBy: expense.createdBy,
         };
 
         return {
@@ -227,7 +227,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Create expense with version tracking
+    // Create expense
     const expense = await Expense.create({
       amount,
       description,
@@ -238,9 +238,6 @@ export async function POST(request: NextRequest) {
       groupId: groupId || null,
       images: images || [],
       notes: notes || "",
-      version: 1,
-      lastModified: new Date(),
-      modifiedBy: userId,
     });
 
     // Create expense participants
@@ -288,11 +285,11 @@ export async function POST(request: NextRequest) {
 
     // Create ETag for optimistic concurrency
     const versionVector = {
-      version: expense.version,
-      lastModified: expense.lastModified,
-      modifiedBy: expense.modifiedBy,
+      version: 1,
+      lastModified: expense.updatedAt,
+      modifiedBy: expense.createdBy,
     };
-    const etag = `"${expense._id}-${expense.version}"`;
+    const etag = `\"${expense._id}-1\"`;
 
     return NextResponse.json(
       {

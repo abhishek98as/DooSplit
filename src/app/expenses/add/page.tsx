@@ -238,21 +238,22 @@ export default function AddExpensePage() {
       };
 
       // Try to create expense using offline store (will queue if offline)
-      const result = await offlineStore.createExpense(expenseData);
+      const expense = await offlineStore.createExpense(expenseData);
 
-      if (result.success) {
+      // Expense creation is considered successful if we get an expense object
+      if (expense && expense._id) {
         // Step 2: Upload images if any (only if online)
         if (images.length > 0 && navigator.onLine) {
-          const finalImageRefs = await uploadExpenseImages(result.expense._id, images);
+          const finalImageRefs = await uploadExpenseImages(expense._id, images);
           // Step 3: Update expense with image references if any were uploaded
           if (finalImageRefs.length > 0) {
-            await offlineStore.updateExpense(result.expense._id, { images: finalImageRefs });
+            await offlineStore.updateExpense(expense._id, { images: finalImageRefs });
           }
         }
         router.push("/dashboard");
         router.refresh();
       } else {
-        alert(result.error || "Failed to create expense");
+        alert("Failed to create expense");
       }
     } catch (error) {
       console.error("Failed to create expense:", error);

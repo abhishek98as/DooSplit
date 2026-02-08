@@ -93,7 +93,7 @@ export async function GET(
           expense.category.charAt(0).toUpperCase() + expense.category.slice(1),
           `₹${expense.amount.toFixed(2)}`,
           `₹${userShare.toFixed(2)}`,
-          expense.groupId?.name || 'Non-Group',
+          (expense.groupId as any)?.name || 'Non-Group',
           userParticipant.paidAmount > 0 ? 'Paid' : 'Owed',
           isSettled ? 'Settled' : 'Outstanding'
         ]);
@@ -105,12 +105,12 @@ export async function GET(
     settlementRows.push(['Date', 'Description', 'Amount', 'Type']);
 
     settlements.forEach(settlement => {
-      const isFromUser = settlement.fromUserId._id.toString() === session.user.id;
+      const isFromUser = (settlement.fromUserId as any)._id.toString() === session.user.id;
       const action = isFromUser ? 'Paid' : 'Received';
 
       settlementRows.push([
         new Date(settlement.date).toLocaleDateString(),
-        `Settlement - ${action} ${isFromUser ? settlement.toUserId.name : settlement.fromUserId.name}`,
+        `Settlement - ${action} ${isFromUser ? (settlement.toUserId as any).name : (settlement.fromUserId as any).name}`,
         `₹${settlement.amount.toFixed(2)}`,
         action
       ]);

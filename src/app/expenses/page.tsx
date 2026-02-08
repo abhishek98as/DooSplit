@@ -53,6 +53,7 @@ interface Expense {
     };
     paidAmount: number;
     owedAmount: number;
+    isSettled: boolean;
   }>;
   createdAt: string;
 }
@@ -120,29 +121,30 @@ export default function ExpensesPage() {
   const fetchExpenses = async () => {
     setLoading(true);
     try {
-      const offlineStore = getOfflineStore();
-
-      const query: any = {
-        page,
-        limit,
-      };
+      const params = new URLSearchParams({
+        page: page.toString(),
+        limit: limit.toString(),
+      });
 
       if (selectedCategory !== "all") {
-        query.category = selectedCategory;
+        params.append("category", selectedCategory);
       }
       if (selectedGroup !== "all") {
-        query.groupId = selectedGroup;
+        params.append("groupId", selectedGroup);
       }
-      if (startDate && endDate) {
-        query.dateRange = {
-          start: startDate,
-          end: endDate
-        };
+      if (startDate) {
+        params.append("startDate", startDate);
+      }
+      if (endDate) {
+        params.append("endDate", endDate);
       }
 
-      const expenses = await offlineStore.getExpenses(query);
-      setExpenses(expenses);
-      setTotalPages(Math.ceil(expenses.length / limit) || 1); // Simplified pagination
+      const response = await fetch(`/api/expenses?${params.toString()}`);
+      if (!response.ok) throw new Error("Failed to fetch expenses");
+
+      const data = await response.json();
+      setExpenses(data.expenses || []);
+      setTotalPages(data.totalPages || 1);
     } catch (error) {
       console.error("Error fetching expenses:", error);
     } finally {

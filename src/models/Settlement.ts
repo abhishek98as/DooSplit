@@ -12,7 +12,7 @@ export interface ISettlement {
   date: Date;
   groupId?: mongoose.Types.ObjectId;
   version: number;
-  lastModified: string;
+  lastModified: Date;
   modifiedBy: mongoose.Types.ObjectId;
   createdAt: Date;
   updatedAt: Date;

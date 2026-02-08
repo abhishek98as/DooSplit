@@ -40,6 +40,7 @@ interface GroupBalance {
 interface ActivityItem {
   id: string;
   type: string;
+  expenseType?: string;
   description: string;
   amount?: number;
   currency?: string;
@@ -87,6 +88,8 @@ export default function DashboardPage() {
   const fetchDashboardData = async () => {
     setError(null);
     try {
+      const offlineStore = getOfflineStore();
+      
       // Fetch friends with balances using offline store
       const rawFriends = await offlineStore.getFriends();
 
@@ -123,7 +126,7 @@ export default function DashboardPage() {
         // Calculate group balances by fetching expenses for each group
         const groupsWithBalances: GroupBalance[] = [];
 
-        for (const group of groupsData.groups || []) {
+        for (const group of groupsData || []) {
           try {
             // Fetch expenses for this group using offline store
             const expenses = await offlineStore.getExpenses({
@@ -154,7 +157,6 @@ export default function DashboardPage() {
                   memberCount: group.members?.length || 0
                 });
               }
-            }
           } catch (err) {
             console.warn(`Failed to calculate balance for group ${group._id}:`, err);
           }
@@ -166,7 +168,6 @@ export default function DashboardPage() {
           .splice(3); // Keep only top 3
 
         setGroupBalances(groupsWithBalances);
-      }
 
       // Fetch this month's expenses (using direct API call since dateRange isn't supported in offline store)
       const now = new Date();
@@ -182,17 +183,16 @@ export default function DashboardPage() {
         expenses = monthlyExpensesData.expenses || [];
       }
         
-        // Calculate total spending for this month
-        const total = expenses.reduce((sum: number, expense: any) => {
-          // Find user's share in this expense
-          const userParticipant = expense.participants?.find(
-            (p: any) => p.userId?._id === session?.user?.id || p.userId === session?.user?.id
-          );
-          return sum + (userParticipant?.owedAmount || 0);
-        }, 0);
+      // Calculate total spending for this month
+      const total = expenses.reduce((sum: number, expense: any) => {
+        // Find user's share in this expense
+        const userParticipant = expense.participants?.find(
+          (p: any) => p.userId?._id === session?.user?.id || p.userId === session?.user?.id
+        );
+        return sum + (userParticipant?.owedAmount || 0);
+      }, 0);
         
-        setMonthlySpending(total);
-      }
+      setMonthlySpending(total);
 
       // Fetch recent activities (keep using direct fetch for now as it's not in offline store)
       const activitiesRes = await fetch("/api/dashboard/activity");

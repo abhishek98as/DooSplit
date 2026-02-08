@@ -9,7 +9,7 @@ import Card, { CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import Modal from "@/components/ui/Modal";
-import { ArrowLeft, Mail, Calendar, DollarSign, TrendingUp, TrendingDown, MessageSquare, Filter, Bell, Download, BarChart3 } from "lucide-react";
+import { ArrowLeft, Mail, Calendar, DollarSign, TrendingUp, TrendingDown, MessageSquare, Filter, Bell, Download, BarChart3, Users } from "lucide-react";
 import Image from "next/image";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 
@@ -37,6 +37,7 @@ interface Transaction {
   currency: string;
   createdAt: string;
   isSettlement: boolean;
+  settled?: boolean;
   group?: {
     id: string;
     name: string;
@@ -445,7 +446,7 @@ export default function FriendProfilePage() {
                         cx="50%"
                         cy="50%"
                         labelLine={false}
-                        label={({ category, percentage }) => `${category} ${percentage}%`}
+                        label={({ name, percent }) => `${name} ${Math.round((percent || 0) * 100)}%`}
                         outerRadius={80}
                         fill="#8884d8"
                         dataKey="amount"
