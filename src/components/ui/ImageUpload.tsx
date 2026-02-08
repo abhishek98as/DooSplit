@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Upload, X, Image as ImageIcon, Loader2 } from "lucide-react";
+import { Upload, X, Image as ImageIcon } from "lucide-react";
 import Image from "next/image";
 import { ImageType } from "@/lib/imagekit-service";
 
@@ -22,13 +22,44 @@ export default function ImageUpload({
 }: ImageUploadProps) {
   const [uploading, setUploading] = useState(false);
   const [imageUrls, setImageUrls] = useState<Record<string, string>>({});
+  const [localPreviews, setLocalPreviews] = useState<Record<string, string>>({}); // For immediate base64 previews
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const previewCacheKey = `image-upload-previews:${type}:${entityId}`;
+
+  // Hydrate previews from session cache so thumbnails survive route transitions
+  useEffect(() => {
+    try {
+      const cached = sessionStorage.getItem(previewCacheKey);
+      if (cached) {
+        setLocalPreviews(JSON.parse(cached));
+      }
+    } catch (error) {
+      console.warn('Failed to read preview cache', error);
+    }
+  }, [previewCacheKey]);
+
+  const persistPreviews = (updates: Record<string, string>) => {
+    setLocalPreviews((prev) => {
+      const next = { ...prev, ...updates };
+      try {
+        sessionStorage.setItem(previewCacheKey, JSON.stringify(next));
+      } catch (error) {
+        console.warn('Failed to persist preview cache', error);
+      }
+      return next;
+    });
+  };
 
   // Helper function to get image URL from reference ID
   const getImageUrl = (imageRef: string): string => {
     // If it's already a URL (base64 or external), return as is
     if (imageRef.startsWith('http') || imageRef.startsWith('data:')) {
       return imageRef;
+    }
+
+    // Check for local base64 preview first (immediate)
+    if (localPreviews[imageRef]) {
+      return localPreviews[imageRef];
     }
 
     // For ImageKit reference IDs, return the cached URL or a loading placeholder
@@ -78,47 +109,87 @@ export default function ImageUpload({
 
     try {
       const newImages: string[] = [];
+      const newLocalPreviews: Record<string, string> = {};
 
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-
+      // Process all files in parallel for better UX
+      const uploadPromises = Array.from(files).map(async (file, index) => {
         // Validate file type
         if (!file.type.startsWith("image/")) {
           alert(`${file.name} is not an image file`);
-          continue;
+          return null;
         }
 
         // Validate file size (10MB max to match ImageKit service)
         if (file.size > 10 * 1024 * 1024) {
           alert(`${file.name} is too large. Maximum size is 10MB`);
-          continue;
+          return null;
         }
 
-        // Upload to ImageKit
-        const formData = new FormData();
-        formData.append('file', file);
-        formData.append('type', type);
-        formData.append('entityId', entityId);
+        try {
+          // Create immediate base64 preview for instant display
+          const base64Preview = await fileToBase64(file);
+          const tempId = `temp_${Date.now()}_${index}_${Math.random().toString(36).slice(2, 8)}`;
 
-        const response = await fetch('/api/images/upload', {
-          method: 'POST',
-          body: formData,
-        });
+          // Add immediate preview
+          newLocalPreviews[tempId] = base64Preview;
+          newImages.push(tempId);
 
-        if (!response.ok) {
-          const errorData = await response.json();
-          alert(`Failed to upload ${file.name}: ${errorData.error}`);
-          continue;
+          // Upload to ImageKit in parallel (don't block on this)
+          const formData = new FormData();
+          formData.append('file', file);
+          formData.append('type', type);
+          formData.append('entityId', entityId);
+
+          try {
+            const response = await fetch('/api/images/upload', {
+              method: 'POST',
+              body: formData,
+            });
+
+            if (response.ok) {
+              const data = await response.json();
+              const finalImageId = data.image.id;
+
+              // Replace temporary ID with final ImageKit reference ID
+              const tempIndex = newImages.indexOf(tempId);
+              if (tempIndex !== -1) {
+                newImages[tempIndex] = finalImageId;
+
+                // Update local previews to use the final ID
+                newLocalPreviews[finalImageId] = base64Preview;
+                delete newLocalPreviews[tempId];
+              }
+            } else {
+              console.warn(`Failed to upload ${file.name} to ImageKit, keeping local preview`);
+              // Keep the base64 preview even if upload fails
+            }
+          } catch (uploadError) {
+            console.warn(`Upload failed for ${file.name}, keeping local preview:`, uploadError);
+            // Keep the base64 preview even if upload fails
+          }
+
+          return tempId; // Return the ID (will be replaced with final ID if upload succeeds)
+        } catch (error) {
+          console.error(`Error processing ${file.name}:`, error);
+          return null;
         }
+      });
 
-        const data = await response.json();
-        newImages.push(data.image.id); // Store reference ID
+      // Wait for all processing to complete
+      await Promise.allSettled(uploadPromises);
+
+      // Filter out null values (failed validations)
+      const validImages = newImages.filter(id => id !== null);
+
+      // Update state with new images and previews (persisted for quick reloads)
+      onChange([...images, ...validImages]);
+      if (Object.keys(newLocalPreviews).length > 0) {
+        persistPreviews(newLocalPreviews);
       }
 
-      onChange([...images, ...newImages]);
     } catch (error) {
-      console.error("Failed to upload images:", error);
-      alert("Failed to upload images. Please try again.");
+      console.error("Failed to process images:", error);
+      alert("Failed to process images. Please try again.");
     } finally {
       setUploading(false);
       if (fileInputRef.current) {
@@ -139,8 +210,8 @@ export default function ImageUpload({
   const removeImage = async (index: number) => {
     const imageRef = images[index];
 
-    // Delete from ImageKit if it's a reference ID (not base64)
-    if (imageRef && !imageRef.startsWith('data:')) {
+    // Delete from ImageKit if it's a reference ID (not base64 and not temporary)
+    if (imageRef && !imageRef.startsWith('data:') && !imageRef.startsWith('temp_')) {
       try {
         const response = await fetch(`/api/images/${imageRef}`, {
           method: 'DELETE',
@@ -154,6 +225,20 @@ export default function ImageUpload({
         console.error('Error deleting image:', error);
         // Continue with local removal
       }
+    }
+
+    // Clean up local preview if it exists
+    if (localPreviews[imageRef]) {
+      setLocalPreviews(prev => {
+        const newPreviews = { ...prev };
+        delete newPreviews[imageRef];
+        try {
+          sessionStorage.setItem(previewCacheKey, JSON.stringify(newPreviews));
+        } catch (error) {
+          console.warn('Failed to update preview cache', error);
+        }
+        return newPreviews;
+      });
     }
 
     onChange(images.filter((_, i) => i !== index));
@@ -175,17 +260,18 @@ export default function ImageUpload({
         <div className="grid grid-cols-3 gap-3">
           {images.map((image, index) => {
             const imageUrl = getImageUrl(image);
-            const isLoading = !imageUrl && !image.startsWith('data:') && !image.startsWith('http');
+            const hasLocalPreview = localPreviews[image];
+            const isLoading = !imageUrl && !hasLocalPreview && !image.startsWith('data:') && !image.startsWith('http') && !image.startsWith('temp_');
 
             return (
-              <div key={index} className="relative group aspect-square">
+              <div key={`${image}-${index}`} className="relative group aspect-square">
                 {isLoading ? (
                   <div className="w-full h-full bg-neutral-100 dark:bg-dark-bg-secondary rounded-lg flex items-center justify-center">
                     <div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-primary"></div>
                   </div>
-                ) : imageUrl ? (
+                ) : imageUrl || hasLocalPreview ? (
                   <Image
-                    src={imageUrl}
+                    src={imageUrl || hasLocalPreview}
                     alt={`Upload ${index + 1}`}
                     fill
                     className="object-cover rounded-lg"
@@ -207,6 +293,12 @@ export default function ImageUpload({
                 >
                   <X className="h-4 w-4 text-white" />
                 </button>
+                {/* Show upload status indicator */}
+                {image.startsWith('temp_') && (
+                  <div className="absolute bottom-2 left-2 px-2 py-1 bg-yellow-500 text-white text-xs rounded-full">
+                    Uploading...
+                  </div>
+                )}
               </div>
             );
           })}

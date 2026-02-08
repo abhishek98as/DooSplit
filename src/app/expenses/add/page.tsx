@@ -8,6 +8,8 @@ import Card from "@/components/ui/Card";
 import Input from "@/components/ui/Input";
 import Button from "@/components/ui/Button";
 import ImageUpload from "@/components/ui/ImageUpload";
+import { useAnalytics } from "@/components/analytics/AnalyticsProvider";
+import { AnalyticsEvents } from "@/lib/firebase-analytics";
 import Modal from "@/components/ui/Modal";
 import {
   IndianRupee,
@@ -58,6 +60,7 @@ type SplitMethod = "equally" | "exact" | "percentage" | "shares";
 export default function AddExpensePage() {
   const { data: session } = useSession();
   const router = useRouter();
+  const { trackEvent } = useAnalytics();
 
   // Form state
   const [amount, setAmount] = useState("");
@@ -255,13 +258,40 @@ export default function AddExpensePage() {
 
       // Expense creation is considered successful if we get an expense object
       if (expense && expense._id) {
-        // Step 2: Upload images if any (only if online)
+        // Track successful expense creation
+        trackEvent(AnalyticsEvents.EXPENSE_CREATED, {
+          amount: parseFloat(amount),
+          currency,
+          split_method: splitMethod,
+          participant_count: participants.length,
+          has_images: images.length > 0,
+          has_group: !!selectedGroup,
+          category
+        });
+
+        // Step 2: Upload images if any (only if online). If upload fails, continue saving expense.
+        let finalImageRefs: string[] = [];
         if (images.length > 0 && navigator.onLine) {
-          const finalImageRefs = await uploadExpenseImages(expense._id, images);
-          // Step 3: Update expense with image references if any were uploaded
-          if (finalImageRefs.length > 0) {
-            await offlineStore.updateExpense(expense._id, { images: finalImageRefs });
+          try {
+            finalImageRefs = await uploadExpenseImages(expense._id, images);
+            if (finalImageRefs.length > 0) {
+              trackEvent(AnalyticsEvents.IMAGE_UPLOADED, {
+                count: finalImageRefs.length,
+                context: 'expense_creation'
+              });
+            }
+          } catch (uploadError) {
+            console.warn("Image upload failed, keeping local-only previews", uploadError);
+            trackEvent('image_upload_failed', {
+              error: uploadError instanceof Error ? uploadError.message : String(uploadError),
+              context: 'expense_creation'
+            });
           }
+        }
+
+        // Step 3: Update expense with image references if any were uploaded
+        if (finalImageRefs.length > 0) {
+          await offlineStore.updateExpense(expense._id, { images: finalImageRefs });
         }
         router.push("/dashboard");
         router.refresh();

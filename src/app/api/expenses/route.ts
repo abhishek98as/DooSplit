@@ -25,6 +25,8 @@ export async function GET(request: NextRequest) {
     const limit = parseInt(searchParams.get("limit") || "20");
     const category = searchParams.get("category");
     const groupId = searchParams.get("groupId");
+    const startDate = searchParams.get("startDate");
+    const endDate = searchParams.get("endDate");
 
     await dbConnect();
 
@@ -44,6 +46,13 @@ export async function GET(request: NextRequest) {
 
     if (category) query.category = category;
     if (groupId) query.groupId = new mongoose.Types.ObjectId(groupId);
+
+    // Add date range filtering
+    if (startDate || endDate) {
+      query.date = {};
+      if (startDate) query.date.$gte = new Date(startDate);
+      if (endDate) query.date.$lte = new Date(endDate);
+    }
 
     const skip = (page - 1) * limit;
 

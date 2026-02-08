@@ -7,9 +7,12 @@ import Link from "next/link";
 import { Button, Input } from "@/components/ui";
 import Image from "next/image";
 import { Mail, Lock, Eye, EyeOff } from "lucide-react";
+import { useAnalytics } from "@/components/analytics/AnalyticsProvider";
+import { AnalyticsEvents } from "@/lib/firebase-analytics";
 
 export default function LoginPage() {
   const router = useRouter();
+  const { trackEvent } = useAnalytics();
   const [formData, setFormData] = useState({
     email: "",
     password: "",
@@ -37,6 +40,11 @@ export default function LoginPage() {
       });
 
       if (result?.error) {
+        trackEvent('login_failed', {
+          method: 'credentials',
+          error: result.error,
+          needs_verification: result.error.includes("verify your email")
+        });
         // Check for email verification error
         if (result.error.includes("verify your email")) {
           setNeedsEmailVerification(true);
@@ -50,9 +58,16 @@ export default function LoginPage() {
           setNeedsEmailVerification(false);
         }
       } else if (!result?.ok) {
+        trackEvent('login_failed', {
+          method: 'credentials',
+          error: 'not_ok'
+        });
         setError("Login failed. Please try again.");
         setNeedsEmailVerification(false);
       } else {
+        trackEvent('login_attempt', {
+          method: 'credentials'
+        });
         router.push("/dashboard");
         router.refresh();
       }
@@ -102,9 +117,21 @@ export default function LoginPage() {
       });
 
       if (result?.error) {
+        trackEvent('login_failed', {
+          method: 'google',
+          error: result.error
+        });
         setError("Google sign-in failed. Please try again.");
       } else if (!result?.url) {
+        trackEvent('login_failed', {
+          method: 'google',
+          error: 'no_redirect_url'
+        });
         setError("Google sign-in failed. Please try again.");
+      } else {
+        trackEvent('login_attempt', {
+          method: 'google'
+        });
       }
     } catch (err) {
       setError("An error occurred during Google sign-in.");

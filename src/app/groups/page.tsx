@@ -8,6 +8,8 @@ import Card, { CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import Modal from "@/components/ui/Modal";
+import { useAnalytics } from "@/components/analytics/AnalyticsProvider";
+import { AnalyticsEvents } from "@/lib/firebase-analytics";
 import { Users, Plus, Settings } from "lucide-react";
 
 interface Group {
@@ -32,6 +34,7 @@ interface Friend {
 export default function GroupsPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
+  const { trackEvent } = useAnalytics();
   const [groups, setGroups] = useState<Group[]>([]);
   const [friends, setFriends] = useState<Friend[]>([]);
   const [loading, setLoading] = useState(true);
@@ -101,6 +104,11 @@ export default function GroupsPage() {
       });
 
       if (res.ok) {
+        trackEvent(AnalyticsEvents.GROUP_CREATED, {
+          member_count: formData.memberIds.length,
+          group_type: formData.type,
+          currency: formData.currency
+        });
         setShowCreateModal(false);
         setFormData({
           name: "",

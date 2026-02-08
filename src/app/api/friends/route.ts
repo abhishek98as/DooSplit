@@ -4,10 +4,10 @@ import dbConnect from "@/lib/db";
 import Friend from "@/models/Friend";
 import User from "@/models/User";
 
-import ExpenseParticipant from "@/models/ExpenseParticipant";
 import { authOptions } from "@/lib/auth";
 import { notifyFriendRequest } from "@/lib/notificationService";
 import mongoose from "mongoose";
+import { calculateBalanceBetweenUsers } from "@/lib/balanceCalculator";
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30; // 30 seconds timeout for Vercel serverless functions
@@ -50,8 +50,8 @@ export async function GET(request: NextRequest) {
             : friendship.userId;
 
         console.log("🔍 Friends API: Calculating balance for", friendData.name);
-        // Calculate balance
-        const balance = await calculateBalance(userId, friendData._id);
+        // Calculate balance including paid/owed amounts and settlements
+        const balance = await calculateBalanceBetweenUsers(userId, friendData._id);
 
         return {
           id: friendship._id,
@@ -264,98 +264,6 @@ export async function POST(request: NextRequest) {
       { error: "Failed to send friend request" },
       { status: 500 }
     );
-  }
-}
-
-// Helper function to calculate balance - simplified version for performance
-async function calculateBalance(
-  userId: mongoose.Types.ObjectId,
-  friendId: mongoose.Types.ObjectId
-) {
-  try {
-    // Use aggregation pipeline for better performance
-    const balanceResult = await ExpenseParticipant.aggregate([
-      {
-        $match: {
-          userId: { $in: [userId, friendId] }
-        }
-      },
-      {
-        $lookup: {
-          from: "expenses",
-          localField: "expenseId",
-          foreignField: "_id",
-          as: "expense",
-          pipeline: [
-            { $match: { isDeleted: { $ne: true } } }
-          ]
-        }
-      },
-      {
-        $unwind: "$expense"
-      },
-      {
-        $group: {
-          _id: "$expenseId",
-          participants: { $push: "$$ROOT" }
-        }
-      },
-      {
-        $project: {
-          balance: {
-            $let: {
-              vars: {
-                userPart: {
-                  $arrayElemAt: [
-                    {
-                      $filter: {
-                        input: "$participants",
-                        cond: { $eq: ["$$this.userId", userId] }
-                      }
-                    },
-                    0
-                  ]
-                },
-                friendPart: {
-                  $arrayElemAt: [
-                    {
-                      $filter: {
-                        input: "$participants",
-                        cond: { $eq: ["$$this.userId", friendId] }
-                      }
-                    },
-                    0
-                  ]
-                }
-              },
-              in: {
-                $cond: {
-                  if: { $and: ["$$userPart", "$$friendPart"] },
-                  then: {
-                    $subtract: [
-                      "$$friendPart.owedAmount",
-                      "$$userPart.owedAmount"
-                    ]
-                  },
-                  else: 0
-                }
-              }
-            }
-          }
-        }
-      },
-      {
-        $group: {
-          _id: null,
-          totalBalance: { $sum: "$balance" }
-        }
-      }
-    ]);
-
-    return balanceResult.length > 0 ? balanceResult[0].totalBalance : 0;
-  } catch (error: any) {
-    console.error("❌ Friends API: Error calculating balance", { userId: userId.toString(), friendId: friendId.toString(), error: error.message });
-    return 0; // Return 0 balance on error
   }
 }
 

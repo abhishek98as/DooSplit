@@ -7,6 +7,8 @@ import AppShell from "@/components/layout/AppShell";
 import Card, { CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
+import { useAnalytics } from "@/components/analytics/AnalyticsProvider";
+import { AnalyticsEvents } from "@/lib/firebase-analytics";
 import {
   UserPlus, Search, Users, Check, X, Mail, Send, Link2,
   Copy, CheckCircle2, AlertCircle, Trash2, UserRoundPlus,
@@ -57,6 +59,7 @@ interface InvitationItem {
 export default function FriendsPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
+  const { trackEvent } = useAnalytics();
   const [friends, setFriends] = useState<FriendItem[]>([]);
   const [requests, setRequests] = useState<FriendRequest[]>([]);
   const [invitations, setInvitations] = useState<InvitationItem[]>([]);
@@ -186,6 +189,9 @@ export default function FriendsPage() {
       });
 
       if (res.ok) {
+        trackEvent(AnalyticsEvents.FRIEND_REQUEST_SENT, {
+          method: 'user_search'
+        });
         setSearchResults((prev) =>
           prev.map((user) =>
             user.id === friendId
@@ -211,6 +217,10 @@ export default function FriendsPage() {
       });
       const data = await res.json();
       if (res.ok) {
+        trackEvent(AnalyticsEvents.FRIEND_ADDED, {
+          method: 'dummy_friend',
+          friend_type: 'placeholder'
+        });
         setDummyResult({ type: "success", message: `"${dummyName.trim()}" added as a placeholder friend!` });
         setDummyName("");
         fetchFriends();
