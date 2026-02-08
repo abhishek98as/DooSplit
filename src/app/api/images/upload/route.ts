@@ -64,6 +64,8 @@ export async function POST(request: NextRequest) {
     // Upload image
     const imageRef = await uploadImage(buffer, file.name, uploadOptions);
 
+    console.log(`✅ Image uploaded via API: ${imageRef.name} (${imageRef.fileId})`);
+
     return NextResponse.json({
       success: true,
       image: imageRef,

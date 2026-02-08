@@ -1,114 +1,227 @@
 import { v4 as uuidv4 } from 'uuid';
 import crypto from 'crypto';
-import https from 'https';
 
 // ImageKit configuration
 const IMAGEKIT_PUBLIC_KEY = 'public_fotFZX2VhvZjaJuGaTiCDQvstP0=';
 const IMAGEKIT_PRIVATE_KEY = 'private_3QuRigyMS2nDaHYfYpZpVp0OWiU=';
 const IMAGEKIT_URL_ENDPOINT = 'https://ik.imagekit.io/camhdr';
 
-// Simple ImageKit API wrapper
-class SimpleImageKit {
-  private makeRequest(endpoint: string, method: string = 'GET', data?: any): Promise<any> {
-    return new Promise((resolve, reject) => {
-      const url = `https://api.imagekit.io/v1${endpoint}`;
-      const auth = Buffer.from(`${IMAGEKIT_PRIVATE_KEY}:`).toString('base64');
+// ImageKit API wrapper with proper CRUD operations
+class ImageKitAPI {
+  private baseUrl = 'https://api.imagekit.io/v1';
 
-      const options: https.RequestOptions = {
-        hostname: 'api.imagekit.io',
-        path: `/v1${endpoint}`,
-        method: method,
-        headers: {
-          'Authorization': `Basic ${auth}`,
-          'Content-Type': 'application/json',
-        },
-      };
+  private async makeRequest(endpoint: string, method: string = 'GET', data?: any): Promise<any> {
+    const url = `${this.baseUrl}${endpoint}`;
+    const auth = Buffer.from(`${IMAGEKIT_PRIVATE_KEY}:`).toString('base64');
 
-      const req = https.request(options, (res) => {
-        let body = '';
-        res.on('data', (chunk) => {
-          body += chunk;
-        });
-        res.on('end', () => {
-          try {
-            const response = body ? JSON.parse(body) : {};
-            if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
-              resolve(response);
-            } else {
-              reject(new Error(response.message || `HTTP ${res.statusCode}`));
-            }
-          } catch (error) {
-            reject(error);
-          }
-        });
-      });
+    const headers: Record<string, string> = {
+      'Authorization': `Basic ${auth}`,
+      'Content-Type': 'application/json',
+    };
 
-      req.on('error', (error) => {
-        reject(error);
-      });
+    const config: RequestInit = {
+      method,
+      headers,
+    };
 
-      if (data) {
-        req.write(JSON.stringify(data));
+    if (data && (method === 'POST' || method === 'PUT' || method === 'PATCH')) {
+      config.body = JSON.stringify(data);
+    }
+
+    const response = await fetch(url, config);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      let errorMessage = `HTTP ${response.status}`;
+
+      try {
+        const errorData = JSON.parse(errorText);
+        errorMessage = errorData.message || errorMessage;
+      } catch {
+        errorMessage = errorText || errorMessage;
       }
-      req.end();
-    });
+
+      throw new Error(errorMessage);
+    }
+
+    // Some endpoints return empty responses
+    const contentType = response.headers.get('content-type');
+    if (contentType && contentType.includes('application/json')) {
+      return response.json();
+    }
+
+    return {};
   }
 
-  async upload(file: any, fileName: string, options: any = {}) {
+  // File operations
+  async uploadFile(file: File | Buffer, fileName: string, options: {
+    folder?: string;
+    tags?: string[];
+    useUniqueFileName?: boolean;
+    isPrivateFile?: boolean;
+  } = {}) {
     const formData = new FormData();
-    formData.append('file', file);
-    formData.append('fileName', fileName);
-    if (options.folder) formData.append('folder', options.folder);
-    if (options.tags) formData.append('tags', options.tags);
-    if (options.useUniqueFileName !== false) formData.append('useUniqueFileName', 'true');
 
-    // For simplicity, let's use a direct approach with fetch
-    const response = await fetch('https://upload.imagekit.io/api/v1/files/upload', {
+    if (file instanceof File) {
+      formData.append('file', file);
+    } else {
+      // Convert Buffer to Uint8Array then to Blob
+      const uint8Array = new Uint8Array(file);
+      const blob = new Blob([uint8Array]);
+      formData.append('file', blob, fileName);
+    }
+
+    formData.append('fileName', fileName);
+
+    if (options.folder) formData.append('folder', options.folder);
+    if (options.tags && options.tags.length > 0) {
+      formData.append('tags', options.tags.join(','));
+    }
+    if (options.useUniqueFileName !== false) {
+      formData.append('useUniqueFileName', 'true');
+    }
+    if (options.isPrivateFile) {
+      formData.append('isPrivateFile', 'true');
+    }
+
+    const uploadUrl = 'https://upload.imagekit.io/api/v1/files/upload';
+    const auth = Buffer.from(`${IMAGEKIT_PRIVATE_KEY}:`).toString('base64');
+
+    const response = await fetch(uploadUrl, {
       method: 'POST',
       headers: {
-        'Authorization': `Basic ${Buffer.from(`${IMAGEKIT_PRIVATE_KEY}:`).toString('base64')}`,
+        'Authorization': `Basic ${auth}`,
       },
       body: formData,
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Upload failed: ${error}`);
+      const errorText = await response.text();
+      throw new Error(`Upload failed: ${errorText}`);
     }
 
     return response.json();
+  }
+
+  async getFileDetails(fileId: string) {
+    return this.makeRequest(`/files/${fileId}`);
+  }
+
+  async updateFileDetails(fileId: string, updates: {
+    tags?: string[];
+    customCoordinates?: string;
+    customMetadata?: Record<string, any>;
+    webhookUrl?: string;
+    extensions?: any[];
+    [key: string]: any;
+  }) {
+    return this.makeRequest(`/files/${fileId}`, 'PATCH', updates);
   }
 
   async deleteFile(fileId: string) {
     return this.makeRequest(`/files/${fileId}`, 'DELETE');
   }
 
-  async listFiles(options: any = {}) {
-    const queryParams = new URLSearchParams();
-    if (options.path) queryParams.append('path', options.path);
-    if (options.searchQuery) queryParams.append('searchQuery', options.searchQuery);
-    if (options.limit) queryParams.append('limit', options.limit.toString());
-
-    const query = queryParams.toString();
-    return this.makeRequest(`/files${query ? `?${query}` : ''}`);
+  async deleteMultipleFiles(fileIds: string[]) {
+    return this.makeRequest('/files/bulk-delete', 'POST', { fileIds });
   }
 
+  async listFiles(options: {
+    path?: string;
+    searchQuery?: string;
+    fileType?: 'all' | 'image' | 'non-image';
+    limit?: number;
+    skip?: number;
+    sort?: string;
+    tags?: string[];
+  } = {}) {
+    const params = new URLSearchParams();
+
+    if (options.path) params.append('path', options.path);
+    if (options.searchQuery) params.append('searchQuery', options.searchQuery);
+    if (options.fileType) params.append('fileType', options.fileType);
+    if (options.limit) params.append('limit', options.limit.toString());
+    if (options.skip) params.append('skip', options.skip.toString());
+    if (options.sort) params.append('sort', options.sort);
+
+    const queryString = params.toString();
+    const endpoint = `/files${queryString ? `?${queryString}` : ''}`;
+
+    return this.makeRequest(endpoint);
+  }
+
+  // Folder operations
   async createFolder(folderName: string, parentFolderPath: string = '/') {
-    return this.makeRequest('/folders', 'POST', {
+    // Ensure parent folder path ends with /
+    const normalizedPath = parentFolderPath.endsWith('/') ? parentFolderPath : `${parentFolderPath}/`;
+
+    return this.makeRequest('/folder', 'POST', {
       folderName,
-      parentFolderPath,
+      parentFolderPath: normalizedPath,
     });
+  }
+
+  async deleteFolder(folderPath: string) {
+    return this.makeRequest(`/folder`, 'DELETE', { folderPath });
+  }
+
+  async copyFolder(sourceFolderPath: string, destinationPath: string) {
+    return this.makeRequest('/folder/copy', 'POST', {
+      sourceFolderPath,
+      destinationPath,
+    });
+  }
+
+  async moveFolder(sourceFolderPath: string, destinationPath: string) {
+    return this.makeRequest('/folder/move', 'POST', {
+      sourceFolderPath,
+      destinationPath,
+    });
+  }
+
+  async renameFolder(currentFolderPath: string, newFolderName: string) {
+    return this.makeRequest('/folder/rename', 'POST', {
+      currentFolderPath,
+      newFolderName,
+    });
+  }
+
+  // Bulk operations
+  async addTags(fileIds: string[], tags: string[]) {
+    return this.makeRequest('/files/add-tags', 'POST', {
+      fileIds,
+      tags,
+    });
+  }
+
+  async removeTags(fileIds: string[], tags: string[]) {
+    return this.makeRequest('/files/remove-tags', 'POST', {
+      fileIds,
+      tags,
+    });
+  }
+
+  async removeAITags(fileIds: string[], AITags: string[]) {
+    return this.makeRequest('/files/remove-ai-tags', 'POST', {
+      fileIds,
+      AITags,
+    });
+  }
+
+  // Bulk job status
+  async getBulkJobStatus(jobId: string) {
+    return this.makeRequest(`/bulk-job/${jobId}`);
   }
 }
 
-const imagekit = new SimpleImageKit();
+const imagekit = new ImageKitAPI();
 
 // Folder structure constants
 export const FOLDERS = {
   ROOT: '/doosplit',
-  USER_PROFILES: '/doosplit/user-profiles',
-  EXPENSE_IMAGES: '/doosplit/expense-images',
-  GENERAL_IMAGES: '/doosplit/general',
+  USER_PROFILES: '/doosplit/user-profiles/',
+  EXPENSE_IMAGES: '/doosplit/expense-images/',
+  GENERAL_IMAGES: '/doosplit/general/',
 } as const;
 
 // Image types
@@ -140,6 +253,7 @@ export interface UploadOptions {
   tags?: string[];
   maxSize?: number; // in bytes
   allowedFormats?: string[];
+  isPrivateFile?: boolean;
 }
 
 // Validation constants
@@ -227,13 +341,15 @@ async function checkExpenseImageLimit(expenseId: string): Promise<void> {
  * Upload image to ImageKit
  */
 export async function uploadImage(
-  file: Buffer | string,
+  file: Buffer | string | File,
   originalName: string,
   options: UploadOptions
 ): Promise<ImageReference> {
   try {
-    // Validate image
-    validateImage(file, options);
+    // Validate image if it's a Buffer
+    if (Buffer.isBuffer(file) || typeof file === 'string') {
+      validateImage(file, options);
+    }
 
     // Check expense image limit
     if (options.type === ImageType.EXPENSE) {
@@ -247,16 +363,30 @@ export async function uploadImage(
     const folder = getFolderPath(options.type);
 
     // Prepare tags
-    const defaultTags = [options.type, `entity-${options.entityId}`];
+    const defaultTags = [options.type, `entity-${options.entityId}`, `ref-${uuidv4()}`];
     if (options.type === ImageType.EXPENSE) {
       defaultTags.push(`expense-${options.entityId}`);
     }
     const allTags = [...defaultTags, ...(options.tags || [])];
 
+    // Convert file to proper format for upload
+    let fileToUpload: File | Buffer;
+    if (file instanceof File) {
+      fileToUpload = file;
+    } else if (Buffer.isBuffer(file)) {
+      fileToUpload = file;
+    } else if (typeof file === 'string' && file.startsWith('data:')) {
+      // Convert base64 to buffer
+      const base64Data = file.split(',')[1];
+      fileToUpload = Buffer.from(base64Data, 'base64');
+    } else {
+      throw new Error('Invalid file format');
+    }
+
     // Upload to ImageKit
-    const uploadResult = await imagekit.upload(file, uniqueName, {
+    const uploadResult = await imagekit.uploadFile(fileToUpload, uniqueName, {
       folder: folder,
-      tags: allTags.join(','),
+      tags: allTags,
       useUniqueFileName: false, // We're using our own unique naming
     });
 
@@ -288,27 +418,42 @@ export async function uploadImage(
  */
 export async function getImageByReferenceId(referenceId: string): Promise<ImageReference | null> {
   try {
-    // This would typically query your database for the reference
-    // For now, we'll search ImageKit by tags (assuming referenceId is stored as a tag)
+    // Search ImageKit by tags using the reference ID
     const files = await imagekit.listFiles({
       searchQuery: `tags:"ref-${referenceId}"`,
+      limit: 1,
     });
 
-    if (files.length === 0) {
+    if (!files || files.length === 0) {
       return null;
     }
 
     const file = files[0];
+
+    // Extract type and entityId from tags
+    let type = ImageType.GENERAL;
+    let entityId = '';
+
+    if (file.tags) {
+      for (const tag of file.tags) {
+        if (tag.startsWith('entity-')) {
+          entityId = tag.replace('entity-', '');
+        } else if (Object.values(ImageType).includes(tag as ImageType)) {
+          type = tag as ImageType;
+        }
+      }
+    }
+
     return {
       id: referenceId,
       fileId: file.fileId,
       url: file.url,
       name: file.name,
-      type: ImageType.GENERAL, // Would need to be determined from tags
-      entityId: '', // Would need to be determined from tags
+      type: type,
+      entityId: entityId,
       size: file.size || 0,
       format: file.name.split('.').pop() || 'jpg',
-      uploadedAt: new Date(file.createdAt),
+      uploadedAt: new Date(file.createdAt || Date.now()),
       tags: file.tags || [],
     };
 
@@ -329,20 +474,45 @@ export async function getImagesForEntity(entityId: string, type?: ImageType): Pr
 
     const files = await imagekit.listFiles({
       searchQuery: searchQuery,
+      sort: 'DESC_CREATED', // Most recent first
     });
 
-    return files.map((file: any) => ({
-      id: uuidv4(), // Generate ID for compatibility (would be from DB in real implementation)
-      fileId: file.fileId,
-      url: file.url,
-      name: file.name,
-      type: type || ImageType.GENERAL,
-      entityId: entityId,
-      size: file.size || 0,
-      format: file.name.split('.').pop() || 'jpg',
-      uploadedAt: new Date(file.createdAt || Date.now()),
-      tags: file.tags || [],
-    }));
+    return files.map((file: any) => {
+      // Extract type from tags if not provided
+      let actualType = type || ImageType.GENERAL;
+      if (!type && file.tags) {
+        for (const tag of file.tags) {
+          if (Object.values(ImageType).includes(tag as ImageType)) {
+            actualType = tag as ImageType;
+            break;
+          }
+        }
+      }
+
+      // Extract reference ID from tags
+      let referenceId = uuidv4(); // fallback
+      if (file.tags) {
+        for (const tag of file.tags) {
+          if (tag.startsWith('ref-')) {
+            referenceId = tag.replace('ref-', '');
+            break;
+          }
+        }
+      }
+
+      return {
+        id: referenceId,
+        fileId: file.fileId,
+        url: file.url,
+        name: file.name,
+        type: actualType,
+        entityId: entityId,
+        size: file.size || 0,
+        format: file.name.split('.').pop() || 'jpg',
+        uploadedAt: new Date(file.createdAt || Date.now()),
+        tags: file.tags || [],
+      };
+    });
 
   } catch (error: any) {
     console.error('❌ Error getting images for entity:', error.message);
@@ -358,6 +528,7 @@ export async function deleteImage(referenceId: string): Promise<boolean> {
     // Get image details first
     const imageRef = await getImageByReferenceId(referenceId);
     if (!imageRef) {
+      console.warn(`⚠️ Image not found for reference ID: ${referenceId}`);
       return false;
     }
 
@@ -435,23 +606,43 @@ export function getOptimizedImageUrl(
  */
 export async function initializeFolders(): Promise<void> {
   try {
+    console.log('🔄 Initializing ImageKit folders...');
+
+    // Check if root folder exists by trying to list files in it
+    const existingFiles = await imagekit.listFiles({
+      path: '/doosplit',
+      limit: 1
+    });
+
+    if (existingFiles && existingFiles.length > 0) {
+      console.log('ℹ️ ImageKit folders already exist');
+      return;
+    }
+
     // Create main doosplit folder
+    console.log('📁 Creating root folder: /doosplit');
     await imagekit.createFolder('doosplit', '/');
 
     // Create subfolders
-    const subfolders = ['user-profiles', 'expense-images', 'general'];
+    const subfolders = [
+      { name: 'user-profiles', path: '/doosplit/' },
+      { name: 'expense-images', path: '/doosplit/' },
+      { name: 'general', path: '/doosplit/' }
+    ];
 
     for (const folder of subfolders) {
-      await imagekit.createFolder(folder, '/doosplit');
+      console.log(`📁 Creating subfolder: ${folder.path}${folder.name}`);
+      await imagekit.createFolder(folder.name, folder.path);
     }
 
     console.log('✅ ImageKit folders initialized successfully');
   } catch (error: any) {
     // Folders might already exist, which is fine
-    if (error.message?.includes('already exists')) {
+    if (error.message?.includes('already exists') || error.message?.includes('exists')) {
       console.log('ℹ️ ImageKit folders already exist');
     } else {
       console.error('❌ Error initializing folders:', error.message);
+      throw error;
     }
   }
 }
@@ -465,7 +656,11 @@ export async function getImageStats(): Promise<{
   imagesByType: Record<ImageType, number>;
 }> {
   try {
-    const allFiles = await imagekit.listFiles();
+    // Get all files in the doosplit folder structure
+    const allFiles = await imagekit.listFiles({
+      path: '/doosplit',
+      limit: 1000, // Adjust as needed
+    });
 
     const stats = {
       totalImages: allFiles.length,
@@ -477,15 +672,30 @@ export async function getImageStats(): Promise<{
       },
     };
 
-    // Count by type (this is a simplified approach)
+    // Count by type based on tags or file path
     allFiles.forEach((file: any) => {
-      if (file.filePath?.includes('/user-profiles/')) {
-        stats.imagesByType[ImageType.USER_PROFILE]++;
-      } else if (file.filePath?.includes('/expense-images/')) {
-        stats.imagesByType[ImageType.EXPENSE]++;
-      } else {
-        stats.imagesByType[ImageType.GENERAL]++;
+      let type = ImageType.GENERAL;
+
+      // Check tags first
+      if (file.tags) {
+        for (const tag of file.tags) {
+          if (Object.values(ImageType).includes(tag as ImageType)) {
+            type = tag as ImageType;
+            break;
+          }
+        }
       }
+
+      // Fallback to path-based detection
+      if (type === ImageType.GENERAL) {
+        if (file.filePath?.includes('/user-profiles/')) {
+          type = ImageType.USER_PROFILE;
+        } else if (file.filePath?.includes('/expense-images/')) {
+          type = ImageType.EXPENSE;
+        }
+      }
+
+      stats.imagesByType[type]++;
     });
 
     return stats;
