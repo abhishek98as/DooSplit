@@ -138,6 +138,18 @@ export async function sendInviteEmail({
 }
 
 /**
+ * Send payment reminder
+ */
+interface SendPaymentReminderParams {
+  to: string;
+  fromUserName: string;
+  toUserName: string;
+  amount: number;
+  currency: string;
+  message?: string;
+}
+
+/**
  * Send email verification
  */
 interface SendEmailVerificationParams {
@@ -226,6 +238,98 @@ export async function sendEmailVerification({
     from: `"DooSplit" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`,
     to,
     subject: "Welcome to DooSplit - Verify Your Email",
+    html,
+  });
+}
+
+export async function sendPaymentReminder({
+  to,
+  fromUserName,
+  toUserName,
+  amount,
+  currency,
+  message,
+}: SendPaymentReminderParams) {
+  const formattedAmount = new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: currency || "INR",
+  }).format(amount);
+
+  const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+</head>
+<body style="margin: 0; padding: 0; background-color: #f3f4f6; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color: #f3f4f6; padding: 40px 20px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width: 560px; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 24px rgba(0,0,0,0.08);">
+
+          <tr>
+            <td style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); padding: 48px 40px; text-align: center;">
+              <div style="display: inline-block; background: rgba(255,255,255,0.2); border-radius: 16px; padding: 14px; margin-bottom: 20px;">
+                <span style="font-size: 40px;">💰</span>
+              </div>
+              <h1 style="color: #ffffff; font-size: 28px; margin: 0 0 8px 0; font-weight: 700;">Payment Reminder</h1>
+              <p style="color: rgba(255,255,255,0.85); font-size: 16px; margin: 0;">${fromUserName} is reminding you</p>
+            </td>
+          </tr>
+
+          <tr>
+            <td style="padding: 40px;">
+              <p style="color: #374151; font-size: 16px; line-height: 1.7; margin: 0 0 20px 0;">
+                Hi ${toUserName},
+              </p>
+              <p style="color: #374151; font-size: 16px; line-height: 1.7; margin: 0 0 28px 0;">
+                ${fromUserName} is reminding you about a payment of <strong style="color: #f59e0b; font-size: 18px;">${formattedAmount}</strong>.
+              </p>
+
+              ${message ? `
+              <div style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 16px; margin: 24px 0;">
+                <p style="color: #92400e; font-size: 14px; margin: 0; line-height: 1.6;">
+                  <strong>💬 Message:</strong> ${message}
+                </p>
+              </div>
+              ` : ''}
+
+              <div style="background: #f0f9ff; border: 1px solid #0ea5e9; border-radius: 8px; padding: 20px; margin: 24px 0; text-align: center;">
+                <p style="color: #0c4a6e; font-size: 14px; margin: 0 0 12px 0;">
+                  <strong>Amount Due:</strong>
+                </p>
+                <p style="color: #0c4a6e; font-size: 24px; font-weight: 700; margin: 0; font-family: 'Monaco', 'Menlo', monospace;">
+                  ${formattedAmount}
+                </p>
+              </div>
+
+              <p style="color: #6b7280; font-size: 14px; text-align: center; margin: 24px 0 0 0;">
+                Log in to DooSplit to settle up with ${fromUserName}.
+              </p>
+            </td>
+          </tr>
+
+          <tr>
+            <td style="padding: 24px 40px; background: #f9fafb; border-top: 1px solid #e5e7eb; text-align: center;">
+              <p style="color: #d1d5db; font-size: 11px; margin: 0;">
+                DooSplit — Split expenses, not friendships ❤️
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+  `;
+
+  await transporter.sendMail({
+    from: `"DooSplit" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`,
+    to,
+    subject: `Payment Reminder from ${fromUserName} - ${formattedAmount}`,
     html,
   });
 }

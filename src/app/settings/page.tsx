@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useSession, signOut } from "next-auth/react";
 import AppShell from "@/components/layout/AppShell";
+import { useTheme } from "@/contexts/ThemeContext";
 import Card, { CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
@@ -69,8 +70,12 @@ export default function SettingsPage() {
   const [showCurrentPw, setShowCurrentPw] = useState(false);
   const [showNewPw, setShowNewPw] = useState(false);
 
-  // Theme state
-  const [theme, setTheme] = useState<"light" | "dark">("light");
+  // Notification settings
+  const [pushNotificationsEnabled, setPushNotificationsEnabled] = useState(false);
+  const [emailNotificationsEnabled, setEmailNotificationsEnabled] = useState(true);
+
+  // Theme context
+  const { theme, toggleTheme } = useTheme();
 
   // Currency state
   const [showCurrencyModal, setShowCurrencyModal] = useState(false);
@@ -96,15 +101,6 @@ export default function SettingsPage() {
   useEffect(() => {
     fetchProfile();
     fetchFriendsList();
-    // Initialize theme from localStorage or system
-    const saved = localStorage.getItem("theme");
-    if (saved === "dark" || (!saved && window.matchMedia("(prefers-color-scheme: dark)").matches)) {
-      setTheme("dark");
-      document.documentElement.classList.add("dark");
-    } else {
-      setTheme("light");
-      document.documentElement.classList.remove("dark");
-    }
   }, []);
 
   const fetchProfile = async () => {
@@ -118,6 +114,8 @@ export default function SettingsPage() {
           phone: data.user.phone || "",
         });
         setSelectedCurrency(data.user.defaultCurrency || "INR");
+        setPushNotificationsEnabled(data.user.pushNotificationsEnabled || false);
+        setEmailNotificationsEnabled(data.user.emailNotificationsEnabled !== false);
       }
     } catch (error) {
       console.error("Failed to fetch profile:", error);
@@ -229,16 +227,6 @@ export default function SettingsPage() {
     }
   };
 
-  const toggleTheme = () => {
-    const newTheme = theme === "light" ? "dark" : "light";
-    setTheme(newTheme);
-    localStorage.setItem("theme", newTheme);
-    if (newTheme === "dark") {
-      document.documentElement.classList.add("dark");
-    } else {
-      document.documentElement.classList.remove("dark");
-    }
-  };
 
   const handleCurrencySave = async () => {
     setSavingCurrency(true);
@@ -256,6 +244,52 @@ export default function SettingsPage() {
       console.error("Failed to update currency");
     } finally {
       setSavingCurrency(false);
+    }
+  };
+
+  const togglePushNotifications = async () => {
+    try {
+      const newValue = !pushNotificationsEnabled;
+      setPushNotificationsEnabled(newValue);
+
+      const res = await fetch("/api/user/profile", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pushNotificationsEnabled: newValue }),
+      });
+
+      if (!res.ok) {
+        // Revert on error
+        setPushNotificationsEnabled(!newValue);
+        console.error("Failed to update push notifications setting");
+      }
+    } catch (error) {
+      // Revert on error
+      setPushNotificationsEnabled(!pushNotificationsEnabled);
+      console.error("Failed to toggle push notifications:", error);
+    }
+  };
+
+  const toggleEmailNotifications = async () => {
+    try {
+      const newValue = !emailNotificationsEnabled;
+      setEmailNotificationsEnabled(newValue);
+
+      const res = await fetch("/api/user/profile", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ emailNotificationsEnabled: newValue }),
+      });
+
+      if (!res.ok) {
+        // Revert on error
+        setEmailNotificationsEnabled(!newValue);
+        console.error("Failed to update email notifications setting");
+      }
+    } catch (error) {
+      // Revert on error
+      setEmailNotificationsEnabled(!emailNotificationsEnabled);
+      console.error("Failed to toggle email notifications:", error);
     }
   };
 
@@ -388,6 +422,69 @@ export default function SettingsPage() {
               </div>
               <ChevronRight className="h-4 w-4 text-neutral-400" />
             </button>
+          </CardContent>
+        </Card>
+
+        {/* Notifications */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Bell className="h-5 w-5" />
+              Notifications
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Push Notifications */}
+            <div className="flex items-center justify-between">
+              <div className="flex-1">
+                <p className="text-sm font-medium text-neutral-900 dark:text-dark-text">
+                  Push Notifications
+                </p>
+                <p className="text-xs text-neutral-500 dark:text-dark-text-tertiary">
+                  Receive notifications in your browser
+                </p>
+              </div>
+              <button
+                onClick={togglePushNotifications}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 ${
+                  pushNotificationsEnabled
+                    ? "bg-primary"
+                    : "bg-neutral-200 dark:bg-dark-border"
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    pushNotificationsEnabled ? "translate-x-6" : "translate-x-1"
+                  }`}
+                />
+              </button>
+            </div>
+
+            {/* Email Notifications */}
+            <div className="flex items-center justify-between">
+              <div className="flex-1">
+                <p className="text-sm font-medium text-neutral-900 dark:text-dark-text">
+                  Email Notifications
+                </p>
+                <p className="text-xs text-neutral-500 dark:text-dark-text-tertiary">
+                  Receive notifications via email
+                </p>
+              </div>
+              <button
+                onClick={toggleEmailNotifications}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 ${
+                  emailNotificationsEnabled
+                    ? "bg-primary"
+                    : "bg-neutral-200 dark:bg-dark-border"
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    emailNotificationsEnabled ? "translate-x-6" : "translate-x-1"
+                  }`}
+                />
+              </button>
+            </div>
           </CardContent>
         </Card>
 

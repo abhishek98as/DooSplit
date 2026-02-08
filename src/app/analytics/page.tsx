@@ -6,6 +6,20 @@ import AppShell from "@/components/layout/AppShell";
 import Card, { CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
 import { TrendingUp, PieChart, Calendar, Download } from "lucide-react";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  PieChart as RechartsPieChart,
+  Pie,
+  Cell,
+  BarChart,
+  Bar,
+} from "recharts";
 
 interface AnalyticsData {
   summary: {
@@ -179,6 +193,23 @@ export default function AnalyticsPage() {
     );
   }
 
+  // Colors for charts
+  const COLORS = ['#00B8A9', '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8'];
+
+  // Prepare chart data
+  const pieChartData = analytics.categoryBreakdown.map((cat, index) => ({
+    name: cat.category,
+    value: cat.total,
+    count: cat.count,
+    fill: COLORS[index % COLORS.length],
+  }));
+
+  const lineChartData = analytics.monthlyTrend.map((month) => ({
+    month: month.month,
+    expenses: month.total,
+    count: month.expenses,
+  }));
+
   return (
     <AppShell>
       <div className="p-4 md:p-8 space-y-6">
@@ -308,29 +339,135 @@ export default function AnalyticsPage() {
           </CardContent>
         </Card>
 
-        {/* Monthly Trend */}
+        {/* Charts Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Monthly Trend Chart */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Monthly Spending Trend</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="h-80">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={lineChartData}>
+                    <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
+                    <XAxis
+                      dataKey="month"
+                      fontSize={12}
+                      tick={{ fill: 'currentColor' }}
+                    />
+                    <YAxis
+                      fontSize={12}
+                      tick={{ fill: 'currentColor' }}
+                      tickFormatter={(value) => `₹${value}`}
+                    />
+                    <Tooltip
+                      formatter={(value) => value ? [formatCurrency(Number(value)), 'Amount'] : ['₹0', 'Amount']}
+                      labelStyle={{ color: 'currentColor' }}
+                      contentStyle={{
+                        backgroundColor: 'var(--background)',
+                        border: '1px solid var(--border)',
+                        borderRadius: '8px',
+                      }}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="expenses"
+                      stroke="#00B8A9"
+                      strokeWidth={3}
+                      dot={{ fill: '#00B8A9', strokeWidth: 2, r: 4 }}
+                      activeDot={{ r: 6, stroke: '#00B8A9', strokeWidth: 2 }}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Category Breakdown Pie Chart */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Spending by Category</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="h-80">
+                <ResponsiveContainer width="100%" height="100%">
+                  <RechartsPieChart>
+                    <Pie
+                      data={pieChartData}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={60}
+                      outerRadius={100}
+                      paddingAngle={2}
+                      dataKey="value"
+                    >
+                      {pieChartData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={entry.fill} />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      formatter={(value) => formatCurrency(Number(value))}
+                      contentStyle={{
+                        backgroundColor: 'var(--background)',
+                        border: '1px solid var(--border)',
+                        borderRadius: '8px',
+                      }}
+                    />
+                  </RechartsPieChart>
+                </ResponsiveContainer>
+              </div>
+              {/* Legend */}
+              <div className="grid grid-cols-2 gap-2 mt-4">
+                {pieChartData.slice(0, 6).map((entry, index) => (
+                  <div key={index} className="flex items-center gap-2">
+                    <div
+                      className="w-3 h-3 rounded-full"
+                      style={{ backgroundColor: entry.fill }}
+                    />
+                    <span className="text-xs text-neutral-600 dark:text-dark-text-secondary truncate">
+                      {entry.name} ({entry.count})
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Category Details Table */}
         <Card>
           <CardHeader>
-            <CardTitle>Monthly Trend</CardTitle>
+            <CardTitle>Detailed Breakdown</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="space-y-4">
-              {analytics.monthlyTrend.map((month) => (
-                <div
-                  key={month.month}
-                  className="flex items-center justify-between py-2 border-b border-neutral-200 dark:border-dark-border last:border-0"
-                >
-                  <div>
-                    <p className="text-sm font-medium">{month.month}</p>
-                    <p className="text-xs text-neutral-500">
-                      {month.expenses} expense{month.expenses !== 1 ? "s" : ""}
-                    </p>
+            <div className="space-y-3">
+              {analytics.categoryBreakdown.map((cat) => {
+                const percentage =
+                  (cat.total / analytics.summary.totalSpent) * 100;
+                return (
+                  <div key={cat.category}>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-2xl">{getCategoryIcon(cat.category)}</span>
+                        <span className="text-sm font-medium capitalize">
+                          {cat.category}
+                        </span>
+                        <span className="text-xs text-neutral-500">({cat.count})</span>
+                      </div>
+                      <span className="text-sm font-semibold">
+                        {formatCurrency(cat.total)}
+                      </span>
+                    </div>
+                    <div className="w-full bg-neutral-200 dark:bg-dark-border rounded-full h-2">
+                      <div
+                        className="bg-primary h-2 rounded-full"
+                        style={{ width: `${percentage}%` }}
+                      />
+                    </div>
                   </div>
-                  <p className="text-lg font-semibold">
-                    {formatCurrency(month.total)}
-                  </p>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </CardContent>
         </Card>

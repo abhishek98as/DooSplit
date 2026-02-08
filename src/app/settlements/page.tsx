@@ -6,7 +6,7 @@ import AppShell from "@/components/layout/AppShell";
 import Card, { CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
-import { DollarSign, Plus, ArrowRight, Wallet } from "lucide-react";
+import { DollarSign, Plus, ArrowRight, Wallet, Bell, CheckCircle, Clock, Download } from "lucide-react";
 import Modal from "@/components/ui/Modal";
 
 interface Settlement {
@@ -47,6 +47,9 @@ export default function SettlementsPage() {
   const [method, setMethod] = useState("Cash");
   const [note, setNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [activeTab, setActiveTab] = useState<"settlements" | "reminders">("settlements");
+  const [reminders, setReminders] = useState<any[]>([]);
+  const [remindersLoading, setRemindersLoading] = useState(false);
 
   useEffect(() => {
     if (status === "unauthenticated") {
@@ -54,8 +57,53 @@ export default function SettlementsPage() {
     } else if (status === "authenticated") {
       fetchSettlements();
       fetchFriends();
+      fetchReminders();
     }
   }, [status]);
+
+  const fetchReminders = async () => {
+    setRemindersLoading(true);
+    try {
+      const [receivedRes, sentRes] = await Promise.all([
+        fetch("/api/payment-reminders?type=received"),
+        fetch("/api/payment-reminders?type=sent")
+      ]);
+
+      if (receivedRes.ok && sentRes.ok) {
+        const receivedData = await receivedRes.json();
+        const sentData = await sentRes.json();
+        // Combine and sort by createdAt
+        const allReminders = [...receivedData.reminders, ...sentData.reminders]
+          .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        setReminders(allReminders);
+      }
+    } catch (error) {
+      console.error("Failed to fetch reminders:", error);
+    } finally {
+      setRemindersLoading(false);
+    }
+  };
+
+  const exportSettlements = async () => {
+    try {
+      const response = await fetch("/api/settlements/export");
+      if (response.ok) {
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `settlements_${new Date().toISOString().split('T')[0]}.csv`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(url);
+      } else {
+        console.error("Failed to export settlements");
+      }
+    } catch (error) {
+      console.error("Export error:", error);
+    }
+  };
 
   const fetchSettlements = async () => {
     try {
@@ -167,17 +215,59 @@ export default function SettlementsPage() {
               View your payment history and settle debts
             </p>
           </div>
-          <Button onClick={() => setShowModal(true)}>
-            <Plus className="h-4 w-4 mr-2" />
-            Record Payment
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              variant="secondary"
+              onClick={exportSettlements}
+              disabled={settlements.length === 0}
+            >
+              <Download className="h-4 w-4 mr-2" />
+              Export
+            </Button>
+            <Button onClick={() => setShowModal(true)}>
+              <Plus className="h-4 w-4 mr-2" />
+              Record Payment
+            </Button>
+          </div>
         </div>
 
-        {/* Settlements History */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Payment History</CardTitle>
-          </CardHeader>
+        {/* Tab Navigation */}
+        <div className="border-b border-neutral-200 dark:border-dark-border">
+          <nav className="flex space-x-8">
+            <button
+              onClick={() => setActiveTab("settlements")}
+              className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
+                activeTab === "settlements"
+                  ? "border-primary text-primary"
+                  : "border-transparent text-neutral-500 hover:text-neutral-700 hover:border-neutral-300 dark:hover:border-dark-border"
+              }`}
+            >
+              Settlements
+            </button>
+            <button
+              onClick={() => setActiveTab("reminders")}
+              className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
+                activeTab === "reminders"
+                  ? "border-primary text-primary"
+                  : "border-transparent text-neutral-500 hover:text-neutral-700 hover:border-neutral-300 dark:hover:border-dark-border"
+              }`}
+            >
+              Payment Reminders
+              {reminders.filter(r => r.status === "sent" && !r.readAt).length > 0 && (
+                <span className="ml-2 inline-flex items-center justify-center w-5 h-5 text-xs font-bold text-white bg-error rounded-full">
+                  {reminders.filter(r => r.status === "sent" && !r.readAt).length}
+                </span>
+              )}
+            </button>
+          </nav>
+        </div>
+
+        {/* Content based on active tab */}
+        {activeTab === "settlements" ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>Payment History</CardTitle>
+            </CardHeader>
           <CardContent>
             {settlements.length === 0 ? (
               <div className="text-center py-12">
@@ -237,6 +327,89 @@ export default function SettlementsPage() {
             )}
           </CardContent>
         </Card>
+        ) : (
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle>Payment Reminders</CardTitle>
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    // Could open a modal to send new reminder
+                  }}
+                >
+                  <Bell className="h-4 w-4 mr-2" />
+                  Send Reminder
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {remindersLoading ? (
+                <div className="flex items-center justify-center py-12">
+                  <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-primary"></div>
+                </div>
+              ) : reminders.length === 0 ? (
+                <div className="text-center py-12">
+                  <Bell className="h-16 w-16 mx-auto text-neutral-300 mb-4" />
+                  <p className="text-body text-neutral-500 dark:text-dark-text-secondary">
+                    No payment reminders yet
+                  </p>
+                  <p className="text-sm text-neutral-400 dark:text-dark-text-tertiary mt-2">
+                    Send reminders to friends about outstanding payments
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {reminders.map((reminder) => {
+                    const isOutgoing = reminder.fromUser.id === session?.user?.id;
+                    return (
+                      <div
+                        key={reminder.id}
+                        className="flex items-center justify-between py-3 px-4 border border-neutral-200 dark:border-dark-border rounded-lg hover:bg-neutral-50 dark:hover:bg-dark-bg-secondary transition-colors"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="flex-shrink-0">
+                            {reminder.status === "paid" ? (
+                              <CheckCircle className="h-5 w-5 text-success" />
+                            ) : reminder.status === "read" ? (
+                              <Clock className="h-5 w-5 text-info" />
+                            ) : (
+                              <Bell className="h-5 w-5 text-warning" />
+                            )}
+                          </div>
+                          <div>
+                            <p className="text-sm font-medium text-neutral-900 dark:text-dark-text">
+                              {isOutgoing ? `Reminder sent to ${reminder.toUser.name}` : `Reminder from ${reminder.fromUser.name}`}
+                            </p>
+                            <p className="text-xs text-neutral-500 dark:text-dark-text-tertiary">
+                              {formatCurrency(reminder.amount)} • {new Date(reminder.createdAt).toLocaleDateString()}
+                            </p>
+                            {reminder.message && (
+                              <p className="text-xs text-neutral-600 dark:text-dark-text-secondary mt-1 italic">
+                                "{reminder.message}"
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                            reminder.status === "paid"
+                              ? "bg-success/10 text-success"
+                              : reminder.status === "read"
+                              ? "bg-info/10 text-info"
+                              : "bg-warning/10 text-warning"
+                          }`}>
+                            {reminder.status === "paid" ? "Paid" : reminder.status === "read" ? "Read" : "Sent"}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         {/* Record Payment Modal */}
         <Modal

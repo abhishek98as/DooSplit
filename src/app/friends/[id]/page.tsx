@@ -7,7 +7,9 @@ import Link from "next/link";
 import AppShell from "@/components/layout/AppShell";
 import Card, { CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
-import { ArrowLeft, Mail, Calendar, DollarSign, TrendingUp, TrendingDown, MessageSquare, Filter } from "lucide-react";
+import Input from "@/components/ui/Input";
+import Modal from "@/components/ui/Modal";
+import { ArrowLeft, Mail, Calendar, DollarSign, TrendingUp, TrendingDown, MessageSquare, Filter, Bell } from "lucide-react";
 import Image from "next/image";
 
 interface Friend {
@@ -43,6 +45,10 @@ export default function FriendProfilePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<"all" | "expenses" | "settlements">("all");
+  const [showReminderModal, setShowReminderModal] = useState(false);
+  const [reminderAmount, setReminderAmount] = useState("");
+  const [reminderMessage, setReminderMessage] = useState("");
+  const [sendingReminder, setSendingReminder] = useState(false);
 
   useEffect(() => {
     if (status === "unauthenticated") {
@@ -89,6 +95,48 @@ export default function FriendProfilePage() {
       style: "currency",
       currency: "INR",
     }).format(amount);
+  };
+
+  const handleSendReminder = (friend: Friend) => {
+    if (friend.balance > 0) {
+      setReminderAmount(friend.balance.toString());
+      setReminderMessage(`Hi, just a friendly reminder about the ${formatCurrency(friend.balance)} you owe me. Let's settle up!`);
+      setShowReminderModal(true);
+    }
+  };
+
+  const handleSendReminderSubmit = async () => {
+    if (!friend || !reminderAmount) return;
+
+    setSendingReminder(true);
+    try {
+      const response = await fetch("/api/payment-reminders", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          toUserId: friend._id,
+          amount: parseFloat(reminderAmount),
+          currency: "INR",
+          message: reminderMessage.trim() || undefined,
+        }),
+      });
+
+      if (response.ok) {
+        setShowReminderModal(false);
+        setReminderAmount("");
+        setReminderMessage("");
+        // Could add a success toast here
+      } else {
+        const errorData = await response.json();
+        setError(errorData.error || "Failed to send reminder");
+      }
+    } catch (err) {
+      setError("Failed to send reminder");
+    } finally {
+      setSendingReminder(false);
+    }
   };
 
   const filteredTransactions = transactions.filter(transaction => {
@@ -236,11 +284,23 @@ export default function FriendProfilePage() {
                         {friend.balance > 0 ? "You are owed" : friend.balance < 0 ? "You owe" : "Settled up"}
                       </p>
                       {friend.balance !== 0 && (
-                        <Link href={`/settlements?friend=${friend._id}`} className="inline-block mt-2">
-                          <Button size="sm">
-                            {friend.balance > 0 ? "Request Payment" : "Settle Up"}
-                          </Button>
-                        </Link>
+                        <div className="flex gap-2 mt-2">
+                          {friend.balance > 0 && (
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              onClick={() => handleSendReminder(friend)}
+                            >
+                              <Bell className="h-4 w-4 mr-1" />
+                              Remind
+                            </Button>
+                          )}
+                          <Link href={`/settlements?friend=${friend._id}`}>
+                            <Button size="sm">
+                              {friend.balance > 0 ? "Request Payment" : "Settle Up"}
+                            </Button>
+                          </Link>
+                        </div>
                       )}
                     </div>
                   </div>
@@ -374,6 +434,64 @@ export default function FriendProfilePage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Payment Reminder Modal */}
+      <Modal
+        isOpen={showReminderModal}
+        onClose={() => {
+          setShowReminderModal(false);
+          setReminderAmount("");
+          setReminderMessage("");
+        }}
+        title={`Send Payment Reminder to ${friend?.name}`}
+      >
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-neutral-700 dark:text-dark-text mb-2">
+              Amount <span className="text-error">*</span>
+            </label>
+            <Input
+              type="number"
+              placeholder="0.00"
+              value={reminderAmount}
+              onChange={(e) => setReminderAmount(e.target.value)}
+              icon={<DollarSign className="h-5 w-5" />}
+            />
+            <p className="text-xs text-neutral-500 mt-1">
+              Friend owes: {friend ? formatCurrency(Math.abs(friend.balance)) : ""}
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-neutral-700 dark:text-dark-text mb-2">
+              Message (Optional)
+            </label>
+            <textarea
+              className="w-full px-4 py-2 border border-neutral-300 dark:border-dark-border rounded-md text-body focus:outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 bg-white dark:bg-dark-bg-secondary text-neutral-900 dark:text-dark-text"
+              rows={3}
+              placeholder="Add a personal message..."
+              value={reminderMessage}
+              onChange={(e) => setReminderMessage(e.target.value)}
+            />
+          </div>
+
+          <div className="flex gap-2 justify-end pt-4">
+            <Button
+              variant="secondary"
+              onClick={() => setShowReminderModal(false)}
+              disabled={sendingReminder}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSendReminderSubmit}
+              disabled={!reminderAmount || sendingReminder}
+            >
+              {sendingReminder ? "Sending..." : "Send Reminder"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </AppShell>
   );
 }

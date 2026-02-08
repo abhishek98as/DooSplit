@@ -132,21 +132,31 @@ export async function POST(request: NextRequest) {
           const inviterId = invitation.invitedBy;
           const newUserId = user._id;
 
-          // Create mutual friendship (already accepted)
-          await Friend.insertMany([
-            {
-              userId: newUserId,
-              friendId: inviterId,
-              status: "accepted",
-              requestedBy: inviterId,
-            },
-            {
-              userId: inviterId,
-              friendId: newUserId,
-              status: "accepted",
-              requestedBy: inviterId,
-            },
-          ]);
+          // Check if friendship already exists to prevent duplicates
+          const existingFriendship = await Friend.findOne({
+            $or: [
+              { userId: newUserId, friendId: inviterId },
+              { userId: inviterId, friendId: newUserId }
+            ]
+          });
+
+          if (!existingFriendship) {
+            // Create mutual friendship (already accepted)
+            await Friend.insertMany([
+              {
+                userId: newUserId,
+                friendId: inviterId,
+                status: "accepted",
+                requestedBy: inviterId,
+              },
+              {
+                userId: inviterId,
+                friendId: newUserId,
+                status: "accepted",
+                requestedBy: inviterId,
+              },
+            ]);
+          }
 
           responseData.friendAdded = true;
         }

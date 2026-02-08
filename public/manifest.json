@@ -1,0 +1,28 @@
+{
+  "name": "DooSplit - Split Expenses with Friends",
+  "short_name": "DooSplit",
+  "description": "Track and split expenses with friends and roommates. Manage group finances efficiently.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#00B8A9",
+  "orientation": "portrait-primary",
+  "scope": "/",
+  "icons": [
+    {
+      "src": "/logo.webp",
+      "sizes": "192x192",
+      "type": "image/webp",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/logo.webp",
+      "sizes": "512x512",
+      "type": "image/webp",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["finance", "lifestyle", "productivity"],
+  "lang": "en-US",
+  "dir": "ltr"
+}

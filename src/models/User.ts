@@ -18,6 +18,15 @@ export interface IUser {
   authProvider: "email" | "firebase"; // Track which auth method created this account
   resetPasswordToken?: string;
   resetPasswordExpires?: Date;
+  pushNotificationsEnabled?: boolean;
+  emailNotificationsEnabled?: boolean;
+  pushSubscription?: {
+    endpoint: string;
+    keys: {
+      p256dh: string;
+      auth: string;
+    };
+  };
   createdAt: Date;
   updatedAt: Date;
 }
@@ -99,6 +108,30 @@ const UserSchema = new Schema<IUser>(
     resetPasswordExpires: {
       type: Date,
       default: null,
+    },
+    pushNotificationsEnabled: {
+      type: Boolean,
+      default: false,
+    },
+    emailNotificationsEnabled: {
+      type: Boolean,
+      default: true,
+    },
+    pushSubscription: {
+      endpoint: {
+        type: String,
+        default: null,
+      },
+      keys: {
+        p256dh: {
+          type: String,
+          default: null,
+        },
+        auth: {
+          type: String,
+          default: null,
+        },
+      },
     },
   },
   {

@@ -30,30 +30,41 @@ export async function GET(request: NextRequest) {
     }).populate("userId friendId", "name email profilePicture isDummy");
 
     // Extract friend data and calculate balances
-    const friendsWithBalances = await Promise.all(
-      friendships.map(async (friendship: any) => {
-        const friendData =
-          friendship.userId._id.toString() === session.user.id
-            ? friendship.friendId
-            : friendship.userId;
+    const friendPromises = friendships.map(async (friendship: any) => {
+      const friendData =
+        friendship.userId._id.toString() === session.user.id
+          ? friendship.friendId
+          : friendship.userId;
 
-        // Calculate balance
-        const balance = await calculateBalance(userId, friendData._id);
+      // Calculate balance
+      const balance = await calculateBalance(userId, friendData._id);
 
-        return {
-          id: friendship._id,
-          friend: {
-            id: friendData._id,
-            name: friendData.name,
-            email: friendData.email,
-            profilePicture: friendData.profilePicture,
-            isDummy: friendData.isDummy || false,
-          },
-          balance,
-          friendshipDate: friendship.createdAt,
-        };
-      })
-    );
+      return {
+        id: friendship._id,
+        friend: {
+          id: friendData._id,
+          name: friendData.name,
+          email: friendData.email,
+          profilePicture: friendData.profilePicture,
+          isDummy: friendData.isDummy || false,
+        },
+        balance,
+        friendshipDate: friendship.createdAt,
+      };
+    });
+
+    const allFriends = await Promise.all(friendPromises);
+
+    // Deduplicate friends by friend ID (since each friendship creates two records)
+    const uniqueFriends = new Map();
+    allFriends.forEach(friend => {
+      const friendId = friend.friend.id.toString();
+      if (!uniqueFriends.has(friendId)) {
+        uniqueFriends.set(friendId, friend);
+      }
+    });
+
+    const friendsWithBalances = Array.from(uniqueFriends.values());
 
     return NextResponse.json({ friends: friendsWithBalances }, { status: 200 });
   } catch (error: any) {

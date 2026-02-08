@@ -21,9 +21,16 @@ import {
 } from "lucide-react";
 
 interface Friend {
-  _id: string;
-  name: string;
-  email: string;
+  id: string;
+  friend: {
+    id: string;
+    name: string;
+    email: string;
+    profilePicture?: string;
+    isDummy?: boolean;
+  };
+  balance: number;
+  friendshipDate: string;
 }
 
 interface Group {
@@ -101,7 +108,7 @@ export default function AddExpensePage() {
       const res = await fetch("/api/friends");
       if (res.ok) {
         const data = await res.json();
-        setFriends(data.filter((f: any) => f.status === "accepted"));
+        setFriends(data.friends || []);
       }
     } catch (error) {
       console.error("Failed to fetch friends:", error);
@@ -140,10 +147,10 @@ export default function AddExpensePage() {
     selectedFriends.forEach(friend => {
       const friendShare = splitMethod === "equally" ? totalAmount / numPeople : 0;
       newParticipants.push({
-        userId: friend._id,
-        name: friend.name,
-        owedAmount: paidBy === friend._id ? 0 : friendShare,
-        paidAmount: paidBy === friend._id ? totalAmount : 0
+        userId: friend.friend.id,
+        name: friend.friend.name,
+        owedAmount: paidBy === friend.friend.id ? 0 : friendShare,
+        paidAmount: paidBy === friend.friend.id ? totalAmount : 0
       });
     });
 
@@ -196,8 +203,8 @@ export default function AddExpensePage() {
 
   const toggleFriend = (friend: Friend) => {
     setSelectedFriends(prev => 
-      prev.find(f => f._id === friend._id)
-        ? prev.filter(f => f._id !== friend._id)
+      prev.find(f => f.id === friend.id)
+        ? prev.filter(f => f.id !== friend.id)
         : [...prev, friend]
     );
   };
@@ -306,8 +313,8 @@ export default function AddExpensePage() {
               {selectedFriends.length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-2">
                   {selectedFriends.map(friend => (
-                    <span key={friend._id} className="inline-flex items-center gap-1 px-3 py-1 bg-primary/10 text-primary rounded-full text-sm">
-                      {friend.name}
+                    <span key={friend.id} className="inline-flex items-center gap-1 px-3 py-1 bg-primary/10 text-primary rounded-full text-sm">
+                      {friend.friend.name}
                       <button
                         type="button"
                         onClick={() => toggleFriend(friend)}
@@ -406,10 +413,10 @@ export default function AddExpensePage() {
               </p>
             ) : (
               friends.map(friend => {
-                const isSelected = selectedFriends.find(f => f._id === friend._id);
+                const isSelected = selectedFriends.find(f => f.id === friend.id);
                 return (
                   <button
-                    key={friend._id}
+                    key={friend.id}
                     type="button"
                     onClick={() => toggleFriend(friend)}
                     className={`w-full flex items-center justify-between p-3 rounded-lg border-2 transition-all ${
@@ -421,15 +428,15 @@ export default function AddExpensePage() {
                     <div className="flex items-center gap-3">
                       <div className="h-10 w-10 bg-primary/10 rounded-full flex items-center justify-center">
                         <span className="text-primary font-semibold">
-                          {friend.name.charAt(0).toUpperCase()}
+                          {friend.friend.name.charAt(0).toUpperCase()}
                         </span>
                       </div>
                       <div className="text-left">
                         <p className="text-sm font-medium text-neutral-900 dark:text-dark-text">
-                          {friend.name}
+                          {friend.friend.name}
                         </p>
                         <p className="text-xs text-neutral-500">
-                          {friend.email}
+                          {friend.friend.email}
                         </p>
                       </div>
                     </div>

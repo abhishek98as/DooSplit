@@ -41,7 +41,7 @@ export async function PUT(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { name, phone, profilePicture, defaultCurrency, language, timezone } =
+    const { name, phone, profilePicture, defaultCurrency, language, timezone, pushNotificationsEnabled, emailNotificationsEnabled } =
       body;
 
     await dbConnect();
@@ -58,6 +58,8 @@ export async function PUT(request: NextRequest) {
     if (defaultCurrency) user.defaultCurrency = defaultCurrency;
     if (language) user.language = language;
     if (timezone) user.timezone = timezone;
+    if (pushNotificationsEnabled !== undefined) user.pushNotificationsEnabled = pushNotificationsEnabled;
+    if (emailNotificationsEnabled !== undefined) user.emailNotificationsEnabled = emailNotificationsEnabled;
 
     await user.save();
 

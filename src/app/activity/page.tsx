@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
 import AppShell from "@/components/layout/AppShell";
 import Card, { CardContent } from "@/components/ui/Card";
-import { Clock, Receipt, DollarSign, UserPlus } from "lucide-react";
+import { Clock, Receipt, DollarSign, UserPlus, Filter, Search, Calendar, X } from "lucide-react";
 
 interface Activity {
   type: "expense" | "settlement" | "friend_request";
@@ -17,6 +17,12 @@ export default function ActivityPage() {
   const { data: session, status } = useSession();
   const [activities, setActivities] = useState<Activity[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showFilters, setShowFilters] = useState(false);
+
+  // Filter states
+  const [typeFilter, setTypeFilter] = useState<string>("all");
+  const [dateFilter, setDateFilter] = useState<string>("all");
+  const [searchQuery, setSearchQuery] = useState<string>("");
 
   useEffect(() => {
     if (status === "unauthenticated") {
@@ -39,6 +45,45 @@ export default function ActivityPage() {
       setLoading(false);
     }
   };
+
+  // Filter activities based on current filters
+  const filteredActivities = activities.filter(activity => {
+    // Type filter
+    if (typeFilter !== "all" && activity.type !== typeFilter) {
+      return false;
+    }
+
+    // Date filter
+    if (dateFilter !== "all") {
+      const activityDate = new Date(activity.timestamp);
+      const now = new Date();
+
+      switch (dateFilter) {
+        case "today":
+          if (activityDate.toDateString() !== now.toDateString()) return false;
+          break;
+        case "week":
+          const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+          if (activityDate < weekAgo) return false;
+          break;
+        case "month":
+          const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+          if (activityDate < monthAgo) return false;
+          break;
+      }
+    }
+
+    // Search filter
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      const searchableText = `${activity.data?.description || ""} ${activity.data?.userName || ""} ${activity.data?.amount || ""}`.toLowerCase();
+      if (!searchableText.includes(query)) {
+        return false;
+      }
+    }
+
+    return true;
+  });
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
@@ -177,21 +222,133 @@ export default function ActivityPage() {
           </p>
         </div>
 
+        {/* Filters */}
+        <div className="bg-white dark:bg-dark-bg-secondary border border-neutral-200 dark:border-dark-border rounded-lg p-4">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-medium text-neutral-900 dark:text-dark-text">Filters</h3>
+            <button
+              onClick={() => setShowFilters(!showFilters)}
+              className="flex items-center gap-1 text-sm text-primary hover:text-primary/80"
+            >
+              <Filter className="h-4 w-4" />
+              {showFilters ? "Hide Filters" : "Show Filters"}
+            </button>
+          </div>
+
+          {showFilters && (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {/* Search */}
+              <div>
+                <label className="block text-xs font-medium text-neutral-700 dark:text-dark-text-secondary mb-1">
+                  Search
+                </label>
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-neutral-400" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search activities..."
+                    className="w-full pl-9 pr-3 py-2 text-sm border border-neutral-300 dark:border-dark-border rounded-md bg-white dark:bg-dark-bg-secondary text-neutral-900 dark:text-dark-text placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                  />
+                </div>
+              </div>
+
+              {/* Type Filter */}
+              <div>
+                <label className="block text-xs font-medium text-neutral-700 dark:text-dark-text-secondary mb-1">
+                  Activity Type
+                </label>
+                <select
+                  value={typeFilter}
+                  onChange={(e) => setTypeFilter(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-neutral-300 dark:border-dark-border rounded-md bg-white dark:bg-dark-bg-secondary text-neutral-900 dark:text-dark-text focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                >
+                  <option value="all">All Activities</option>
+                  <option value="expense">Expenses</option>
+                  <option value="settlement">Settlements</option>
+                  <option value="friend_request">Friend Requests</option>
+                </select>
+              </div>
+
+              {/* Date Filter */}
+              <div>
+                <label className="block text-xs font-medium text-neutral-700 dark:text-dark-text-secondary mb-1">
+                  Date Range
+                </label>
+                <select
+                  value={dateFilter}
+                  onChange={(e) => setDateFilter(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-neutral-300 dark:border-dark-border rounded-md bg-white dark:bg-dark-bg-secondary text-neutral-900 dark:text-dark-text focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                >
+                  <option value="all">All Time</option>
+                  <option value="today">Today</option>
+                  <option value="week">Last 7 days</option>
+                  <option value="month">Last 30 days</option>
+                </select>
+              </div>
+            </div>
+          )}
+
+          {/* Active Filters Summary */}
+          {(typeFilter !== "all" || dateFilter !== "all" || searchQuery.trim()) && (
+            <div className="flex items-center gap-2 mt-4 pt-4 border-t border-neutral-200 dark:border-dark-border">
+              <span className="text-xs text-neutral-600 dark:text-dark-text-secondary">Active filters:</span>
+              {typeFilter !== "all" && (
+                <span className="inline-flex items-center gap-1 px-2 py-1 bg-primary/10 text-primary rounded-full text-xs">
+                  {typeFilter === "friend_request" ? "Friend Requests" : typeFilter.charAt(0).toUpperCase() + typeFilter.slice(1)}
+                  <button onClick={() => setTypeFilter("all")} className="ml-1 hover:bg-primary/20 rounded-full p-0.5">
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              )}
+              {dateFilter !== "all" && (
+                <span className="inline-flex items-center gap-1 px-2 py-1 bg-primary/10 text-primary rounded-full text-xs">
+                  {dateFilter === "today" ? "Today" : dateFilter === "week" ? "Last 7 days" : "Last 30 days"}
+                  <button onClick={() => setDateFilter("all")} className="ml-1 hover:bg-primary/20 rounded-full p-0.5">
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              )}
+              {searchQuery.trim() && (
+                <span className="inline-flex items-center gap-1 px-2 py-1 bg-primary/10 text-primary rounded-full text-xs">
+                  "{searchQuery}"
+                  <button onClick={() => setSearchQuery("")} className="ml-1 hover:bg-primary/20 rounded-full p-0.5">
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              )}
+              <button
+                onClick={() => {
+                  setTypeFilter("all");
+                  setDateFilter("all");
+                  setSearchQuery("");
+                }}
+                className="text-xs text-neutral-600 dark:text-dark-text-secondary hover:text-primary ml-auto"
+              >
+                Clear all
+              </button>
+            </div>
+          )}
+        </div>
+
         <Card>
           <CardContent>
-            {activities.length === 0 ? (
+            {filteredActivities.length === 0 ? (
               <div className="text-center py-12">
                 <Clock className="h-16 w-16 mx-auto text-neutral-300 mb-4" />
                 <p className="text-body text-neutral-500 dark:text-dark-text-secondary">
-                  No activity yet
+                  {activities.length === 0 ? "No activity yet" : "No activities match your filters"}
                 </p>
                 <p className="text-sm text-neutral-400 dark:text-dark-text-tertiary mt-2">
-                  Your transaction history will appear here
+                  {activities.length === 0
+                    ? "Your transaction history will appear here"
+                    : "Try adjusting your filters to see more results"}
                 </p>
               </div>
             ) : (
               <div className="space-y-4">
-                {activities.map((activity) => (
+                {filteredActivities.map((activity) => (
                   <div
                     key={activity.id}
                     className="py-3 border-b border-neutral-200 dark:border-dark-border last:border-0"
