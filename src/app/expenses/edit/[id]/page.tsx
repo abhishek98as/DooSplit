@@ -76,9 +76,9 @@ export default function EditExpensePage() {
     { value: "transport", label: "Transport", icon: "🚗" },
     { value: "shopping", label: "Shopping", icon: "🛒" },
     { value: "entertainment", label: "Entertainment", icon: "🎬" },
-    { value: "bills", label: "Bills", icon: "📄" },
+    { value: "utilities", label: "Utilities", icon: "📄" },
     { value: "healthcare", label: "Healthcare", icon: "⚕️" },
-    { value: "travel", label: "Travel", icon: "✈️" },
+    { value: "rent", label: "Rent", icon: "🏠" },
     { value: "other", label: "Other", icon: "📦" }
   ];
 
@@ -173,11 +173,7 @@ export default function EditExpensePage() {
       const res = await fetch("/api/friends");
       if (res.ok) {
         const data = await res.json();
-        const acceptedFriends = data.filter((f: any) => f.status === "accepted");
-        setFriends(acceptedFriends);
-        
-        // After friends are loaded, match them with participants
-        // This will be done after expense is fetched
+        setFriends(data.friends || []);
       }
     } catch (error) {
       console.error("Failed to fetch friends:", error);
@@ -189,7 +185,7 @@ export default function EditExpensePage() {
       const res = await fetch("/api/groups");
       if (res.ok) {
         const data = await res.json();
-        setGroups(data);
+        setGroups(data.groups || []);
       }
     } catch (error) {
       console.error("Failed to fetch groups:", error);

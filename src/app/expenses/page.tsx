@@ -103,9 +103,9 @@ export default function ExpensesPage() {
     { value: "transport", label: "Transport", icon: "🚗" },
     { value: "shopping", label: "Shopping", icon: "🛒" },
     { value: "entertainment", label: "Entertainment", icon: "🎬" },
-    { value: "bills", label: "Bills", icon: "📄" },
+    { value: "utilities", label: "Utilities", icon: "📄" },
     { value: "healthcare", label: "Healthcare", icon: "⚕️" },
-    { value: "travel", label: "Travel", icon: "✈️" },
+    { value: "rent", label: "Rent", icon: "🏠" },
     { value: "other", label: "Other", icon: "📦" }
   ];
 

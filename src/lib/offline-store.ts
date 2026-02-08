@@ -226,9 +226,19 @@ class OfflineStore {
             console.log('IndexedDB not available, skipping cache update');
           }
           return data.expense;
+        } else {
+          // Log and throw the actual server error instead of silently falling through
+          const errorData = await response.json().catch(() => ({ error: 'Unknown server error' }));
+          console.error('Expense creation failed on server:', errorData);
+          throw new Error(errorData.error || `Server error: ${response.status}`);
         }
       } catch (error) {
-        console.log('API call failed, queuing for sync');
+        // Only queue for sync on network errors, not server validation errors
+        if (error instanceof TypeError && error.message.includes('fetch')) {
+          console.log('Network error, queuing for sync');
+        } else {
+          throw error;
+        }
       }
     }
 

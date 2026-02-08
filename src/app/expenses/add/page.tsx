@@ -102,9 +102,9 @@ export default function AddExpensePage() {
     { value: "transport", label: "Transport", icon: "🚗" },
     { value: "shopping", label: "Shopping", icon: "🛒" },
     { value: "entertainment", label: "Entertainment", icon: "🎬" },
-    { value: "bills", label: "Bills", icon: "📄" },
+    { value: "utilities", label: "Utilities", icon: "📄" },
     { value: "healthcare", label: "Healthcare", icon: "⚕️" },
-    { value: "travel", label: "Travel", icon: "✈️" },
+    { value: "rent", label: "Rent", icon: "🏠" },
     { value: "other", label: "Other", icon: "📦" }
   ];
 
@@ -139,7 +139,7 @@ export default function AddExpensePage() {
       const res = await fetch("/api/groups");
       if (res.ok) {
         const data = await res.json();
-        setGroups(data);
+        setGroups(data.groups || []);
       }
     } catch (error) {
       console.error("Failed to fetch groups:", error);

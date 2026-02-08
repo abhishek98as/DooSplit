@@ -10,54 +10,77 @@ import { notifyFriendRequest } from "@/lib/notificationService";
 import mongoose from "mongoose";
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 30; // 30 seconds timeout for Vercel serverless functions
 
 // GET /api/friends - List all friends
 export async function GET(request: NextRequest) {
   try {
+    console.log("🔍 Friends API: Starting request");
+
     const session = await getServerSession(authOptions);
+    console.log("🔍 Friends API: Session check", { hasSession: !!session, userId: session?.user?.id });
+
     if (!session?.user?.id) {
+      console.log("❌ Friends API: Unauthorized - no session");
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    console.log("🔍 Friends API: Connecting to database");
     await dbConnect();
+    console.log("✅ Friends API: Database connected");
 
     const userId = new mongoose.Types.ObjectId(session.user.id);
+    console.log("🔍 Friends API: User ID", userId.toString());
 
     // Find all accepted friendships
+    console.log("🔍 Friends API: Querying friendships");
     const friendships = await Friend.find({
       $or: [{ userId }, { friendId: userId }],
       status: "accepted",
     }).populate("userId friendId", "name email profilePicture isDummy");
+    console.log("✅ Friends API: Found friendships", friendships.length);
 
     // Extract friend data and calculate balances
+    console.log("🔍 Friends API: Processing friendships");
     const friendPromises = friendships.map(async (friendship: any) => {
-      const friendData =
-        friendship.userId._id.toString() === session.user.id
-          ? friendship.friendId
-          : friendship.userId;
+      try {
+        const friendData =
+          friendship.userId._id.toString() === session.user.id
+            ? friendship.friendId
+            : friendship.userId;
 
-      // Calculate balance
-      const balance = await calculateBalance(userId, friendData._id);
+        console.log("🔍 Friends API: Calculating balance for", friendData.name);
+        // Calculate balance
+        const balance = await calculateBalance(userId, friendData._id);
 
-      return {
-        id: friendship._id,
-        friend: {
-          id: friendData._id,
-          name: friendData.name,
-          email: friendData.email,
-          profilePicture: friendData.profilePicture,
-          isDummy: friendData.isDummy || false,
-        },
-        balance,
-        friendshipDate: friendship.createdAt,
-      };
+        return {
+          id: friendship._id,
+          friend: {
+            id: friendData._id,
+            name: friendData.name,
+            email: friendData.email,
+            profilePicture: friendData.profilePicture,
+            isDummy: friendData.isDummy || false,
+          },
+          balance,
+          friendshipDate: friendship.createdAt,
+        };
+      } catch (error: any) {
+        console.error("❌ Friends API: Error processing friendship", friendship._id, error.message);
+        return null;
+      }
     });
 
+    console.log("🔍 Friends API: Waiting for all promises");
     const allFriends = await Promise.all(friendPromises);
+    console.log("✅ Friends API: All promises resolved", allFriends.length);
 
-    // Deduplicate friends by friend ID (since each friendship creates two records)
+    // Filter out null results and deduplicate friends by friend ID (since each friendship creates two records)
+    const validFriends = allFriends.filter(friend => friend !== null);
+    console.log("🔍 Friends API: Valid friends after filtering", validFriends.length);
+
     const uniqueFriends = new Map();
-    allFriends.forEach(friend => {
+    validFriends.forEach(friend => {
       const friendId = friend.friend.id.toString();
       if (!uniqueFriends.has(friendId)) {
         uniqueFriends.set(friendId, friend);
@@ -65,12 +88,14 @@ export async function GET(request: NextRequest) {
     });
 
     const friendsWithBalances = Array.from(uniqueFriends.values());
+    console.log("✅ Friends API: Final friends count", friendsWithBalances.length);
 
     return NextResponse.json({ friends: friendsWithBalances }, { status: 200 });
   } catch (error: any) {
-    console.error("Get friends error:", error);
+    console.error("❌ Friends API: Get friends error:", error);
+    console.error("❌ Friends API: Error stack:", error.stack);
     return NextResponse.json(
-      { error: "Failed to fetch friends" },
+      { error: "Failed to fetch friends", details: error.message },
       { status: 500 }
     );
   }
@@ -242,49 +267,95 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// Helper function to calculate balance
+// Helper function to calculate balance - simplified version for performance
 async function calculateBalance(
   userId: mongoose.Types.ObjectId,
   friendId: mongoose.Types.ObjectId
 ) {
-  const participants = await ExpenseParticipant.find({
-    userId: { $in: [userId, friendId] },
-  }).populate({
-    path: "expenseId",
-    match: { isDeleted: false },
-  });
+  try {
+    // Use aggregation pipeline for better performance
+    const balanceResult = await ExpenseParticipant.aggregate([
+      {
+        $match: {
+          userId: { $in: [userId, friendId] }
+        }
+      },
+      {
+        $lookup: {
+          from: "expenses",
+          localField: "expenseId",
+          foreignField: "_id",
+          as: "expense",
+          pipeline: [
+            { $match: { isDeleted: { $ne: true } } }
+          ]
+        }
+      },
+      {
+        $unwind: "$expense"
+      },
+      {
+        $group: {
+          _id: "$expenseId",
+          participants: { $push: "$$ROOT" }
+        }
+      },
+      {
+        $project: {
+          balance: {
+            $let: {
+              vars: {
+                userPart: {
+                  $arrayElemAt: [
+                    {
+                      $filter: {
+                        input: "$participants",
+                        cond: { $eq: ["$$this.userId", userId] }
+                      }
+                    },
+                    0
+                  ]
+                },
+                friendPart: {
+                  $arrayElemAt: [
+                    {
+                      $filter: {
+                        input: "$participants",
+                        cond: { $eq: ["$$this.userId", friendId] }
+                      }
+                    },
+                    0
+                  ]
+                }
+              },
+              in: {
+                $cond: {
+                  if: { $and: ["$$userPart", "$$friendPart"] },
+                  then: {
+                    $subtract: [
+                      "$$friendPart.owedAmount",
+                      "$$userPart.owedAmount"
+                    ]
+                  },
+                  else: 0
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          totalBalance: { $sum: "$balance" }
+        }
+      }
+    ]);
 
-  let balance = 0;
-
-  const expenseMap = new Map();
-  participants.forEach((p: any) => {
-    if (!p.expenseId) return;
-    const expenseId = p.expenseId._id.toString();
-    if (!expenseMap.has(expenseId)) {
-      expenseMap.set(expenseId, []);
-    }
-    expenseMap.get(expenseId).push(p);
-  });
-
-  expenseMap.forEach((parts) => {
-    const userPart = parts.find(
-      (p: any) => p.userId.toString() === userId.toString()
-    );
-    const friendPart = parts.find(
-      (p: any) => p.userId.toString() === friendId.toString()
-    );
-
-    if (userPart && friendPart) {
-      // Calculate net position for each user
-      const userNetPosition = userPart.paidAmount - userPart.owedAmount;
-      const friendNetPosition = friendPart.paidAmount - friendPart.owedAmount;
-
-      // Balance = what friend owes user minus what user owes friend
-      // If friendNetPosition is negative (friend owes money), balance should be positive
-      balance -= friendNetPosition;
-    }
-  });
-
-  return balance;
+    return balanceResult.length > 0 ? balanceResult[0].totalBalance : 0;
+  } catch (error: any) {
+    console.error("❌ Friends API: Error calculating balance", { userId: userId.toString(), friendId: friendId.toString(), error: error.message });
+    return 0; // Return 0 balance on error
+  }
 }
 
