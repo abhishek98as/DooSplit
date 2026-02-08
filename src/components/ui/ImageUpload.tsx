@@ -31,9 +31,8 @@ export default function ImageUpload({
       return imageRef;
     }
 
-    // For ImageKit reference IDs, we need to fetch the URL
-    // For now, return a placeholder - in production, you'd cache these URLs
-    return imageUrls[imageRef] || '/placeholder-image.png';
+    // For ImageKit reference IDs, return the cached URL or a loading placeholder
+    return imageUrls[imageRef] || '';
   };
 
   // Load image URLs when component mounts or images change
@@ -174,23 +173,43 @@ export default function ImageUpload({
       {/* Image Preview Grid */}
       {images.length > 0 && (
         <div className="grid grid-cols-3 gap-3">
-          {images.map((image, index) => (
-            <div key={index} className="relative group aspect-square">
-              <Image
-                src={getImageUrl(image)}
-                alt={`Upload ${index + 1}`}
-                fill
-                className="object-cover rounded-lg"
-              />
-              <button
-                type="button"
-                onClick={() => removeImage(index)}
-                className="absolute top-2 right-2 p-1 bg-black/50 hover:bg-black/70 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
-              >
-                <X className="h-4 w-4 text-white" />
-              </button>
-            </div>
-          ))}
+          {images.map((image, index) => {
+            const imageUrl = getImageUrl(image);
+            const isLoading = !imageUrl && !image.startsWith('data:') && !image.startsWith('http');
+
+            return (
+              <div key={index} className="relative group aspect-square">
+                {isLoading ? (
+                  <div className="w-full h-full bg-neutral-100 dark:bg-dark-bg-secondary rounded-lg flex items-center justify-center">
+                    <div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-primary"></div>
+                  </div>
+                ) : imageUrl ? (
+                  <Image
+                    src={imageUrl}
+                    alt={`Upload ${index + 1}`}
+                    fill
+                    className="object-cover rounded-lg"
+                    onError={(e) => {
+                      // If image fails to load, show placeholder
+                      const target = e.target as HTMLImageElement;
+                      target.src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTEyIDJDMTMuMSAyIDE0IDIuOSAxNCA0VjE4QzE0IDIxLjMgMTYuMyAyNCAxOSAyNEgxN0MxNy43IDI0IDE2IDIxLjMgMTYgMThWNFoiIGZpbGw9IiM5Q0E0QUYiLz4KPHBhdGggZD0iTTkgNkgxNVYxMEgxMVY2SDlaIiBmaWxsPSIjOUNBNEFGIi8+Cjwvc3ZnPgo=';
+                    }}
+                  />
+                ) : (
+                  <div className="w-full h-full bg-neutral-100 dark:bg-dark-bg-secondary rounded-lg flex items-center justify-center">
+                    <ImageIcon className="h-8 w-8 text-neutral-400" />
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => removeImage(index)}
+                  className="absolute top-2 right-2 p-1 bg-black/50 hover:bg-black/70 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                >
+                  <X className="h-4 w-4 text-white" />
+                </button>
+              </div>
+            );
+          })}
         </div>
       )}
 

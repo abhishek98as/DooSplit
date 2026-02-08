@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from 'react';
+import { useSession } from 'next-auth/react';
 import { Download, X, Smartphone, Monitor, Star } from 'lucide-react';
 import { usePWA } from './PWAProvider';
 import Button from '@/components/ui/Button';
@@ -18,6 +19,7 @@ export default function InstallPrompt({
   delay = 3000,
   position = 'bottom'
 }: InstallPromptProps) {
+  const { data: session, status } = useSession();
   const { canInstall, installPrompt } = usePWA();
   const [isVisible, setIsVisible] = useState(false);
   const [isInstalling, setIsInstalling] = useState(false);
@@ -70,15 +72,22 @@ export default function InstallPrompt({
     localStorage.setItem('install-prompt-dismissed', Date.now().toString());
   };
 
-  // Don't render if conditions not met
-  if (!canInstall || dismissed || !isVisible) {
+  // Don't render if conditions not met or user is not authenticated
+  if (!canInstall || dismissed || !isVisible || status !== 'authenticated') {
     return null;
   }
 
   if (variant === 'modal') {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-        <div className="bg-white dark:bg-dark-bg-secondary rounded-2xl shadow-2xl max-w-md mx-4 p-6">
+        <div className="bg-white dark:bg-dark-bg-secondary rounded-2xl shadow-2xl max-w-md mx-4 p-6 relative">
+          <button
+            onClick={handleDismiss}
+            className="absolute top-4 right-4 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 transition-colors"
+            aria-label="Close install prompt"
+          >
+            <X className="h-5 w-5" />
+          </button>
           <div className="text-center">
             {/* Icon */}
             <div className="mx-auto mb-4 h-16 w-16 bg-primary/10 rounded-2xl flex items-center justify-center">
