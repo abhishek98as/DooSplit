@@ -430,7 +430,7 @@ export default function GroupDetailPage() {
         >
           <div className="space-y-4">
             <p className="text-body text-neutral-600 dark:text-dark-text-secondary">
-              Are you sure you want to delete "{group.name}"? This action cannot be undone and
+              Are you sure you want to delete &quot;{group.name}&quot;? This action cannot be undone and
               all group data will be permanently deleted.
             </p>
             <div className="flex gap-3 justify-end">

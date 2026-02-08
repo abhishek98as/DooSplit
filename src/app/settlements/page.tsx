@@ -387,7 +387,7 @@ export default function SettlementsPage() {
                             </p>
                             {reminder.message && (
                               <p className="text-xs text-neutral-600 dark:text-dark-text-secondary mt-1 italic">
-                                "{reminder.message}"
+                                &quot;{reminder.message}&quot;
                               </p>
                             )}
                           </div>

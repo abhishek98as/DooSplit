@@ -151,12 +151,12 @@ export default function LoginPage() {
                 Email Verification Required
               </h3>
               <p className="text-neutral-600 mb-4">
-                We've sent a verification email to <strong>{verificationEmail}</strong>.
+                We&apos;ve sent a verification email to <strong>{verificationEmail}</strong>.
                 Please check your inbox and click the verification link to activate your account.
               </p>
               <div className="bg-blue-50 p-4 rounded-lg mb-6">
                 <p className="text-sm text-blue-700">
-                  <strong>Didn't receive the email?</strong> Check your spam folder or click below to resend.
+                  <strong>Didn&apos;t receive the email?</strong> Check your spam folder or click below to resend.
                 </p>
               </div>
               <div className="space-y-3">

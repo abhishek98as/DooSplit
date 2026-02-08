@@ -169,12 +169,12 @@ export default function RegisterPage() {
                 Registration Successful!
               </h2>
               <p className="text-neutral-600 mb-4">
-                We've sent a verification email to <strong>{formData.email}</strong>.
+                We&apos;ve sent a verification email to <strong>{formData.email}</strong>.
                 Please check your inbox and click the verification link to activate your account.
               </p>
               <div className="bg-blue-50 p-4 rounded-lg mb-6">
                 <p className="text-sm text-blue-700">
-                  <strong>Didn't receive the email?</strong> Check your spam folder or contact support if you continue having issues.
+                  <strong>Didn&apos;t receive the email?</strong> Check your spam folder or contact support if you continue having issues.
                 </p>
               </div>
               <div className="space-y-3">

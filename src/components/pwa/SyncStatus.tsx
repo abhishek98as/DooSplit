@@ -180,7 +180,7 @@ export default function SyncStatus({ compact = false, showControls = true }: Syn
         <div className="mt-3 p-3 bg-warning/10 border border-warning/20 rounded text-sm">
           <div className="flex items-center gap-2 text-warning">
             <WifiOff className="h-4 w-4" />
-            <span className="font-medium">You're offline</span>
+            <span className="font-medium">You&apos;re offline</span>
           </div>
           <p className="text-neutral-600 dark:text-dark-text-secondary mt-1">
             Changes will be synced when you reconnect to the internet.

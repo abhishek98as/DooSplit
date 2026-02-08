@@ -245,7 +245,7 @@ export default function DashboardPage() {
             Dashboard
           </h1>
           <p className="text-body text-neutral-500 dark:text-dark-text-secondary mt-1">
-            Welcome back! Here's your expense summary.
+            Welcome back! Here&apos;s your expense summary.
           </p>
         </div>
 
@@ -276,7 +276,7 @@ export default function DashboardPage() {
             <div className="bg-white/60 dark:bg-dark-bg-secondary/60 rounded-lg p-4">
               <div className="flex items-center text-success mb-2">
                 <ArrowDownCircle className="h-4 w-4 mr-1" />
-                <span className="text-xs font-medium">You're Owed</span>
+                <span className="text-xs font-medium">You&apos;re Owed</span>
               </div>
               <p className="text-xl font-semibold font-mono text-success">
                 {formatCurrency(balance.youAreOwed)}

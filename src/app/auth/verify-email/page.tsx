@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui";
 import Image from "next/image";
 import { CheckCircle, XCircle, Clock, Mail } from "lucide-react";
 
-export default function VerifyEmailPage() {
+function VerifyEmailContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [status, setStatus] = useState<"loading" | "success" | "error" | "expired">("loading");
@@ -139,5 +139,40 @@ export default function VerifyEmailPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function VerifyEmailPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary/10 to-success/10 p-4">
+        <div className="w-full max-w-md">
+          {/* Logo/Brand */}
+          <div className="text-center mb-8">
+            <Image
+              src="/logo.webp"
+              alt="DooSplit"
+              width={64}
+              height={64}
+              className="h-16 w-16 rounded-2xl mb-4 inline-block"
+            />
+            <h1 className="text-h1 font-bold text-neutral-900">DooSplit</h1>
+          </div>
+
+          {/* Loading State */}
+          <div className="bg-white rounded-xl shadow-md p-6 md:p-8 text-center">
+            <Mail className="h-16 w-16 text-primary mx-auto mb-4 animate-pulse" />
+            <h2 className="text-xl font-semibold text-neutral-900 mb-2">
+              Verifying Your Email...
+            </h2>
+            <p className="text-neutral-600 mb-6">
+              Please wait while we verify your email address.
+            </p>
+          </div>
+        </div>
+      </div>
+    }>
+      <VerifyEmailContent />
+    </Suspense>
   );
 }
