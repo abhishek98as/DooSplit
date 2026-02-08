@@ -100,6 +100,25 @@ export async function PUT(
       participants,
     } = body;
 
+    // Validate images array
+    if (images !== undefined && Array.isArray(images)) {
+      if (images.length > 10) {
+        return NextResponse.json(
+          { error: "Maximum 10 images allowed per expense" },
+          { status: 400 }
+        );
+      }
+
+      // Validate that all image references are strings (reference IDs)
+      const invalidImages = images.filter(img => typeof img !== 'string' || !img.trim());
+      if (invalidImages.length > 0) {
+        return NextResponse.json(
+          { error: "All image references must be valid strings" },
+          { status: 400 }
+        );
+      }
+    }
+
     await dbConnect();
 
     const expense = await Expense.findOne({
@@ -163,25 +182,40 @@ export async function PUT(
           break;
 
         case "exact":
+          // Transform participants to the format expected by splitByExactAmounts
+          const exactParticipants = participants.map((p: any) => ({
+            userId: p.userId,
+            owedAmount: p.exactAmount || 0,
+          }));
           splitParticipants = splitByExactAmounts({
             amount: expense.amount,
-            participants,
+            participants: exactParticipants,
             paidBy,
           });
           break;
 
         case "percentage":
+          // Transform participants to the format expected by splitByPercentages
+          const percentageParticipants = participants.map((p: any) => ({
+            userId: p.userId,
+            percentage: p.percentage || 0,
+          }));
           splitParticipants = splitByPercentages({
             amount: expense.amount,
-            participants,
+            participants: percentageParticipants,
             paidBy,
           });
           break;
 
         case "shares":
+          // Transform participants to the format expected by splitByShares
+          const sharesParticipants = participants.map((p: any) => ({
+            userId: p.userId,
+            shares: p.shares || 1,
+          }));
           splitParticipants = splitByShares({
             amount: expense.amount,
-            participants,
+            participants: sharesParticipants,
             paidBy,
           });
           break;

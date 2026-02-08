@@ -275,7 +275,13 @@ async function calculateBalance(
     );
 
     if (userPart && friendPart) {
-      balance += userPart.paidAmount - userPart.owedAmount;
+      // Calculate net position for each user
+      const userNetPosition = userPart.paidAmount - userPart.owedAmount;
+      const friendNetPosition = friendPart.paidAmount - friendPart.owedAmount;
+
+      // Balance = what friend owes user minus what user owes friend
+      // If friendNetPosition is negative (friend owes money), balance should be positive
+      balance -= friendNetPosition;
     }
   });
 

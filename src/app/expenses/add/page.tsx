@@ -9,16 +9,17 @@ import Input from "@/components/ui/Input";
 import Button from "@/components/ui/Button";
 import ImageUpload from "@/components/ui/ImageUpload";
 import Modal from "@/components/ui/Modal";
-import { 
-  IndianRupee, 
-  Receipt, 
-  Calendar, 
-  Users, 
+import {
+  IndianRupee,
+  Receipt,
+  Calendar,
+  Users,
   Tag,
   StickyNote,
   X,
   Check
 } from "lucide-react";
+import { ImageType } from "@/lib/imagekit-service";
 
 interface Friend {
   id: string;
@@ -44,6 +45,10 @@ interface Participant {
   name: string;
   owedAmount: number;
   paidAmount: number;
+  // Additional fields for different split methods
+  exactAmount?: number; // For exact split method
+  percentage?: number; // For percentage split method
+  shares?: number; // For shares split method
 }
 
 type SplitMethod = "equally" | "exact" | "percentage" | "shares";
@@ -135,26 +140,72 @@ export default function AddExpensePage() {
     const newParticipants: Participant[] = [];
 
     // Add current user
-    const userShare = splitMethod === "equally" ? totalAmount / numPeople : 0;
     newParticipants.push({
       userId: session?.user?.id || "",
       name: "You",
-      owedAmount: paidBy === session?.user?.id ? 0 : userShare,
-      paidAmount: paidBy === session?.user?.id ? totalAmount : 0
+      owedAmount: 0, // Will be calculated by backend
+      paidAmount: paidBy === session?.user?.id ? totalAmount : 0,
+      // Initialize split-specific fields with default values
+      exactAmount: splitMethod === "exact" ? totalAmount / numPeople : undefined,
+      percentage: splitMethod === "percentage" ? 100 / numPeople : undefined,
+      shares: splitMethod === "shares" ? 1 : undefined,
     });
 
     // Add selected friends
     selectedFriends.forEach(friend => {
-      const friendShare = splitMethod === "equally" ? totalAmount / numPeople : 0;
       newParticipants.push({
         userId: friend.friend.id,
         name: friend.friend.name,
-        owedAmount: paidBy === friend.friend.id ? 0 : friendShare,
-        paidAmount: paidBy === friend.friend.id ? totalAmount : 0
+        owedAmount: 0, // Will be calculated by backend
+        paidAmount: paidBy === friend.friend.id ? totalAmount : 0,
+        // Initialize split-specific fields with default values
+        exactAmount: splitMethod === "exact" ? totalAmount / numPeople : undefined,
+        percentage: splitMethod === "percentage" ? 100 / numPeople : undefined,
+        shares: splitMethod === "shares" ? 1 : undefined,
       });
     });
 
     setParticipants(newParticipants);
+  };
+
+  const uploadExpenseImages = async (expenseId: string, imageFiles: string[]): Promise<string[]> => {
+    const uploadedRefs: string[] = [];
+
+    for (const imageFile of imageFiles) {
+      try {
+        // If it's already a reference ID (from re-upload), keep it
+        if (!imageFile.startsWith('data:')) {
+          uploadedRefs.push(imageFile);
+          continue;
+        }
+
+        // Convert base64 to blob and upload
+        const response = await fetch(imageFile);
+        const blob = await response.blob();
+        const file = new File([blob], `expense-image-${Date.now()}.jpg`, { type: 'image/jpeg' });
+
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('type', 'expense');
+        formData.append('entityId', expenseId);
+
+        const uploadRes = await fetch('/api/images/upload', {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (uploadRes.ok) {
+          const uploadData = await uploadRes.json();
+          uploadedRefs.push(uploadData.image.id);
+        } else {
+          console.error('Failed to upload image:', await uploadRes.text());
+        }
+      } catch (error) {
+        console.error('Error uploading expense image:', error);
+      }
+    }
+
+    return uploadedRefs;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -168,25 +219,44 @@ export default function AddExpensePage() {
     setSubmitting(true);
 
     try {
+      // Step 1: Create expense without images first
+      const expenseData = {
+        amount: parseFloat(amount),
+        description,
+        category,
+        date,
+        currency,
+        groupId: selectedGroup?._id,
+        paidBy,
+        participants,
+        notes,
+        images: [], // Empty initially
+        splitMethod
+      };
+
       const res = await fetch("/api/expenses", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          amount: parseFloat(amount),
-          description,
-          category,
-          date,
-          currency,
-          groupId: selectedGroup?._id,
-          paidBy,
-          participants,
-          notes,
-          images,
-          splitMethod
-        })
+        body: JSON.stringify(expenseData)
       });
 
       if (res.ok) {
+        const data = await res.json();
+
+        // Step 2: Upload images if any
+        let finalImageRefs: string[] = [];
+        if (images.length > 0) {
+          finalImageRefs = await uploadExpenseImages(data.expense._id, images);
+        }
+
+        // Step 3: Update expense with image references if any were uploaded
+        if (finalImageRefs.length > 0) {
+          await fetch(`/api/expenses/${data.expense._id}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ images: finalImageRefs })
+          });
+        }
         router.push("/dashboard");
         router.refresh();
       } else {
@@ -360,7 +430,13 @@ export default function AddExpensePage() {
             </div>
 
             {/* Image Upload */}
-            <ImageUpload images={images} onChange={setImages} maxImages={3} />
+            <ImageUpload
+              images={images}
+              onChange={setImages}
+              maxImages={10}
+              type={ImageType.EXPENSE}
+              entityId="new-expense" // Will be replaced with actual expense ID after creation
+            />
 
             {/* Notes */}
             <div>

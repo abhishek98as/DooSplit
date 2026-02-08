@@ -140,13 +140,17 @@ export default function DashboardPage() {
               const expenses = expensesData.expenses || [];
 
               // Calculate user's balance in this group
+              // Positive balance means group owes user money
+              // Negative balance means user owes group money
               let groupBalance = 0;
               expenses.forEach((expense: any) => {
                 const userParticipant = expense.participants?.find(
                   (p: any) => p.userId?._id === session?.user?.id || p.userId === session?.user?.id
                 );
                 if (userParticipant) {
-                  groupBalance += userParticipant.owedAmount;
+                  // Net position = what user paid - what user owes
+                  const userNetPosition = userParticipant.paidAmount - userParticipant.owedAmount;
+                  groupBalance += userNetPosition;
                 }
               });
 

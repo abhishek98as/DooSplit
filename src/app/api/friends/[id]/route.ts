@@ -74,6 +74,8 @@ export async function GET(
     const expenseIds = [...new Set(expenseParticipants.map(ep => ep.expenseId.toString()))];
 
     // Calculate balance from expenses
+    // Positive balance means friend owes you money
+    // Negative balance means you owe friend money
     let balance = 0;
 
     for (const expenseId of expenseIds) {
@@ -83,7 +85,22 @@ export async function GET(
         const friendParticipant = participants.find(p => p.userId.toString() === friendId.toString());
 
         if (userParticipant && friendParticipant) {
-          balance += userParticipant.owedAmount;
+          // Calculate net position for each user in this expense
+          // Net position = paidAmount - owedAmount
+          // Positive net position means user is owed money
+          // Negative net position means user owes money
+          const userNetPosition = userParticipant.paidAmount - userParticipant.owedAmount;
+          const friendNetPosition = friendParticipant.paidAmount - friendParticipant.owedAmount;
+
+          // The balance from user's perspective is: what friend owes user minus what user owes friend
+          // Since friendNetPosition is negative when friend owes money, we need to add it
+          // If friendNetPosition is -50 (friend owes $50), balance += -50 = -50, but this should be +50 for user
+          // Wait, let me recalculate...
+
+          // Actually, if friend has negative net position (-50), that means friend owes $50
+          // So user should have positive balance (+50)
+          // Therefore: balance += (-1 * friendNetPosition)
+          balance -= friendNetPosition;
         }
       }
     }

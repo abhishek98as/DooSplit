@@ -1,18 +1,69 @@
 "use client";
 
-import { useState, useRef } from "react";
-import { Upload, X, Image as ImageIcon } from "lucide-react";
+import { useState, useRef, useEffect } from "react";
+import { Upload, X, Image as ImageIcon, Loader2 } from "lucide-react";
 import Image from "next/image";
+import { ImageType } from "@/lib/imagekit-service";
 
 interface ImageUploadProps {
-  images: string[];
+  images: string[]; // Array of image reference IDs
   onChange: (images: string[]) => void;
   maxImages?: number;
+  type?: ImageType; // Type of images (user_profile, expense, general)
+  entityId?: string; // Entity ID (user ID, expense ID, etc.)
 }
 
-export default function ImageUpload({ images, onChange, maxImages = 5 }: ImageUploadProps) {
+export default function ImageUpload({
+  images,
+  onChange,
+  maxImages = 5,
+  type = ImageType.GENERAL,
+  entityId = 'general'
+}: ImageUploadProps) {
   const [uploading, setUploading] = useState(false);
+  const [imageUrls, setImageUrls] = useState<Record<string, string>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Helper function to get image URL from reference ID
+  const getImageUrl = (imageRef: string): string => {
+    // If it's already a URL (base64 or external), return as is
+    if (imageRef.startsWith('http') || imageRef.startsWith('data:')) {
+      return imageRef;
+    }
+
+    // For ImageKit reference IDs, we need to fetch the URL
+    // For now, return a placeholder - in production, you'd cache these URLs
+    return imageUrls[imageRef] || '/placeholder-image.png';
+  };
+
+  // Load image URLs when component mounts or images change
+  useEffect(() => {
+    const loadImageUrls = async () => {
+      const newUrls: Record<string, string> = {};
+
+      for (const imageRef of images) {
+        if (!imageRef.startsWith('http') && !imageRef.startsWith('data:') && !imageUrls[imageRef]) {
+          try {
+            const response = await fetch(`/api/images/${imageRef}`);
+            if (response.ok) {
+              const data = await response.json();
+              newUrls[imageRef] = data.image.url;
+            }
+          } catch (error) {
+            console.error('Failed to load image URL:', error);
+          }
+        }
+      }
+
+      if (Object.keys(newUrls).length > 0) {
+        setImageUrls(prev => ({ ...prev, ...newUrls }));
+      }
+    };
+
+    if (images.length > 0) {
+      loadImageUrls();
+    }
+  }, [images]);
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -38,15 +89,31 @@ export default function ImageUpload({ images, onChange, maxImages = 5 }: ImageUp
           continue;
         }
 
-        // Validate file size (5MB max)
-        if (file.size > 5 * 1024 * 1024) {
-          alert(`${file.name} is too large. Maximum size is 5MB`);
+        // Validate file size (10MB max to match ImageKit service)
+        if (file.size > 10 * 1024 * 1024) {
+          alert(`${file.name} is too large. Maximum size is 10MB`);
           continue;
         }
 
-        // Convert to base64 for now (in production, upload to cloud storage)
-        const base64 = await fileToBase64(file);
-        newImages.push(base64);
+        // Upload to ImageKit
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('type', type);
+        formData.append('entityId', entityId);
+
+        const response = await fetch('/api/images/upload', {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          alert(`Failed to upload ${file.name}: ${errorData.error}`);
+          continue;
+        }
+
+        const data = await response.json();
+        newImages.push(data.image.id); // Store reference ID
       }
 
       onChange([...images, ...newImages]);
@@ -70,7 +137,26 @@ export default function ImageUpload({ images, onChange, maxImages = 5 }: ImageUp
     });
   };
 
-  const removeImage = (index: number) => {
+  const removeImage = async (index: number) => {
+    const imageRef = images[index];
+
+    // Delete from ImageKit if it's a reference ID (not base64)
+    if (imageRef && !imageRef.startsWith('data:')) {
+      try {
+        const response = await fetch(`/api/images/${imageRef}`, {
+          method: 'DELETE',
+        });
+
+        if (!response.ok) {
+          console.error('Failed to delete image from ImageKit');
+          // Continue with local removal even if API call fails
+        }
+      } catch (error) {
+        console.error('Error deleting image:', error);
+        // Continue with local removal
+      }
+    }
+
     onChange(images.filter((_, i) => i !== index));
   };
 
@@ -91,7 +177,7 @@ export default function ImageUpload({ images, onChange, maxImages = 5 }: ImageUp
           {images.map((image, index) => (
             <div key={index} className="relative group aspect-square">
               <Image
-                src={image}
+                src={getImageUrl(image)}
                 alt={`Upload ${index + 1}`}
                 fill
                 className="object-cover rounded-lg"
