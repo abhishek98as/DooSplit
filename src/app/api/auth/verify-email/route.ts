@@ -4,62 +4,6 @@ import User from "@/models/User";
 
 export const dynamic = 'force-dynamic';
 
-export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json();
-    const { token } = body;
-
-    if (!token) {
-      return NextResponse.json(
-        { error: "Verification token is required" },
-        { status: 400 }
-      );
-    }
-
-    await dbConnect();
-
-    // Find user by verification token
-    const user = await User.findOne({
-      resetPasswordToken: token, // Reusing the token field for email verification
-      resetPasswordExpires: { $gt: new Date() },
-      emailVerified: false,
-    });
-
-    if (!user) {
-      return NextResponse.json(
-        { error: "Invalid or expired verification token" },
-        { status: 400 }
-      );
-    }
-
-    // Mark email as verified
-    user.emailVerified = true;
-    user.resetPasswordToken = undefined; // Clear the token
-    user.resetPasswordExpires = undefined;
-    await user.save();
-
-    return NextResponse.json(
-      {
-        message: "Email verified successfully",
-        user: {
-          id: user._id,
-          name: user.name,
-          email: user.email,
-          emailVerified: user.emailVerified,
-        },
-      },
-      { status: 200 }
-    );
-  } catch (error: any) {
-    console.error("Email verification error:", error);
-    return NextResponse.json(
-      { error: "Failed to verify email" },
-      { status: 500 }
-    );
-  }
-}
-
-// GET endpoint for email verification via link
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
@@ -74,35 +18,49 @@ export async function GET(request: NextRequest) {
 
     await dbConnect();
 
-    // Find user by verification token
+    // Find user with matching verification token that hasn't expired
     const user = await User.findOne({
       resetPasswordToken: token,
       resetPasswordExpires: { $gt: new Date() },
       emailVerified: false,
+      authProvider: "email", // Only for email/password accounts
     });
 
     if (!user) {
-      return NextResponse.json(
-        { error: "Invalid or expired verification token" },
-        { status: 400 }
-      );
+      // Token might be expired or invalid
+      const expiredUser = await User.findOne({
+        resetPasswordToken: token,
+        emailVerified: false,
+        authProvider: "email",
+      });
+
+      if (expiredUser) {
+        // Token exists but expired
+        return NextResponse.redirect(
+          new URL("/auth/verify-email?error=expired", request.url)
+        );
+      } else {
+        // Invalid token
+        return NextResponse.redirect(
+          new URL("/auth/verify-email?error=invalid", request.url)
+        );
+      }
     }
 
-    // Mark email as verified
+    // Mark user as verified and clear the token
     user.emailVerified = true;
     user.resetPasswordToken = undefined;
     user.resetPasswordExpires = undefined;
     await user.save();
 
     // Redirect to success page
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.NEXTAUTH_URL || "http://localhost:3000";
-    const redirectUrl = `${appUrl}/auth/verify-email?success=true&email=${encodeURIComponent(user.email)}`;
-
-    return NextResponse.redirect(redirectUrl);
+    return NextResponse.redirect(
+      new URL("/auth/verify-email?success=true", request.url)
+    );
   } catch (error: any) {
     console.error("Email verification error:", error);
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.NEXTAUTH_URL || "http://localhost:3000";
-    const redirectUrl = `${appUrl}/auth/verify-email?error=true`;
-    return NextResponse.redirect(redirectUrl);
+    return NextResponse.redirect(
+      new URL("/auth/verify-email?error=server", request.url)
+    );
   }
 }

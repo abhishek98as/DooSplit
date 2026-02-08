@@ -187,7 +187,7 @@ async function handleImageRequest(request) {
 // Handle other requests (Stale-While-Revalidate)
 async function handleDefaultRequest(request) {
   const cachedResponse = await caches.match(request);
-  const fetchPromise = fetch(request).then(networkResponse => {
+  const fetchPromise = fetch(request).then(async (networkResponse) => {
     if (networkResponse.ok) {
       const cache = await caches.open(STATIC_CACHE);
       cache.put(request, networkResponse.clone());

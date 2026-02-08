@@ -143,8 +143,10 @@ export default function ExpensesPage() {
       if (!response.ok) throw new Error("Failed to fetch expenses");
 
       const data = await response.json();
-      setExpenses(data.expenses || []);
-      setTotalPages(data.totalPages || 1);
+      // Ensure expenses is always an array
+      const expensesArray = Array.isArray(data.expenses) ? data.expenses : [];
+      setExpenses(expensesArray);
+      setTotalPages(data.pagination?.totalPages || data.totalPages || 1);
     } catch (error) {
       console.error("Error fetching expenses:", error);
     } finally {

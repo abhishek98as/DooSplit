@@ -157,7 +157,7 @@ const Sidebar: React.FC = () => {
       {/* User Profile */}
       <div className="p-4 border-t border-neutral-200 dark:border-dark-border">
         <Link
-          href="/settings/profile"
+          href="/settings"
           className="flex items-center space-x-3 p-3 rounded-md hover:bg-neutral-100 dark:hover:bg-dark-bg-tertiary transition-colors"
         >
           <div className="h-10 w-10 bg-primary/10 rounded-full flex items-center justify-center">
