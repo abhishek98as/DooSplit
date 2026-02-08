@@ -41,10 +41,27 @@ export async function GET(request: NextRequest) {
       .lean();
 
     expenses.forEach((expense: any) => {
+      // Determine expense type
+      let expenseType = "non-group";
+      if (expense.groupId) {
+        expenseType = "group";
+      } else {
+        // Check if it's a personal expense (only one participant)
+        const participants = expenseParticipants.filter(ep => ep.expenseId.toString() === expense._id.toString());
+        if (participants.length === 1) {
+          expenseType = "personal";
+        }
+      }
+
       activities.push({
         id: expense._id,
         type: "expense_added",
-        description: `${expense.createdBy.name} added "${expense.description}"`,
+        expenseType,
+        description: expense.groupId
+          ? `${expense.createdBy.name} added "${expense.description}" in ${expense.groupId.name}`
+          : expenseType === "personal"
+          ? `${expense.createdBy.name} added "${expense.description}" (personal)`
+          : `${expense.createdBy.name} added "${expense.description}" with friends`,
         amount: expense.amount,
         currency: expense.currency,
         createdAt: expense.createdAt,

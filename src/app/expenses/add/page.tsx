@@ -20,6 +20,7 @@ import {
   Check
 } from "lucide-react";
 import { ImageType } from "@/lib/imagekit-service";
+import getOfflineStore from "@/lib/offline-store";
 
 interface Friend {
   id: string;
@@ -219,7 +220,9 @@ export default function AddExpensePage() {
     setSubmitting(true);
 
     try {
-      // Step 1: Create expense without images first
+      const offlineStore = getOfflineStore();
+
+      // Prepare expense data
       const expenseData = {
         amount: parseFloat(amount),
         description,
@@ -234,34 +237,22 @@ export default function AddExpensePage() {
         splitMethod
       };
 
-      const res = await fetch("/api/expenses", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(expenseData)
-      });
+      // Try to create expense using offline store (will queue if offline)
+      const result = await offlineStore.createExpense(expenseData);
 
-      if (res.ok) {
-        const data = await res.json();
-
-        // Step 2: Upload images if any
-        let finalImageRefs: string[] = [];
-        if (images.length > 0) {
-          finalImageRefs = await uploadExpenseImages(data.expense._id, images);
-        }
-
-        // Step 3: Update expense with image references if any were uploaded
-        if (finalImageRefs.length > 0) {
-          await fetch(`/api/expenses/${data.expense._id}`, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ images: finalImageRefs })
-          });
+      if (result.success) {
+        // Step 2: Upload images if any (only if online)
+        if (images.length > 0 && navigator.onLine) {
+          const finalImageRefs = await uploadExpenseImages(result.expense._id, images);
+          // Step 3: Update expense with image references if any were uploaded
+          if (finalImageRefs.length > 0) {
+            await offlineStore.updateExpense(result.expense._id, { images: finalImageRefs });
+          }
         }
         router.push("/dashboard");
         router.refresh();
       } else {
-        const error = await res.json();
-        alert(error.message || "Failed to create expense");
+        alert(result.error || "Failed to create expense");
       }
     } catch (error) {
       console.error("Failed to create expense:", error);
@@ -381,19 +372,27 @@ export default function AddExpensePage() {
                 <Users className="h-5 w-5 text-neutral-400" />
               </button>
               {selectedFriends.length > 0 && (
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {selectedFriends.map(friend => (
-                    <span key={friend.id} className="inline-flex items-center gap-1 px-3 py-1 bg-primary/10 text-primary rounded-full text-sm">
-                      {friend.friend.name}
-                      <button
-                        type="button"
-                        onClick={() => toggleFriend(friend)}
-                        className="hover:bg-primary/20 rounded-full p-0.5"
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
-                    </span>
-                  ))}
+                <div className="mt-2 space-y-2">
+                  <div className="flex flex-wrap gap-2">
+                    {selectedFriends.map(friend => (
+                      <span key={friend.id} className="inline-flex items-center gap-1 px-3 py-1 bg-primary/10 text-primary rounded-full text-sm">
+                        {friend.friend.name}
+                        <button
+                          type="button"
+                          onClick={() => toggleFriend(friend)}
+                          className="hover:bg-primary/20 rounded-full p-0.5"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                  {!selectedGroup && (
+                    <div className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+                      <span className="mr-1">📝</span>
+                      Non-Group Expense
+                    </div>
+                  )}
                 </div>
               )}
             </div>

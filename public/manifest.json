@@ -1,28 +1,135 @@
 {
   "name": "DooSplit - Split Expenses with Friends",
   "short_name": "DooSplit",
-  "description": "Track and split expenses with friends and roommates. Manage group finances efficiently.",
+  "description": "Track and split expenses with friends and roommates. Manage group finances efficiently with offline support.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",
   "theme_color": "#00B8A9",
   "orientation": "portrait-primary",
   "scope": "/",
+  "lang": "en-US",
+  "dir": "ltr",
+  "categories": ["finance", "lifestyle", "productivity", "utilities"],
+  "iarc_rating_id": "",
+  "screenshots": [
+    {
+      "src": "/screenshots/dashboard.png",
+      "sizes": "1280x720",
+      "type": "image/png",
+      "label": "Dashboard showing expenses and balances"
+    },
+    {
+      "src": "/screenshots/add-expense.png",
+      "sizes": "1280x720",
+      "type": "image/png",
+      "label": "Adding a new expense with friends"
+    }
+  ],
   "icons": [
     {
-      "src": "/logo.webp",
+      "src": "/icons/icon-72x72.png",
+      "sizes": "72x72",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-96x96.png",
+      "sizes": "96x96",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-128x128.png",
+      "sizes": "128x128",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-144x144.png",
+      "sizes": "144x144",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-152x152.png",
+      "sizes": "152x152",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-192x192.png",
       "sizes": "192x192",
-      "type": "image/webp",
+      "type": "image/png",
       "purpose": "any maskable"
     },
     {
-      "src": "/logo.webp",
+      "src": "/icons/icon-384x384.png",
+      "sizes": "384x384",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512x512.png",
       "sizes": "512x512",
-      "type": "image/webp",
+      "type": "image/png",
       "purpose": "any maskable"
     }
   ],
-  "categories": ["finance", "lifestyle", "productivity"],
-  "lang": "en-US",
-  "dir": "ltr"
+  "shortcuts": [
+    {
+      "name": "Add Expense",
+      "short_name": "Add Expense",
+      "description": "Quickly add a new expense",
+      "url": "/expenses/add",
+      "icons": [
+        {
+          "src": "/icons/add-expense-96x96.png",
+          "sizes": "96x96",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "View Friends",
+      "short_name": "Friends",
+      "description": "Check balances with friends",
+      "url": "/friends",
+      "icons": [
+        {
+          "src": "/icons/friends-96x96.png",
+          "sizes": "96x96",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "Settlements",
+      "short_name": "Settle Up",
+      "description": "View and manage settlements",
+      "url": "/settlements",
+      "icons": [
+        {
+          "src": "/icons/settlements-96x96.png",
+          "sizes": "96x96",
+          "type": "image/png"
+        }
+      ]
+    }
+  ],
+  "share_target": {
+    "action": "/expenses/add",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "title": "title",
+      "text": "description",
+      "url": "url"
+    }
+  },
+  "related_applications": [],
+  "prefer_related_applications": false,
+  "edge_side_panel": {
+    "preferred_width": 400
+  }
 }

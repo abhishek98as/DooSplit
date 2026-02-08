@@ -123,6 +123,59 @@ export async function GET(
       }
     });
 
+    // Get group breakdown
+    const GroupMember = (await import("@/models/GroupMember")).default;
+    const Group = (await import("@/models/Group")).default;
+
+    const userGroups = await GroupMember.find({ userId }).select('groupId');
+    const friendGroups = await GroupMember.find({ userId: friendObjectId }).select('groupId');
+
+    const userGroupIds = userGroups.map(g => g.groupId.toString());
+    const friendGroupIds = friendGroups.map(g => g.groupId.toString());
+    const commonGroupIds = userGroupIds.filter(id => friendGroupIds.includes(id));
+
+    const groupBreakdown = [];
+
+    for (const groupId of commonGroupIds) {
+      const group = await Group.findById(groupId).select('name');
+      if (!group) continue;
+
+      // Calculate balance for this specific group
+      const groupExpenses = await Expense.find({
+        groupId,
+        isDeleted: false
+      });
+
+      let groupBalance = 0;
+
+      for (const expense of groupExpenses) {
+        const expenseParticipants = await ExpenseParticipant.find({ expenseId: expense._id });
+        const userParticipant = expenseParticipants.find(p => p.userId.toString() === session.user.id);
+        const friendParticipant = expenseParticipants.find(p => p.userId.toString() === friendObjectId.toString());
+
+        if (userParticipant && friendParticipant) {
+          groupBalance += userParticipant.owedAmount;
+        }
+      }
+
+      // Get last activity date
+      const lastExpense = await Expense.findOne({
+        groupId,
+        isDeleted: false,
+        $or: [
+          { createdBy: userId },
+          { createdBy: friendObjectId }
+        ]
+      }).sort({ updatedAt: -1 });
+
+      groupBreakdown.push({
+        groupId: group._id,
+        groupName: group.name,
+        balance: Math.round(groupBalance * 100) / 100,
+        lastActivity: lastExpense?.updatedAt || null
+      });
+    }
+
     return NextResponse.json({
       friend: {
         _id: friend._id,
@@ -131,7 +184,8 @@ export async function GET(
         profilePicture: friend.profilePicture,
         balance: balance,
         friendsSince: friendship.createdAt
-      }
+      },
+      groupBreakdown
     });
   } catch (error: any) {
     console.error("Friend details error:", error);

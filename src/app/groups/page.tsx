@@ -26,6 +26,7 @@ interface Friend {
   _id: string;
   name: string;
   email: string;
+  balance: number;
 }
 
 export default function GroupsPage() {
@@ -79,6 +80,7 @@ export default function GroupsPage() {
           _id: item.friend?.id || item.id || item._id,
           name: item.friend?.name || item.name || "Unknown",
           email: item.friend?.email || item.email || "",
+          balance: item.balance || 0,
         }));
         setFriends(mappedFriends);
       }
@@ -285,10 +287,31 @@ export default function GroupsPage() {
                         onChange={() => toggleMemberSelection(friend._id)}
                         className="rounded border-neutral-300"
                       />
-                      <div>
+                      <div className="flex-1">
                         <p className="text-sm font-medium">{friend.name}</p>
                         <p className="text-xs text-neutral-500">{friend.email}</p>
                       </div>
+                      {friend.balance !== 0 && (
+                        <div className="text-right">
+                          <span className={`text-xs font-medium ${
+                            friend.balance > 0
+                              ? 'text-green-600 dark:text-green-400'
+                              : 'text-red-600 dark:text-red-400'
+                          }`}>
+                            {friend.balance > 0 ? '+' : ''}₹{Math.abs(friend.balance)}
+                          </span>
+                          <p className="text-xs text-neutral-500">
+                            {friend.balance > 0 ? 'Owes you' : 'You owe'}
+                          </p>
+                        </div>
+                      )}
+                    </label>
+                      <input
+                        type="checkbox"
+                        checked={formData.memberIds.includes(friend._id)}
+                        onChange={() => toggleMemberSelection(friend._id)}
+                        className="rounded border-neutral-300"
+                      />
                     </label>
                   ))
                 )}

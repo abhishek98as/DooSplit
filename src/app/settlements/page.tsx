@@ -8,6 +8,7 @@ import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import { DollarSign, Plus, ArrowRight, Wallet, Bell, CheckCircle, Clock, Download } from "lucide-react";
 import Modal from "@/components/ui/Modal";
+import getOfflineStore from "@/lib/offline-store";
 
 interface Settlement {
   _id: string;
@@ -107,11 +108,9 @@ export default function SettlementsPage() {
 
   const fetchSettlements = async () => {
     try {
-      const res = await fetch("/api/settlements");
-      if (res.ok) {
-        const data = await res.json();
-        setSettlements(data.settlements || []);
-      }
+      const offlineStore = getOfflineStore();
+      const settlements = await offlineStore.getSettlements();
+      setSettlements(settlements || []);
     } catch (error) {
       console.error("Failed to fetch settlements:", error);
     } finally {

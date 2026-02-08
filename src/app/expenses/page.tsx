@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import AppShell from "@/components/layout/AppShell";
+import getOfflineStore from "@/lib/offline-store";
 import Card from "@/components/ui/Card";
 import Input from "@/components/ui/Input";
 import Button from "@/components/ui/Button";
@@ -11,8 +12,8 @@ import Modal from "@/components/ui/Modal";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
 import { exportToExcel, exportToPDF, exportToCSV } from "@/lib/exportUtils";
 import { 
-  Receipt, 
-  Search, 
+  Receipt,
+  Search,
   Filter,
   Edit2,
   Trash2,
@@ -21,6 +22,7 @@ import {
   X,
   ChevronLeft,
   ChevronRight,
+  Eye,
   Plus,
   Download
 } from "lucide-react";
@@ -78,6 +80,12 @@ export default function ExpensesPage() {
   const [endDate, setEndDate] = useState("");
   const [showFilters, setShowFilters] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
+  const [showSettled, setShowSettled] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('showSettledExpenses') !== 'false';
+    }
+    return true;
+  });
 
   // Pagination
   const [page, setPage] = useState(1);
@@ -112,30 +120,29 @@ export default function ExpensesPage() {
   const fetchExpenses = async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({
-        page: page.toString(),
-        limit: limit.toString(),
-      });
+      const offlineStore = getOfflineStore();
+
+      const query: any = {
+        page,
+        limit,
+      };
 
       if (selectedCategory !== "all") {
-        params.append("category", selectedCategory);
+        query.category = selectedCategory;
       }
       if (selectedGroup !== "all") {
-        params.append("groupId", selectedGroup);
+        query.groupId = selectedGroup;
       }
-      if (startDate) {
-        params.append("startDate", startDate);
-      }
-      if (endDate) {
-        params.append("endDate", endDate);
+      if (startDate && endDate) {
+        query.dateRange = {
+          start: startDate,
+          end: endDate
+        };
       }
 
-      const response = await fetch(`/api/expenses?${params.toString()}`);
-      if (!response.ok) throw new Error("Failed to fetch expenses");
-      
-      const data = await response.json();
-      setExpenses(data.expenses || []);
-      setTotalPages(data.totalPages || 1);
+      const expenses = await offlineStore.getExpenses(query);
+      setExpenses(expenses);
+      setTotalPages(Math.ceil(expenses.length / limit) || 1); // Simplified pagination
     } catch (error) {
       console.error("Error fetching expenses:", error);
     } finally {
@@ -145,10 +152,9 @@ export default function ExpensesPage() {
 
   const fetchGroups = async () => {
     try {
-      const response = await fetch("/api/groups");
-      if (!response.ok) throw new Error("Failed to fetch groups");
-      const data = await response.json();
-      setGroups(data.groups || []);
+      const offlineStore = getOfflineStore();
+      const groups = await offlineStore.getGroups();
+      setGroups(groups || []);
     } catch (error) {
       console.error("Error fetching groups:", error);
     }
@@ -254,9 +260,16 @@ export default function ExpensesPage() {
   };
 
   const filteredExpenses = expenses.filter((expense) => {
-    const matchesSearch = 
+    const matchesSearch =
       expense.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       (expense.createdBy?.name || "").toLowerCase().includes(searchQuery.toLowerCase());
+
+    // Filter by settled status
+    if (!showSettled) {
+      const allSettled = expense.participants?.every(p => p.isSettled);
+      if (allSettled) return false;
+    }
+
     return matchesSearch;
   });
 
@@ -327,6 +340,17 @@ export default function ExpensesPage() {
               Export
             </Button>
             <Button
+              variant={showSettled ? "secondary" : "outline"}
+              onClick={() => {
+                setShowSettled(!showSettled);
+                localStorage.setItem('showSettledExpenses', (!showSettled).toString());
+              }}
+              className="flex items-center gap-2"
+            >
+              <Eye className="w-4 h-4" />
+              {showSettled ? "Hide" : "Show"} Settled
+            </Button>
+            <Button
               onClick={() => router.push("/expenses/add")}
               className="flex items-center gap-2"
             >
@@ -366,6 +390,7 @@ export default function ExpensesPage() {
                     className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
                   >
                     <option value="all">All Groups</option>
+                    <option value="non-group">Non-Group Expenses</option>
                     {groups.map((group) => (
                       <option key={group._id} value={group._id}>
                         {group.name}
@@ -452,12 +477,19 @@ export default function ExpensesPage() {
                             <span>{expense.createdBy?.name || "Unknown"} paid</span>
                             <span>•</span>
                             <span>{formatDate(expense.date)}</span>
-                            {expense.groupId && (
+                            {expense.groupId ? (
                               <>
                                 <span>•</span>
                                 <span className="flex items-center gap-1">
                                   <Users className="w-3 h-3" />
                                   {expense.groupId.name}
+                                </span>
+                              </>
+                            ) : (
+                              <>
+                                <span>•</span>
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+                                  Non-Group
                                 </span>
                               </>
                             )}

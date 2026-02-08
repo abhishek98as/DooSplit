@@ -9,6 +9,8 @@ import Sidebar from "./Sidebar";
 import MobileNav from "./MobileNav";
 import NotificationDropdown from "./NotificationDropdown";
 import { useTheme } from "@/contexts/ThemeContext";
+import OfflineIndicator from "@/components/pwa/OfflineIndicator";
+import InstallPrompt from "@/components/pwa/InstallPrompt";
 
 interface AppShellProps {
   children: React.ReactNode;
@@ -132,6 +134,10 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
 
       {/* Mobile Bottom Navigation */}
       <MobileNav />
+
+      {/* PWA Components */}
+      <OfflineIndicator position="bottom" />
+      <InstallPrompt variant="toast" position="bottom" />
     </div>
   );
 };

@@ -9,8 +9,9 @@ import Card, { CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import Modal from "@/components/ui/Modal";
-import { ArrowLeft, Mail, Calendar, DollarSign, TrendingUp, TrendingDown, MessageSquare, Filter, Bell } from "lucide-react";
+import { ArrowLeft, Mail, Calendar, DollarSign, TrendingUp, TrendingDown, MessageSquare, Filter, Bell, Download, BarChart3 } from "lucide-react";
 import Image from "next/image";
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 
 interface Friend {
   _id: string;
@@ -18,6 +19,14 @@ interface Friend {
   email: string;
   profilePicture?: string;
   balance: number;
+  friendsSince: string;
+}
+
+interface GroupBreakdown {
+  groupId: string;
+  groupName: string;
+  balance: number;
+  lastActivity: string | null;
 }
 
 interface Transaction {
@@ -41,14 +50,23 @@ export default function FriendProfilePage() {
   const friendId = params.id as string;
 
   const [friend, setFriend] = useState<Friend | null>(null);
+  const [groupBreakdown, setGroupBreakdown] = useState<GroupBreakdown[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<"all" | "expenses" | "settlements">("all");
+  const [showSettled, setShowSettled] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('showSettledTransactions') !== 'false';
+    }
+    return true;
+  });
   const [showReminderModal, setShowReminderModal] = useState(false);
   const [reminderAmount, setReminderAmount] = useState("");
   const [reminderMessage, setReminderMessage] = useState("");
   const [sendingReminder, setSendingReminder] = useState(false);
+  const [stats, setStats] = useState<any>(null);
+  const [showCharts, setShowCharts] = useState(true);
 
   useEffect(() => {
     if (status === "unauthenticated") {
@@ -75,12 +93,20 @@ export default function FriendProfilePage() {
 
       const friendData = await friendRes.json();
       setFriend(friendData.friend);
+      setGroupBreakdown(friendData.groupBreakdown || []);
 
       // Fetch transaction history with this friend
       const transactionsRes = await fetch(`/api/friends/${friendId}/transactions`);
       if (transactionsRes.ok) {
         const transactionsData = await transactionsRes.json();
         setTransactions(transactionsData.transactions || []);
+      }
+
+      // Fetch statistics
+      const statsRes = await fetch(`/api/friends/${friendId}/stats`);
+      if (statsRes.ok) {
+        const statsData = await statsRes.json();
+        setStats(statsData);
       }
     } catch (err: any) {
       console.error("Failed to fetch friend data:", err);
@@ -140,9 +166,17 @@ export default function FriendProfilePage() {
   };
 
   const filteredTransactions = transactions.filter(transaction => {
-    if (filter === "all") return true;
-    if (filter === "expenses") return !transaction.isSettlement;
-    if (filter === "settlements") return transaction.isSettlement;
+    // Filter by type
+    if (filter === "expenses" && transaction.isSettlement) return false;
+    if (filter === "settlements" && !transaction.isSettlement) return false;
+
+    // Filter by settled status (only for expenses)
+    if (!showSettled && !transaction.isSettlement) {
+      // For expenses, we need to check if all participants are settled
+      // For now, assume we have a settled flag on transactions
+      if (transaction.settled) return false;
+    }
+
     return true;
   });
 
@@ -310,12 +344,140 @@ export default function FriendProfilePage() {
           </CardContent>
         </Card>
 
+        {/* Group Breakdown */}
+        {groupBreakdown.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Group Breakdown</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                {groupBreakdown.map((group) => (
+                  <div key={group.groupId} className="flex items-center justify-between p-3 bg-neutral-50 dark:bg-dark-bg-secondary rounded-lg">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <Users className="h-4 w-4 text-neutral-500" />
+                        <span className="font-medium text-neutral-900 dark:text-dark-text">{group.groupName}</span>
+                      </div>
+                      {group.lastActivity && (
+                        <p className="text-xs text-neutral-500 mt-1">
+                          Last activity: {new Date(group.lastActivity).toLocaleDateString('en-US', {
+                            month: 'short',
+                            day: 'numeric',
+                            year: 'numeric'
+                          })}
+                        </p>
+                      )}
+                    </div>
+                    <div className="text-right">
+                      <div className={`font-semibold ${
+                        group.balance === 0
+                          ? 'text-neutral-500'
+                          : group.balance > 0
+                          ? 'text-green-600 dark:text-green-400'
+                          : 'text-red-600 dark:text-red-400'
+                      }`}>
+                        {group.balance === 0
+                          ? 'Settled'
+                          : `₹${Math.abs(group.balance).toLocaleString("en-IN")}`}
+                      </div>
+                      <div className={`text-xs ${
+                        group.balance === 0
+                          ? 'text-neutral-400'
+                          : group.balance > 0
+                          ? 'text-green-600 dark:text-green-400'
+                          : 'text-red-600 dark:text-red-400'
+                      }`}>
+                        {group.balance === 0
+                          ? 'Balanced'
+                          : group.balance > 0
+                          ? 'You are owed'
+                          : 'You owe'}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Expense Charts */}
+        {stats && showCharts && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Monthly Trend Chart */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <TrendingUp className="h-5 w-5 text-primary" />
+                  Monthly Spending Trend
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={stats.monthlyTrend}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="month" />
+                      <YAxis />
+                      <Tooltip formatter={(value) => [`₹${value}`, 'Amount']} />
+                      <Line type="monotone" dataKey="amount" stroke="#00B8A9" strokeWidth={2} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Category Breakdown */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <BarChart3 className="h-5 w-5 text-primary" />
+                  Category Breakdown
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={stats.categoryBreakdown}
+                        cx="50%"
+                        cy="50%"
+                        labelLine={false}
+                        label={({ category, percentage }) => `${category} ${percentage}%`}
+                        outerRadius={80}
+                        fill="#8884d8"
+                        dataKey="amount"
+                      >
+                        {stats.categoryBreakdown.map((entry: any, index: number) => (
+                          <Cell key={`cell-${index}`} fill={['#00B8A9', '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FECA57'][index % 6]} />
+                        ))}
+                      </Pie>
+                      <Tooltip formatter={(value) => [`₹${value}`, 'Amount']} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
         {/* Transaction History */}
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
               <CardTitle>Transaction History</CardTitle>
               <div className="flex items-center gap-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => window.open(`/api/friends/${friendId}/export`, '_blank')}
+                  className="flex items-center gap-1"
+                >
+                  <Download className="h-3 w-3" />
+                  Export
+                </Button>
                 <Filter className="h-4 w-4 text-neutral-500" />
                 <select
                   value={filter}
@@ -326,6 +488,19 @@ export default function FriendProfilePage() {
                   <option value="expenses">Expenses Only</option>
                   <option value="settlements">Settlements Only</option>
                 </select>
+                <button
+                  onClick={() => {
+                    setShowSettled(!showSettled);
+                    localStorage.setItem('showSettledTransactions', (!showSettled).toString());
+                  }}
+                  className={`inline-flex items-center px-3 py-1 rounded-md text-sm font-medium transition-colors ${
+                    showSettled
+                      ? 'bg-neutral-100 text-neutral-900 hover:bg-neutral-200 dark:bg-neutral-800 dark:text-neutral-100 dark:hover:bg-neutral-700'
+                      : 'bg-blue-100 text-blue-900 hover:bg-blue-200 dark:bg-blue-900 dark:text-blue-100 dark:hover:bg-blue-800'
+                  }`}
+                >
+                  {showSettled ? 'Hide Settled' : 'Show Settled'}
+                </button>
               </div>
             </div>
           </CardHeader>

@@ -1,17 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth/next";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
 import dbConnect from "@/lib/db";
-import Friend from "@/models/Friend";
 import Expense from "@/models/Expense";
 import ExpenseParticipant from "@/models/ExpenseParticipant";
 import Settlement from "@/models/Settlement";
 import Group from "@/models/Group";
-import { authOptions } from "@/lib/auth";
 import mongoose from "mongoose";
 
 export const dynamic = 'force-dynamic';
 
-// GET /api/friends/[id]/transactions - Get transaction history with a friend
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -27,15 +25,13 @@ export async function GET(
       );
     }
 
-    const searchParams = request.nextUrl.searchParams;
-    const limit = parseInt(searchParams.get("limit") || "50");
-
     await dbConnect();
 
     const userId = new mongoose.Types.ObjectId(session.user.id);
     const friendId = new mongoose.Types.ObjectId(id);
 
-    // Verify they are friends
+    // Verify friendship exists
+    const Friend = (await import("@/models/Friend")).default;
     const friendship = await Friend.findOne({
       $or: [
         { userId: session.user.id, friendId: id },
@@ -55,108 +51,101 @@ export async function GET(
 
     // Get expenses where both users are participants
     const expenseParticipants = await ExpenseParticipant.find({
-      userId: { $in: [userId, friendId] },
-      expenseId: {
-        $in: await ExpenseParticipant.distinct("expenseId", {
-          userId: { $in: [userId, friendId] }
-        })
-      }
-    }).populate("expenseId");
-
-    // Group by expense and filter to only expenses where both are participants
-    const expenseMap = new Map();
-
-    expenseParticipants.forEach((participant: any) => {
-      const expenseId = participant.expenseId._id.toString();
-      if (!expenseMap.has(expenseId)) {
-        expenseMap.set(expenseId, {
-          expense: participant.expenseId,
-          participants: []
-        });
-      }
-      expenseMap.get(expenseId).participants.push(participant);
+      userId: { $in: [userId, friendId] }
     });
 
-    // Only include expenses where both users are participants
-    const mutualExpenses = Array.from(expenseMap.values()).filter(
-      (item: any) => item.participants.length >= 2
-    );
+    const expenseIds = [...new Set(expenseParticipants.map(ep => ep.expenseId.toString()))];
 
-    mutualExpenses.forEach((item: any) => {
-      const expense = item.expense;
-      const userParticipant = item.participants.find(
-        (p: any) => p.userId.toString() === session.user.id
-      );
+    for (const expenseId of expenseIds) {
+      const participants = expenseParticipants.filter(ep => ep.expenseId.toString() === expenseId);
+      if (participants.length >= 2) { // Both users are in this expense
+        const expense = await Expense.findById(expenseId)
+          .populate("createdBy", "name profilePicture")
+          .populate("groupId", "name")
+          .lean();
 
-      if (userParticipant && !expense.isDeleted) {
-        transactions.push({
-          id: expense._id,
-          type: "expense",
-          description: expense.description,
-          amount: userParticipant.owedAmount,
-          currency: expense.currency,
-          createdAt: expense.createdAt,
-          isSettlement: false,
-          group: expense.groupId ? {
-            id: expense.groupId,
-            name: "Group" // Will be populated below
-          } : null
-        });
+        if (expense && !expense.isDeleted) {
+          const userParticipant = participants.find(p => p.userId.toString() === session.user.id);
+          const friendParticipant = participants.find(p => p.userId.toString() === friendId.toString());
+
+          if (userParticipant && friendParticipant) {
+            // Check if all participants are settled
+            const allParticipants = await ExpenseParticipant.find({ expenseId: expense._id });
+            const isSettled = allParticipants.every(p => p.isSettled);
+
+            const netAmount = userParticipant.owedAmount;
+            const isPositive = userParticipant.paidAmount > userParticipant.owedAmount;
+
+            transactions.push({
+              id: expense._id,
+              type: "expense",
+              description: expense.description,
+              amount: Math.abs(netAmount),
+              currency: expense.currency,
+              createdAt: expense.createdAt,
+              isSettlement: false,
+              settled: isSettled,
+              group: expense.groupId ? {
+                id: expense.groupId._id,
+                name: expense.groupId.name
+              } : null,
+              isPositive,
+              user: {
+                id: expense.createdBy._id,
+                name: expense.createdBy.name,
+                profilePicture: expense.createdBy.profilePicture
+              }
+            });
+          }
+        }
       }
-    });
+    }
 
-    // Get settlements between the two users
+    // Get settlements between these two users
     const settlements = await Settlement.find({
       $or: [
         { fromUserId: userId, toUserId: friendId },
         { fromUserId: friendId, toUserId: userId }
       ]
-    }).sort({ createdAt: -1 });
+    })
+      .populate("fromUserId", "name profilePicture")
+      .populate("toUserId", "name profilePicture")
+      .sort({ createdAt: -1 })
+      .lean();
 
     settlements.forEach((settlement: any) => {
-      const isFromUser = settlement.fromUserId.toString() === session.user.id;
-      const amount = isFromUser ? settlement.amount : -settlement.amount;
+      const isFromUser = settlement.fromUserId._id.toString() === session.user.id;
+      const otherUser = isFromUser ? settlement.toUserId : settlement.fromUserId;
+      const action = isFromUser ? "paid" : "received payment from";
 
       transactions.push({
         id: settlement._id,
         type: "settlement",
-        description: isFromUser
-          ? `You paid ${settlement.amount} ${settlement.currency}`
-          : `Received payment of ${settlement.amount} ${settlement.currency}`,
-        amount: Math.abs(amount),
+        description: `You ${action} ${otherUser.name}`,
+        amount: settlement.amount,
         currency: settlement.currency,
         createdAt: settlement.createdAt,
-        isSettlement: true
+        isSettlement: true,
+        settled: true,
+        user: {
+          id: otherUser._id,
+          name: otherUser.name,
+          profilePicture: otherUser.profilePicture
+        }
       });
     });
 
-    // Populate group names
-    const groupIds = transactions
-      .filter(t => t.group)
-      .map(t => t.group.id)
-      .filter((id, index, arr) => arr.indexOf(id) === index);
-
-    if (groupIds.length > 0) {
-      const groups = await Group.find({ _id: { $in: groupIds } }).select("name");
-      const groupMap = new Map(groups.map(g => [g._id.toString(), g.name]));
-
-      transactions.forEach(transaction => {
-        if (transaction.group) {
-          transaction.group.name = groupMap.get(transaction.group.id.toString()) || "Group";
-        }
-      });
-    }
-
-    // Sort transactions by date (newest first) and limit
+    // Sort all transactions by createdAt (most recent first)
     transactions.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
     return NextResponse.json({
-      transactions: transactions.slice(0, limit)
+      transactions,
+      count: transactions.length
     });
   } catch (error: any) {
-    console.error("Friend transactions error:", error);
+    console.error("Get friend transactions error:", error);
     return NextResponse.json(
-      { error: "Failed to fetch friend transactions" },
+      { error: "Failed to fetch transactions" },
       { status: 500 }
     );
   }

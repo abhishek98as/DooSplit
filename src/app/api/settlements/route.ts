@@ -49,14 +49,23 @@ export async function GET(request: NextRequest) {
       .limit(limit)
       .populate("fromUserId", "name email profilePicture")
       .populate("toUserId", "name email profilePicture")
-      .populate("groupId", "name image")
-      .lean();
+      .populate("groupId", "name image");
 
     const total = await Settlement.countDocuments(query);
 
+    // Add version vectors to settlements
+    const settlementsWithVersions = settlements.map((settlement: any) => ({
+      ...settlement.toJSON(),
+      _version: {
+        version: settlement.version || 1,
+        lastModified: settlement.lastModified || settlement.updatedAt,
+        modifiedBy: settlement.modifiedBy || settlement.fromUserId,
+      },
+    }));
+
     return NextResponse.json(
       {
-        settlements,
+        settlements: settlementsWithVersions,
         pagination: {
           page,
           limit,
@@ -133,7 +142,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Create settlement
+    // Create settlement with version tracking
     const settlement = await Settlement.create({
       fromUserId: new mongoose.Types.ObjectId(fromUserId),
       toUserId: new mongoose.Types.ObjectId(toUserId),
@@ -144,6 +153,9 @@ export async function POST(request: NextRequest) {
       screenshot: screenshot || null,
       date: date || new Date(),
       groupId: groupId ? new mongoose.Types.ObjectId(groupId) : undefined,
+      version: 1,
+      lastModified: new Date(),
+      modifiedBy: new mongoose.Types.ObjectId(session.user.id),
     });
 
     const populatedSettlement = await Settlement.findById(settlement._id)
@@ -171,12 +183,29 @@ export async function POST(request: NextRequest) {
       console.error("Failed to send notifications:", notifError);
     }
 
+    // Create version vector and ETag
+    const versionVector = {
+      version: settlement.version,
+      lastModified: settlement.lastModified,
+      modifiedBy: settlement.modifiedBy,
+    };
+    const etag = `"${settlement._id}-${settlement.version}"`;
+
     return NextResponse.json(
       {
         message: "Settlement recorded successfully",
-        settlement: populatedSettlement,
+        settlement: {
+          ...populatedSettlement!.toJSON(),
+          _version: versionVector,
+        },
       },
-      { status: 201 }
+      {
+        status: 201,
+        headers: {
+          'ETag': etag,
+          'X-Version-Vector': JSON.stringify(versionVector),
+        }
+      }
     );
   } catch (error: any) {
     console.error("Create settlement error:", error);

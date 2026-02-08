@@ -64,9 +64,17 @@ export async function GET(request: NextRequest) {
           expenseId: expense._id,
         }).populate("userId", "name email profilePicture");
 
+        // Add version vector to each expense
+        const versionVector = {
+          version: expense.version || 1,
+          lastModified: expense.lastModified || expense.updatedAt,
+          modifiedBy: expense.modifiedBy || expense.createdBy,
+        };
+
         return {
           ...expense,
           participants,
+          _version: versionVector,
         };
       })
     );
@@ -219,7 +227,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Create expense
+    // Create expense with version tracking
     const expense = await Expense.create({
       amount,
       description,
@@ -230,6 +238,9 @@ export async function POST(request: NextRequest) {
       groupId: groupId || null,
       images: images || [],
       notes: notes || "",
+      version: 1,
+      lastModified: new Date(),
+      modifiedBy: userId,
     });
 
     // Create expense participants
@@ -275,15 +286,30 @@ export async function POST(request: NextRequest) {
       // Don't fail the expense creation if notifications fail
     }
 
+    // Create ETag for optimistic concurrency
+    const versionVector = {
+      version: expense.version,
+      lastModified: expense.lastModified,
+      modifiedBy: expense.modifiedBy,
+    };
+    const etag = `"${expense._id}-${expense.version}"`;
+
     return NextResponse.json(
       {
         message: "Expense created successfully",
         expense: {
           ...populatedExpense!.toJSON(),
           participants: expenseParticipants,
+          _version: versionVector,
         },
       },
-      { status: 201 }
+      {
+        status: 201,
+        headers: {
+          'ETag': etag,
+          'X-Version-Vector': JSON.stringify(versionVector),
+        }
+      }
     );
   } catch (error: any) {
     console.error("Create expense error:", error);

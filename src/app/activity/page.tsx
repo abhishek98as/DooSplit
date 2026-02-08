@@ -7,10 +7,22 @@ import Card, { CardContent } from "@/components/ui/Card";
 import { Clock, Receipt, DollarSign, UserPlus, Filter, Search, Calendar, X } from "lucide-react";
 
 interface Activity {
-  type: "expense" | "settlement" | "friend_request";
   id: string;
-  timestamp: string;
-  data: any;
+  type: string;
+  expenseType?: string;
+  description: string;
+  amount?: number;
+  currency?: string;
+  createdAt: string;
+  user?: {
+    id: string;
+    name: string;
+    profilePicture?: string;
+  };
+  group?: {
+    id: string;
+    name: string;
+  };
 }
 
 export default function ActivityPage() {
@@ -21,6 +33,7 @@ export default function ActivityPage() {
 
   // Filter states
   const [typeFilter, setTypeFilter] = useState<string>("all");
+  const [expenseTypeFilter, setExpenseTypeFilter] = useState<string>("all");
   const [dateFilter, setDateFilter] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState<string>("");
 
@@ -34,7 +47,7 @@ export default function ActivityPage() {
 
   const fetchActivities = async () => {
     try {
-      const res = await fetch("/api/activities");
+      const res = await fetch("/api/dashboard/activity");
       if (res.ok) {
         const data = await res.json();
         setActivities(data.activities || []);
@@ -53,9 +66,14 @@ export default function ActivityPage() {
       return false;
     }
 
+    // Expense type filter
+    if (expenseTypeFilter !== "all" && activity.expenseType !== expenseTypeFilter) {
+      return false;
+    }
+
     // Date filter
     if (dateFilter !== "all") {
-      const activityDate = new Date(activity.timestamp);
+      const activityDate = new Date(activity.createdAt || activity.timestamp);
       const now = new Date();
 
       switch (dateFilter) {
@@ -76,10 +94,9 @@ export default function ActivityPage() {
     // Search filter
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase();
-      const searchableText = `${activity.data?.description || ""} ${activity.data?.userName || ""} ${activity.data?.amount || ""}`.toLowerCase();
-      if (!searchableText.includes(query)) {
-        return false;
-      }
+      return activity.description?.toLowerCase().includes(query) ||
+             activity.user?.name?.toLowerCase().includes(query) ||
+             (activity.data?.description || "").toLowerCase().includes(query);
     }
 
     return true;
@@ -114,7 +131,7 @@ export default function ActivityPage() {
     const { type, data, timestamp } = activity;
 
     switch (type) {
-      case "expense":
+      case "expense_added":
         return (
           <div className="flex items-start gap-3">
             <div className="h-10 w-10 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
@@ -122,15 +139,28 @@ export default function ActivityPage() {
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm text-neutral-900 dark:text-dark-text">
-                <span className="font-medium">{data.createdBy.name}</span> added{" "}
-                <span className="font-medium">{data.description}</span>
+                {activity.description}
               </p>
               <div className="flex items-center gap-2 mt-1">
-                <span className="text-sm font-semibold text-primary">
-                  {formatCurrency(data.amount)}
-                </span>
+                {activity.expenseType && (
+                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                    activity.expenseType === 'group'
+                      ? 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200'
+                      : activity.expenseType === 'personal'
+                      ? 'bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200'
+                      : 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200'
+                  }`}>
+                    {activity.expenseType === 'group' ? '👥' : activity.expenseType === 'personal' ? '👤' : '🤝'}
+                    {activity.expenseType === 'group' ? 'Group' : activity.expenseType === 'personal' ? 'Personal' : 'Non-Group'}
+                  </span>
+                )}
+                {activity.amount && (
+                  <span className="text-sm font-semibold text-primary">
+                    {formatCurrency(activity.amount)}
+                  </span>
+                )}
                 <span className="text-xs text-neutral-500">
-                  {formatDate(timestamp)}
+                  {formatDate(activity.createdAt)}
                 </span>
               </div>
             </div>
@@ -138,36 +168,23 @@ export default function ActivityPage() {
         );
 
       case "settlement":
-        const isOutgoing = data.fromUserId._id === session?.user?.id;
         return (
           <div className="flex items-start gap-3">
-            <div
-              className={`h-10 w-10 rounded-full flex items-center justify-center flex-shrink-0 ${
-                isOutgoing ? "bg-coral/20" : "bg-success/20"
-              }`}
-            >
-              <DollarSign
-                className={`h-5 w-5 ${
-                  isOutgoing ? "text-coral" : "text-success"
-                }`}
-              />
+            <div className="h-10 w-10 rounded-full bg-success/20 flex items-center justify-center flex-shrink-0">
+              <DollarSign className="h-5 w-5 text-success" />
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm text-neutral-900 dark:text-dark-text">
-                {isOutgoing
-                  ? `You paid ${data.toUserId.name}`
-                  : `${data.fromUserId.name} paid you`}
+                {activity.description}
               </p>
               <div className="flex items-center gap-2 mt-1">
-                <span
-                  className={`text-sm font-semibold ${
-                    isOutgoing ? "text-coral" : "text-success"
-                  }`}
-                >
-                  {formatCurrency(data.amount)}
-                </span>
+                {activity.amount && (
+                  <span className="text-sm font-semibold text-success">
+                    {formatCurrency(activity.amount)}
+                  </span>
+                )}
                 <span className="text-xs text-neutral-500">
-                  {formatDate(timestamp)}
+                  {formatDate(activity.createdAt)}
                 </span>
               </div>
             </div>
@@ -236,7 +253,7 @@ export default function ActivityPage() {
           </div>
 
           {showFilters && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               {/* Search */}
               <div>
                 <label className="block text-xs font-medium text-neutral-700 dark:text-dark-text-secondary mb-1">
@@ -268,6 +285,23 @@ export default function ActivityPage() {
                   <option value="expense">Expenses</option>
                   <option value="settlement">Settlements</option>
                   <option value="friend_request">Friend Requests</option>
+                </select>
+              </div>
+
+              {/* Expense Type Filter */}
+              <div>
+                <label className="block text-xs font-medium text-neutral-700 dark:text-dark-text-secondary mb-1">
+                  Expense Type
+                </label>
+                <select
+                  value={expenseTypeFilter}
+                  onChange={(e) => setExpenseTypeFilter(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-neutral-300 dark:border-dark-border rounded-md bg-white dark:bg-dark-bg-secondary text-neutral-900 dark:text-dark-text focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                >
+                  <option value="all">All Expense Types</option>
+                  <option value="group">Group Expenses</option>
+                  <option value="non-group">Non-Group Expenses</option>
+                  <option value="personal">Personal Expenses</option>
                 </select>
               </div>
 

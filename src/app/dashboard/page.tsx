@@ -8,6 +8,7 @@ import Card, { CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
 import { ArrowUpCircle, ArrowDownCircle, TrendingUp, Users, Receipt, AlertCircle, Clock, User, Users as UsersIcon } from "lucide-react";
 import Link from "next/link";
+import getOfflineStore from "@/lib/offline-store";
 
 interface BalanceData {
   total: number;
@@ -86,11 +87,8 @@ export default function DashboardPage() {
   const fetchDashboardData = async () => {
     setError(null);
     try {
-      // Fetch friends with balances
-      const friendsRes = await fetch("/api/friends");
-      if (friendsRes.ok) {
-        const friendsData = await friendsRes.json();
-        const rawFriends = friendsData.friends || [];
+      // Fetch friends with balances using offline store
+      const rawFriends = await offlineStore.getFriends();
 
         // Map API response structure to display structure
         // API returns: { id, friend: { id, name, email, profilePicture }, balance }
@@ -117,27 +115,21 @@ export default function DashboardPage() {
           youOwe,
           youAreOwed,
         });
-      } else if (friendsRes.status === 401) {
-        router.push("/auth/login");
-        return;
-      }
 
-      // Fetch groups
-      const groupsRes = await fetch("/api/groups");
-      if (groupsRes.ok) {
-        const groupsData = await groupsRes.json();
-        setGroups(groupsData.groups || []);
+      // Fetch groups using offline store
+      const groupsData = await offlineStore.getGroups();
+      setGroups(groupsData || []);
 
         // Calculate group balances by fetching expenses for each group
         const groupsWithBalances: GroupBalance[] = [];
 
         for (const group of groupsData.groups || []) {
           try {
-            // Fetch expenses for this group
-            const expensesRes = await fetch(`/api/expenses?groupId=${group._id}&limit=100`);
-            if (expensesRes.ok) {
-              const expensesData = await expensesRes.json();
-              const expenses = expensesData.expenses || [];
+            // Fetch expenses for this group using offline store
+            const expenses = await offlineStore.getExpenses({
+              groupId: group._id,
+              limit: 100
+            });
 
               // Calculate user's balance in this group
               // Positive balance means group owes user money
@@ -176,17 +168,14 @@ export default function DashboardPage() {
         setGroupBalances(groupsWithBalances);
       }
 
-      // Fetch this month's expenses
+      // Fetch this month's expenses using offline store
       const now = new Date();
       const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-      const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
 
-      const expensesRes = await fetch(
-        `/api/expenses?startDate=${startOfMonth.toISOString()}&endDate=${endOfMonth.toISOString()}&limit=1000`
-      );
-      if (expensesRes.ok) {
-        const expensesData = await expensesRes.json();
-        const expenses = expensesData.expenses || [];
+      const expenses = await offlineStore.getExpenses({
+        dateRange: { start: startOfMonth.toISOString(), end: now.toISOString() },
+        limit: 1000
+      });
         
         // Calculate total spending for this month
         const total = expenses.reduce((sum: number, expense: any) => {
@@ -200,7 +189,7 @@ export default function DashboardPage() {
         setMonthlySpending(total);
       }
 
-      // Fetch recent activities
+      // Fetch recent activities (keep using direct fetch for now as it's not in offline store)
       const activitiesRes = await fetch("/api/dashboard/activity");
       if (activitiesRes.ok) {
         const activitiesData = await activitiesRes.json();
@@ -467,14 +456,28 @@ export default function DashboardPage() {
                       <p className="text-sm text-neutral-900 dark:text-dark-text">
                         {activity.description}
                       </p>
-                      <p className="text-xs text-neutral-500 dark:text-dark-text-secondary mt-1">
-                        {new Date(activity.createdAt).toLocaleDateString('en-US', {
-                          month: 'short',
-                          day: 'numeric',
-                          hour: '2-digit',
-                          minute: '2-digit'
-                        })}
-                      </p>
+                      <div className="flex items-center gap-2 mt-1">
+                        {activity.expenseType && (
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                            activity.expenseType === 'group'
+                              ? 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200'
+                              : activity.expenseType === 'personal'
+                              ? 'bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200'
+                              : 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200'
+                          }`}>
+                            {activity.expenseType === 'group' ? '👥' : activity.expenseType === 'personal' ? '👤' : '🤝'}
+                            {activity.expenseType === 'group' ? 'Group' : activity.expenseType === 'personal' ? 'Personal' : 'Non-Group'}
+                          </span>
+                        )}
+                        <p className="text-xs text-neutral-500 dark:text-dark-text-secondary">
+                          {new Date(activity.createdAt).toLocaleDateString('en-US', {
+                            month: 'short',
+                            day: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit'
+                          })}
+                        </p>
+                      </div>
                     </div>
                     {activity.amount && (
                       <div className="flex-shrink-0 text-right">

@@ -11,6 +11,9 @@ export interface ISettlement {
   screenshot?: string;
   date: Date;
   groupId?: mongoose.Types.ObjectId;
+  version: number;
+  lastModified: string;
+  modifiedBy: mongoose.Types.ObjectId;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -61,6 +64,19 @@ const SettlementSchema = new Schema<ISettlement>(
       type: Schema.Types.ObjectId,
       ref: "Group",
       default: null,
+    },
+    version: {
+      type: Number,
+      default: 1,
+    },
+    lastModified: {
+      type: Date,
+      default: Date.now,
+    },
+    modifiedBy: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
     },
   },
   {

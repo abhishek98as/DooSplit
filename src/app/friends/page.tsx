@@ -13,6 +13,7 @@ import {
   Clock, Loader2,
 } from "lucide-react";
 import Modal from "@/components/ui/Modal";
+import getOfflineStore from "@/lib/offline-store";
 
 interface FriendItem {
   id: string;
@@ -62,6 +63,7 @@ export default function FriendsPage() {
   const [searchResults, setSearchResults] = useState<SearchUser[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(true);
+  const [balanceFilter, setBalanceFilter] = useState<'all' | 'outstanding' | 'owe' | 'owed'>('all');
   const [showAddModal, setShowAddModal] = useState(false);
   const [searching, setSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
@@ -100,11 +102,9 @@ export default function FriendsPage() {
 
   const fetchFriends = async () => {
     try {
-      const res = await fetch("/api/friends");
-      if (res.ok) {
-        const data = await res.json();
-        setFriends(data.friends || []);
-      }
+      const offlineStore = getOfflineStore();
+      const friends = await offlineStore.getFriends();
+      setFriends(friends || []);
     } catch (error) {
       console.error("Failed to fetch friends:", error);
     } finally {
@@ -135,6 +135,20 @@ export default function FriendsPage() {
       // silent
     }
   };
+
+  // Filter friends based on balance
+  const filteredFriends = friends.filter(friend => {
+    switch (balanceFilter) {
+      case 'outstanding':
+        return friend.balance !== 0;
+      case 'owe':
+        return friend.balance < 0;
+      case 'owed':
+        return friend.balance > 0;
+      default:
+        return true;
+    }
+  });
 
   const searchUsers = async () => {
     if (!searchQuery.trim()) {
@@ -435,7 +449,51 @@ export default function FriendsPage() {
         {/* Friends List */}
         <Card>
           <CardHeader>
-            <CardTitle>All Friends ({friends.length})</CardTitle>
+            <div className="flex items-center justify-between">
+              <CardTitle>All Friends ({filteredFriends.length})</CardTitle>
+              <div className="flex gap-1 bg-neutral-100 dark:bg-dark-bg-secondary rounded-lg p-1">
+                <button
+                  onClick={() => setBalanceFilter('all')}
+                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                    balanceFilter === 'all'
+                      ? 'bg-white dark:bg-dark-bg text-primary shadow-sm'
+                      : 'text-neutral-600 dark:text-dark-text-secondary hover:text-neutral-900 dark:hover:text-dark-text'
+                  }`}
+                >
+                  All
+                </button>
+                <button
+                  onClick={() => setBalanceFilter('outstanding')}
+                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                    balanceFilter === 'outstanding'
+                      ? 'bg-white dark:bg-dark-bg text-primary shadow-sm'
+                      : 'text-neutral-600 dark:text-dark-text-secondary hover:text-neutral-900 dark:hover:text-dark-text'
+                  }`}
+                >
+                  Outstanding
+                </button>
+                <button
+                  onClick={() => setBalanceFilter('owe')}
+                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                    balanceFilter === 'owe'
+                      ? 'bg-white dark:bg-dark-bg text-primary shadow-sm'
+                      : 'text-neutral-600 dark:text-dark-text-secondary hover:text-neutral-900 dark:hover:text-dark-text'
+                  }`}
+                >
+                  I Owe
+                </button>
+                <button
+                  onClick={() => setBalanceFilter('owed')}
+                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                    balanceFilter === 'owed'
+                      ? 'bg-white dark:bg-dark-bg text-primary shadow-sm'
+                      : 'text-neutral-600 dark:text-dark-text-secondary hover:text-neutral-900 dark:hover:text-dark-text'
+                  }`}
+                >
+                  Owed
+                </button>
+              </div>
+            </div>
           </CardHeader>
           <CardContent>
             {friends.length === 0 ? (
@@ -464,10 +522,11 @@ export default function FriendsPage() {
               </div>
             ) : (
               <div className="space-y-3">
-                {friends.map((item) => (
+                {filteredFriends.map((item) => (
                   <div
                     key={item.id}
-                    className="flex items-center justify-between py-2 border-b border-neutral-200 dark:border-dark-border last:border-0"
+                    onClick={() => router.push(`/friends/${item.friend.id}`)}
+                    className="flex items-center justify-between py-3 px-2 rounded-lg border border-neutral-200 dark:border-dark-border hover:bg-neutral-50 dark:hover:bg-dark-bg-secondary cursor-pointer transition-colors"
                   >
                     <div className="flex items-center gap-3">
                       <div className={`h-10 w-10 rounded-full flex items-center justify-center ${
@@ -481,7 +540,7 @@ export default function FriendsPage() {
                           {item.friend.name.charAt(0).toUpperCase()}
                         </span>
                       </div>
-                      <div>
+                      <div className="flex-1">
                         <p className="font-medium text-neutral-900 dark:text-dark-text flex items-center gap-2">
                           {item.friend.name}
                           {item.friend.isDummy && (
@@ -495,34 +554,47 @@ export default function FriendsPage() {
                         )}
                       </div>
                     </div>
-                    <div className="flex items-center gap-3">
-                      <div
-                        className={`text-lg font-semibold ${
-                          item.balance === 0
-                            ? "text-neutral-500"
-                            : item.balance > 0
-                            ? "text-success"
-                            : "text-coral"
-                        }`}
-                      >
+                    <div className="text-right">
+                      <div className={`font-semibold ${
+                        item.balance === 0
+                          ? "text-neutral-500"
+                          : item.balance > 0
+                          ? "text-green-600 dark:text-green-400"
+                          : "text-red-600 dark:text-red-400"
+                      }`}>
                         {item.balance === 0
-                          ? "Settled"
-                          : (item.balance > 0 ? "+" : "") +
-                            formatCurrency(item.balance)}
+                          ? "Settled up"
+                          : `₹${Math.abs(item.balance).toLocaleString("en-IN")}`}
                       </div>
-                      <button
-                        onClick={() => removeFriend(item.id)}
-                        disabled={removingId === item.id}
-                        className="p-1.5 rounded-md text-neutral-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
-                        title="Remove friend"
-                      >
-                        {removingId === item.id ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <Trash2 className="h-4 w-4" />
-                        )}
-                      </button>
+                      <div className={`text-xs ${
+                        item.balance === 0
+                          ? "text-neutral-400"
+                          : item.balance > 0
+                          ? "text-green-600 dark:text-green-400"
+                          : "text-red-600 dark:text-red-400"
+                      }`}>
+                        {item.balance === 0
+                          ? "No balance"
+                          : item.balance > 0
+                          ? "Owes you"
+                          : "You owe"}
+                      </div>
                     </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeFriend(item.id);
+                      }}
+                      disabled={removingId === item.id}
+                      className="p-1.5 rounded-md text-neutral-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-50/10 transition-colors ml-2"
+                      title="Remove friend"
+                    >
+                      {removingId === item.id ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Trash2 className="h-4 w-4" />
+                      )}
+                    </button>
                   </div>
                 ))}
               </div>

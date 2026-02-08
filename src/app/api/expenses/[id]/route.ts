@@ -55,14 +55,29 @@ export async function GET(
       expenseId: expense._id,
     }).populate("userId", "name email profilePicture");
 
+    // Add version vector and ETag
+    const versionVector = {
+      version: expense.version || 1,
+      lastModified: expense.lastModified || expense.updatedAt,
+      modifiedBy: expense.modifiedBy || expense.createdBy,
+    };
+    const etag = `"${expense._id}-${expense.version || 1}"`;
+
     return NextResponse.json(
       {
         expense: {
           ...expense.toJSON(),
           participants,
+          _version: versionVector,
         },
       },
-      { status: 200 }
+      {
+        status: 200,
+        headers: {
+          'ETag': etag,
+          'X-Version-Vector': JSON.stringify(versionVector),
+        }
+      }
     );
   } catch (error: any) {
     console.error("Get expense error:", error);
@@ -99,6 +114,45 @@ export async function PUT(
       paidBy,
       participants,
     } = body;
+
+    await dbConnect();
+
+    const expense = await Expense.findOne({
+      _id: id,
+      isDeleted: false,
+    });
+
+    if (!expense) {
+      return NextResponse.json({ error: "Expense not found" }, { status: 404 });
+    }
+
+    const userId = new mongoose.Types.ObjectId(session.user.id);
+
+    // Check if user is a participant (only creator can edit)
+    const isParticipant = await ExpenseParticipant.findOne({
+      expenseId: expense._id,
+      userId: userId,
+    });
+
+    if (!isParticipant) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    // Optimistic concurrency control
+    const ifMatch = request.headers.get('If-Match');
+    if (ifMatch) {
+      const expectedEtag = `"${expense._id}-${expense.version || 1}"`;
+      if (ifMatch !== expectedEtag) {
+        return NextResponse.json(
+          {
+            error: "Conflict detected",
+            message: "This expense has been modified by another user. Please refresh and try again.",
+            currentVersion: expense.version || 1
+          },
+          { status: 409 }
+        );
+      }
+    }
 
     // Validate images array
     if (images !== undefined && Array.isArray(images)) {
@@ -162,6 +216,11 @@ export async function PUT(
     if (groupId !== undefined) expense.groupId = groupId;
     if (images !== undefined) expense.images = images;
     if (notes !== undefined) expense.notes = notes;
+
+    // Update version tracking
+    expense.version = (expense.version || 1) + 1;
+    expense.lastModified = new Date();
+    expense.modifiedBy = userId;
 
     // Add to edit history
     expense.editHistory.push(editEntry);
@@ -270,15 +329,30 @@ export async function PUT(
       console.error("Failed to send notifications:", notifError);
     }
 
+    // Create version vector and ETag
+    const versionVector = {
+      version: expense.version,
+      lastModified: expense.lastModified,
+      modifiedBy: expense.modifiedBy,
+    };
+    const etag = `"${expense._id}-${expense.version}"`;
+
     return NextResponse.json(
       {
         message: "Expense updated successfully",
         expense: {
           ...updatedExpense!.toJSON(),
           participants: expenseParticipants,
+          _version: versionVector,
         },
       },
-      { status: 200 }
+      {
+        status: 200,
+        headers: {
+          'ETag': etag,
+          'X-Version-Vector': JSON.stringify(versionVector),
+        }
+      }
     );
   } catch (error: any) {
     console.error("Update expense error:", error);
