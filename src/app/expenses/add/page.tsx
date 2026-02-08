@@ -17,7 +17,8 @@ import {
   Tag,
   StickyNote,
   X,
-  Check
+  Check,
+  Plus
 } from "lucide-react";
 import { ImageType } from "@/lib/imagekit-service";
 import getOfflineStore from "@/lib/offline-store";
@@ -77,12 +78,24 @@ export default function AddExpensePage() {
   // Modal states
   const [showFriendModal, setShowFriendModal] = useState(false);
   const [showSplitModal, setShowSplitModal] = useState(false);
+  const [showGroupModal, setShowGroupModal] = useState(false);
+  const [showCreateGroupModal, setShowCreateGroupModal] = useState(false);
   
   // Data
   const [friends, setFriends] = useState<Friend[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [creatingGroup, setCreatingGroup] = useState(false);
+
+  // Group creation form
+  const [groupFormData, setGroupFormData] = useState({
+    name: "",
+    description: "",
+    type: "trip",
+    currency: "INR",
+    memberIds: [] as string[],
+  });
 
   const categories = [
     { value: "food", label: "Food", icon: "🍔" },
@@ -264,11 +277,71 @@ export default function AddExpensePage() {
   };
 
   const toggleFriend = (friend: Friend) => {
-    setSelectedFriends(prev => 
+    setSelectedFriends(prev =>
       prev.find(f => f.id === friend.id)
         ? prev.filter(f => f.id !== friend.id)
         : [...prev, friend]
     );
+  };
+
+  const createGroup = async () => {
+    if (!groupFormData.name.trim()) {
+      alert("Please enter a group name");
+      return;
+    }
+
+    if (groupFormData.memberIds.length === 0) {
+      alert("Please select at least one member for the group");
+      return;
+    }
+
+    setCreatingGroup(true);
+    try {
+      const res = await fetch("/api/groups", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(groupFormData),
+      });
+
+      if (res.ok) {
+        const newGroup = await res.json();
+        // Refresh groups
+        await fetchGroups();
+        // Set the newly created group as selected
+        setSelectedGroup({
+          _id: newGroup.group._id,
+          name: newGroup.group.name,
+          memberCount: newGroup.group.members.length,
+        });
+        // Clear form
+        setGroupFormData({
+          name: "",
+          description: "",
+          type: "trip",
+          currency: "INR",
+          memberIds: [],
+        });
+        setShowCreateGroupModal(false);
+        setShowFriendModal(false);
+      } else {
+        const error = await res.json();
+        alert(`Failed to create group: ${error.error || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error("Failed to create group:", error);
+      alert("Failed to create group. Please try again.");
+    } finally {
+      setCreatingGroup(false);
+    }
+  };
+
+  const toggleGroupMemberSelection = (friendId: string) => {
+    setGroupFormData((prev) => ({
+      ...prev,
+      memberIds: prev.memberIds.includes(friendId)
+        ? prev.memberIds.filter((id) => id !== friendId)
+        : [...prev.memberIds, friendId],
+    }));
   };
 
   return (
@@ -353,6 +426,58 @@ export default function AddExpensePage() {
                 onChange={(e) => setDate(e.target.value)}
                 icon={<Calendar className="h-5 w-5" />}
               />
+            </div>
+
+            {/* Group Selection */}
+            <div>
+              <label className="block text-sm font-medium text-neutral-700 dark:text-dark-text mb-2">
+                Group (Optional)
+              </label>
+              <div className="flex gap-2">
+                <select
+                  value={selectedGroup?._id || ""}
+                  onChange={(e) => {
+                    const groupId = e.target.value;
+                    if (groupId) {
+                      const group = groups.find(g => g._id === groupId);
+                      setSelectedGroup(group || null);
+                    } else {
+                      setSelectedGroup(null);
+                    }
+                  }}
+                  className="flex-1 px-4 py-3 border-2 border-neutral-200 dark:border-dark-border rounded-md focus:outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 bg-white dark:bg-dark-bg-secondary text-neutral-900 dark:text-dark-text"
+                >
+                  <option value="">No Group (Non-Group Expense)</option>
+                  {groups.map((group) => (
+                    <option key={group._id} value={group._id}>
+                      {group.name} ({group.memberCount} members)
+                    </option>
+                  ))}
+                </select>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setShowGroupModal(true)}
+                  className="px-4"
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
+              </div>
+              {selectedGroup && (
+                <div className="mt-2 flex items-center gap-2">
+                  <div className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">
+                    <span className="mr-1">👥</span>
+                    Group: {selectedGroup.name}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedGroup(null)}
+                    className="text-xs text-neutral-500 hover:text-neutral-700"
+                  >
+                    Clear
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Split with */}
@@ -524,10 +649,233 @@ export default function AddExpensePage() {
               })
             )}
           </div>
+
+          <div className="border-t border-neutral-200 dark:border-dark-border pt-4">
+            <Button
+              onClick={() => {
+                setShowFriendModal(false);
+                setShowCreateGroupModal(true);
+              }}
+              variant="outline"
+              className="w-full"
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              Create New Group
+            </Button>
+          </div>
+
           <div className="mt-4 flex justify-end">
             <Button onClick={() => setShowFriendModal(false)}>
               Done
             </Button>
+          </div>
+        </Modal>
+      )}
+
+      {/* Group Selection Modal */}
+      {showGroupModal && (
+        <Modal
+          isOpen={showGroupModal}
+          onClose={() => setShowGroupModal(false)}
+          title="Select Group"
+        >
+          <div className="space-y-4">
+            <div className="space-y-2 max-h-96 overflow-y-auto">
+              {groups.length === 0 ? (
+                <p className="text-center py-8 text-neutral-500">
+                  No groups yet. Create your first group!
+                </p>
+              ) : (
+                groups.map(group => {
+                  const isSelected = selectedGroup?._id === group._id;
+                  return (
+                    <button
+                      key={group._id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedGroup(group);
+                        setShowGroupModal(false);
+                      }}
+                      className={`w-full flex items-center justify-between p-3 rounded-lg border-2 transition-all ${
+                        isSelected
+                          ? "border-primary bg-primary/10"
+                          : "border-neutral-200 dark:border-dark-border hover:border-primary"
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="h-10 w-10 bg-purple-100 dark:bg-purple-900 rounded-lg flex items-center justify-center">
+                          <Users className="h-5 w-5 text-purple-600 dark:text-purple-400" />
+                        </div>
+                        <div className="text-left">
+                          <p className="text-sm font-medium text-neutral-900 dark:text-dark-text">
+                            {group.name}
+                          </p>
+                          <p className="text-xs text-neutral-500">
+                            {group.memberCount} member{group.memberCount !== 1 ? "s" : ""}
+                          </p>
+                        </div>
+                      </div>
+                      {isSelected && (
+                        <Check className="h-5 w-5 text-primary" />
+                      )}
+                    </button>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="border-t border-neutral-200 dark:border-dark-border pt-4">
+              <Button
+                onClick={() => {
+                  setShowGroupModal(false);
+                  setShowCreateGroupModal(true);
+                }}
+                variant="outline"
+                className="w-full"
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                Create New Group
+              </Button>
+            </div>
+
+            <div className="flex gap-3">
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setSelectedGroup(null);
+                  setShowGroupModal(false);
+                }}
+                className="flex-1"
+              >
+                No Group
+              </Button>
+              <Button onClick={() => setShowGroupModal(false)} className="flex-1">
+                Done
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Create Group Modal */}
+      {showCreateGroupModal && (
+        <Modal
+          isOpen={showCreateGroupModal}
+          onClose={() => {
+            setShowCreateGroupModal(false);
+            setGroupFormData({
+              name: "",
+              description: "",
+              type: "trip",
+              currency: "INR",
+              memberIds: [],
+            });
+          }}
+          title="Create New Group"
+        >
+          <div className="space-y-4">
+            <Input
+              label="Group Name"
+              type="text"
+              placeholder="e.g., Goa Trip"
+              value={groupFormData.name}
+              onChange={(e) =>
+                setGroupFormData((prev) => ({ ...prev, name: e.target.value }))
+              }
+            />
+
+            <div>
+              <label className="block text-sm font-medium text-neutral-700 dark:text-dark-text mb-2">
+                Description
+              </label>
+              <textarea
+                value={groupFormData.description}
+                onChange={(e) =>
+                  setGroupFormData((prev) => ({ ...prev, description: e.target.value }))
+                }
+                placeholder="What's this group for?"
+                className="w-full px-4 py-3 border-2 border-neutral-200 dark:border-dark-border rounded-md focus:outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 bg-white dark:bg-dark-bg-secondary text-neutral-900 dark:text-dark-text"
+                rows={3}
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-neutral-700 dark:text-dark-text mb-2">
+                Type
+              </label>
+              <select
+                value={groupFormData.type}
+                onChange={(e) =>
+                  setGroupFormData((prev) => ({ ...prev, type: e.target.value }))
+                }
+                className="w-full px-4 py-3 border-2 border-neutral-200 dark:border-dark-border rounded-md focus:outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 bg-white dark:bg-dark-bg-secondary text-neutral-900 dark:text-dark-text"
+              >
+                <option value="trip">Trip</option>
+                <option value="home">Home</option>
+                <option value="couple">Couple</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-neutral-700 dark:text-dark-text mb-2">
+                Add Members
+              </label>
+              <div className="max-h-48 overflow-y-auto space-y-2 border border-neutral-200 dark:border-dark-border rounded-lg p-2">
+                {friends.length === 0 ? (
+                  <p className="text-sm text-neutral-500 text-center py-4">
+                    No friends to add
+                  </p>
+                ) : (
+                  friends.map((friend) => (
+                    <label
+                      key={friend.id}
+                      className="flex items-center gap-3 p-2 hover:bg-neutral-50 dark:hover:bg-dark-bg-secondary rounded cursor-pointer"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={groupFormData.memberIds.includes(friend.friend.id)}
+                        onChange={() => toggleGroupMemberSelection(friend.friend.id)}
+                        className="rounded border-neutral-300"
+                      />
+                      <div className="flex-1">
+                        <p className="text-sm font-medium">{friend.friend.name}</p>
+                        <p className="text-xs text-neutral-500">{friend.friend.email}</p>
+                      </div>
+                      {friend.balance !== 0 && (
+                        <div className="text-right">
+                          <span className={`text-xs font-medium ${
+                            friend.balance > 0
+                              ? 'text-green-600 dark:text-green-400'
+                              : 'text-red-600 dark:text-red-400'
+                          }`}>
+                            {friend.balance > 0 ? '+' : ''}₹{Math.abs(friend.balance)}
+                          </span>
+                        </div>
+                      )}
+                    </label>
+                  ))
+                )}
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <Button
+                variant="secondary"
+                onClick={() => setShowCreateGroupModal(false)}
+                className="flex-1"
+                disabled={creatingGroup}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={createGroup}
+                className="flex-1"
+                disabled={creatingGroup}
+              >
+                {creatingGroup ? "Creating..." : "Create Group"}
+              </Button>
+            </div>
           </div>
         </Modal>
       )}
