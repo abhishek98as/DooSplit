@@ -20,9 +20,27 @@ if (!global.mongoose) {
   global.mongoose = cached;
 }
 
+/**
+ * Check if the existing connection is still healthy
+ */
+function isConnectionHealthy(): boolean {
+  if (!cached.conn) return false;
+  // readyState: 0 = disconnected, 1 = connected, 2 = connecting, 3 = disconnecting
+  const state = cached.conn.connection.readyState;
+  return state === 1; // Only consider "connected" as healthy
+}
+
 async function dbConnect(): Promise<typeof mongoose> {
-  if (cached.conn) {
+  // If we have a cached connection and it's still healthy, reuse it
+  if (cached.conn && isConnectionHealthy()) {
     return cached.conn;
+  }
+
+  // If the connection exists but is unhealthy, reset it
+  if (cached.conn && !isConnectionHealthy()) {
+    console.log("⚠️ MongoDB connection unhealthy (state:", cached.conn.connection.readyState, "), reconnecting...");
+    cached.conn = null;
+    cached.promise = null;
   }
 
   // Read MONGODB_URI at runtime, not at module import time
@@ -42,11 +60,27 @@ async function dbConnect(): Promise<typeof mongoose> {
       socketTimeoutMS: 45000,
       connectTimeoutMS: 15000,
       family: 4, // Force IPv4 - helps with Atlas connectivity
+      retryWrites: true,
+      retryReads: true,
     };
 
     console.log("🔄 Connecting to MongoDB...");
     cached.promise = mongoose.connect(MONGODB_URI, opts).then((mongoose) => {
-      console.log("✅ MongoDB connected successfully");
+      console.log("✅ MongoDB connected successfully to:", mongoose.connection.host);
+
+      // Listen for connection errors after initial connect
+      mongoose.connection.on("error", (err) => {
+        console.error("❌ MongoDB connection error:", err.message);
+        cached.conn = null;
+        cached.promise = null;
+      });
+
+      mongoose.connection.on("disconnected", () => {
+        console.warn("⚠️ MongoDB disconnected, will reconnect on next request");
+        cached.conn = null;
+        cached.promise = null;
+      });
+
       return mongoose;
     });
   }
@@ -55,6 +89,7 @@ async function dbConnect(): Promise<typeof mongoose> {
     cached.conn = await cached.promise;
   } catch (e: any) {
     cached.promise = null;
+    cached.conn = null;
     console.error("❌ MongoDB connection failed:", e.message);
     throw e;
   }

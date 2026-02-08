@@ -16,7 +16,7 @@ interface Notification {
 }
 
 export default function NotificationDropdown() {
-  const { data: session } = useSession();
+  const { data: session, status } = useSession();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [isOpen, setIsOpen] = useState(false);
@@ -24,10 +24,10 @@ export default function NotificationDropdown() {
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (session) {
+    if (status === "authenticated") {
       fetchNotifications();
     }
-  }, [session]);
+  }, [status]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {

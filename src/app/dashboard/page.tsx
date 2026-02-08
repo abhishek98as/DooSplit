@@ -2,10 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
+import { useRouter } from "next/navigation";
 import AppShell from "@/components/layout/AppShell";
 import Card, { CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
-import { ArrowUpCircle, ArrowDownCircle, TrendingUp, Users, Receipt } from "lucide-react";
+import { ArrowUpCircle, ArrowDownCircle, TrendingUp, Users, Receipt, AlertCircle } from "lucide-react";
 import Link from "next/link";
 
 interface BalanceData {
@@ -14,7 +15,7 @@ interface BalanceData {
   youAreOwed: number;
 }
 
-interface Friend {
+interface FriendDisplay {
   _id: string;
   name: string;
   email: string;
@@ -29,45 +30,64 @@ interface Group {
 }
 
 export default function DashboardPage() {
-  const { data: session } = useSession();
+  const { data: session, status } = useSession();
+  const router = useRouter();
   const [balance, setBalance] = useState<BalanceData>({
     total: 0,
     youOwe: 0,
     youAreOwed: 0,
   });
-  const [friends, setFriends] = useState<Friend[]>([]);
+  const [friends, setFriends] = useState<FriendDisplay[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
   const [monthlySpending, setMonthlySpending] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (session) {
+    if (status === "unauthenticated") {
+      router.push("/auth/login");
+    } else if (status === "authenticated") {
       fetchDashboardData();
     }
-  }, [session]);
+  }, [status]);
 
   const fetchDashboardData = async () => {
+    setError(null);
     try {
       // Fetch friends with balances
       const friendsRes = await fetch("/api/friends");
       if (friendsRes.ok) {
         const friendsData = await friendsRes.json();
-        setFriends(friendsData.friends || []);
+        const rawFriends = friendsData.friends || [];
+
+        // Map API response structure to display structure
+        // API returns: { id, friend: { id, name, email, profilePicture }, balance }
+        const mappedFriends: FriendDisplay[] = rawFriends.map((item: any) => ({
+          _id: item.friend?.id || item.id || item._id,
+          name: item.friend?.name || item.name || "Unknown",
+          email: item.friend?.email || item.email || "",
+          profilePicture: item.friend?.profilePicture || item.profilePicture,
+          balance: item.balance || 0,
+        }));
+
+        setFriends(mappedFriends);
 
         // Calculate total balance from friends
-        const balances = friendsData.friends || [];
-        const youOwe = balances
-          .filter((f: Friend) => f.balance < 0)
-          .reduce((sum: number, f: Friend) => sum + Math.abs(f.balance), 0);
-        const youAreOwed = balances
-          .filter((f: Friend) => f.balance > 0)
-          .reduce((sum: number, f: Friend) => sum + f.balance, 0);
+        const youOwe = mappedFriends
+          .filter((f: FriendDisplay) => f.balance < 0)
+          .reduce((sum: number, f: FriendDisplay) => sum + Math.abs(f.balance), 0);
+        const youAreOwed = mappedFriends
+          .filter((f: FriendDisplay) => f.balance > 0)
+          .reduce((sum: number, f: FriendDisplay) => sum + f.balance, 0);
 
         setBalance({
           total: youAreOwed - youOwe,
           youOwe,
           youAreOwed,
         });
+      } else if (friendsRes.status === 401) {
+        router.push("/auth/login");
+        return;
       }
 
       // Fetch groups
@@ -92,16 +112,17 @@ export default function DashboardPage() {
         // Calculate total spending for this month
         const total = expenses.reduce((sum: number, expense: any) => {
           // Find user's share in this expense
-          const userParticipant = expense.participants.find(
-            (p: any) => p.userId._id === session?.user?.id || p.userId === session?.user?.id
+          const userParticipant = expense.participants?.find(
+            (p: any) => p.userId?._id === session?.user?.id || p.userId === session?.user?.id
           );
           return sum + (userParticipant?.owedAmount || 0);
         }, 0);
         
         setMonthlySpending(total);
       }
-    } catch (error) {
-      console.error("Failed to fetch dashboard data:", error);
+    } catch (err: any) {
+      console.error("Failed to fetch dashboard data:", err);
+      setError("Failed to load dashboard data. Please try refreshing the page.");
     } finally {
       setLoading(false);
     }
@@ -114,7 +135,7 @@ export default function DashboardPage() {
     }).format(amount);
   };
 
-  if (loading) {
+  if (status === "loading" || loading) {
     return (
       <AppShell>
         <div className="flex items-center justify-center min-h-[400px]">
@@ -127,6 +148,17 @@ export default function DashboardPage() {
   return (
     <AppShell>
       <div className="p-4 md:p-8 space-y-6">
+        {/* Error Banner */}
+        {error && (
+          <div className="bg-error/10 border border-error/20 text-error px-4 py-3 rounded-lg flex items-center gap-3">
+            <AlertCircle className="h-5 w-5 flex-shrink-0" />
+            <p className="text-sm">{error}</p>
+            <Button variant="secondary" className="ml-auto !px-3 !py-1 text-xs" onClick={() => { setLoading(true); fetchDashboardData(); }}>
+              Retry
+            </Button>
+          </div>
+        )}
+
         {/* Header */}
         <div>
           <h1 className="text-h1 font-bold text-neutral-900 dark:text-dark-text">

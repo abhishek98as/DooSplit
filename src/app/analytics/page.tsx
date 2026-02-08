@@ -28,16 +28,18 @@ interface AnalyticsData {
 }
 
 export default function AnalyticsPage() {
-  const { data: session } = useSession();
+  const { data: session, status } = useSession();
   const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [timeframe, setTimeframe] = useState("month");
 
   useEffect(() => {
-    if (session) {
+    if (status === "unauthenticated") {
+      window.location.href = "/auth/login";
+    } else if (status === "authenticated") {
       fetchAnalytics();
     }
-  }, [session, timeframe]);
+  }, [status, timeframe]);
 
   const fetchAnalytics = async () => {
     try {
@@ -130,7 +132,7 @@ export default function AnalyticsPage() {
     }
   };
 
-  if (loading) {
+  if (status === "loading" || loading) {
     return (
       <AppShell>
         <div className="p-4 md:p-8">

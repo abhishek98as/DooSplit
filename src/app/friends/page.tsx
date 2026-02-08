@@ -54,7 +54,7 @@ interface InvitationItem {
 }
 
 export default function FriendsPage() {
-  const { data: session } = useSession();
+  const { data: session, status } = useSession();
   const router = useRouter();
   const [friends, setFriends] = useState<FriendItem[]>([]);
   const [requests, setRequests] = useState<FriendRequest[]>([]);
@@ -89,12 +89,14 @@ export default function FriendsPage() {
   const [modalTab, setModalTab] = useState<"search" | "dummy" | "invite">("search");
 
   useEffect(() => {
-    if (session) {
+    if (status === "unauthenticated") {
+      router.push("/auth/login");
+    } else if (status === "authenticated") {
       fetchFriends();
       fetchRequests();
       fetchInvitations();
     }
-  }, [session]);
+  }, [status]);
 
   const fetchFriends = async () => {
     try {
@@ -311,7 +313,7 @@ export default function FriendsPage() {
     (inv) => inv.status === "pending" && new Date(inv.expiresAt) > new Date()
   );
 
-  if (loading) {
+  if (status === "loading" || loading) {
     return (
       <AppShell>
         <div className="flex items-center justify-center min-h-[400px]">

@@ -38,9 +38,11 @@ interface Expense {
     _id: string;
     name: string;
   };
-  paidBy: {
+  createdBy: {
     _id: string;
     name: string;
+    email?: string;
+    profilePicture?: string;
   };
   participants: Array<{
     userId: {
@@ -231,11 +233,11 @@ export default function ExpensesPage() {
   };
 
   const getUserShareInfo = (expense: Expense) => {
-    const userParticipant = expense.participants.find(
-      (p) => p.userId._id === session?.user?.id
+    const userParticipant = expense.participants?.find(
+      (p) => p.userId?._id === session?.user?.id
     );
     
-    const isPayer = expense.paidBy._id === session?.user?.id;
+    const isPayer = expense.createdBy?._id === session?.user?.id;
     const totalPaid = userParticipant?.paidAmount || 0;
     const totalOwed = userParticipant?.owedAmount || 0;
     const balance = totalPaid - totalOwed;
@@ -253,8 +255,8 @@ export default function ExpensesPage() {
 
   const filteredExpenses = expenses.filter((expense) => {
     const matchesSearch = 
-      expense.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      expense.paidBy.name.toLowerCase().includes(searchQuery.toLowerCase());
+      expense.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (expense.createdBy?.name || "").toLowerCase().includes(searchQuery.toLowerCase());
     return matchesSearch;
   });
 
@@ -447,7 +449,7 @@ export default function ExpensesPage() {
                             {expense.description}
                           </h3>
                           <div className="flex flex-wrap items-center gap-2 mt-1 text-sm text-gray-600 dark:text-gray-400">
-                            <span>{expense.paidBy.name} paid</span>
+                            <span>{expense.createdBy?.name || "Unknown"} paid</span>
                             <span>•</span>
                             <span>{formatDate(expense.date)}</span>
                             {expense.groupId && (

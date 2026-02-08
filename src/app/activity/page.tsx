@@ -14,15 +14,17 @@ interface Activity {
 }
 
 export default function ActivityPage() {
-  const { data: session } = useSession();
+  const { data: session, status } = useSession();
   const [activities, setActivities] = useState<Activity[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (session) {
+    if (status === "unauthenticated") {
+      window.location.href = "/auth/login";
+    } else if (status === "authenticated") {
       fetchActivities();
     }
-  }, [session]);
+  }, [status]);
 
   const fetchActivities = async () => {
     try {
@@ -153,7 +155,7 @@ export default function ActivityPage() {
     }
   };
 
-  if (loading) {
+  if (status === "loading" || loading) {
     return (
       <AppShell>
         <div className="flex items-center justify-center min-h-[400px]">

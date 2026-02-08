@@ -28,7 +28,7 @@ interface Settlement {
   date: string;
 }
 
-interface Friend {
+interface FriendDisplay {
   _id: string;
   name: string;
   email: string;
@@ -36,9 +36,9 @@ interface Friend {
 }
 
 export default function SettlementsPage() {
-  const { data: session } = useSession();
+  const { data: session, status } = useSession();
   const [settlements, setSettlements] = useState<Settlement[]>([]);
-  const [friends, setFriends] = useState<Friend[]>([]);
+  const [friends, setFriends] = useState<FriendDisplay[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [selectedFriend, setSelectedFriend] = useState<string>("");
@@ -48,11 +48,13 @@ export default function SettlementsPage() {
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    if (session) {
+    if (status === "unauthenticated") {
+      window.location.href = "/auth/login";
+    } else if (status === "authenticated") {
       fetchSettlements();
       fetchFriends();
     }
-  }, [session]);
+  }, [status]);
 
   const fetchSettlements = async () => {
     try {
@@ -73,7 +75,15 @@ export default function SettlementsPage() {
       const res = await fetch("/api/friends");
       if (res.ok) {
         const data = await res.json();
-        setFriends(data.friends || []);
+        const rawFriends = data.friends || [];
+        // Map API response structure: { id, friend: { id, name, email }, balance }
+        const mappedFriends: FriendDisplay[] = rawFriends.map((item: any) => ({
+          _id: item.friend?.id || item.id || item._id,
+          name: item.friend?.name || item.name || "Unknown",
+          email: item.friend?.email || item.email || "",
+          balance: item.balance || 0,
+        }));
+        setFriends(mappedFriends);
       }
     } catch (error) {
       console.error("Failed to fetch friends:", error);
@@ -132,7 +142,7 @@ export default function SettlementsPage() {
     }).format(date);
   };
 
-  if (loading) {
+  if (status === "loading" || loading) {
     return (
       <AppShell>
         <div className="flex items-center justify-center min-h-[400px]">

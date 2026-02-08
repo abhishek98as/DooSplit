@@ -29,7 +29,7 @@ interface Friend {
 }
 
 export default function GroupsPage() {
-  const { data: session } = useSession();
+  const { data: session, status } = useSession();
   const router = useRouter();
   const [groups, setGroups] = useState<Group[]>([]);
   const [friends, setFriends] = useState<Friend[]>([]);
@@ -46,11 +46,13 @@ export default function GroupsPage() {
   });
 
   useEffect(() => {
-    if (session) {
+    if (status === "unauthenticated") {
+      router.push("/auth/login");
+    } else if (status === "authenticated") {
       fetchGroups();
       fetchFriends();
     }
-  }, [session]);
+  }, [status]);
 
   const fetchGroups = async () => {
     try {
@@ -71,7 +73,14 @@ export default function GroupsPage() {
       const res = await fetch("/api/friends");
       if (res.ok) {
         const data = await res.json();
-        setFriends(data.friends || []);
+        const rawFriends = data.friends || [];
+        // Map API response: { id, friend: { id, name, email }, balance } -> flat structure
+        const mappedFriends = rawFriends.map((item: any) => ({
+          _id: item.friend?.id || item.id || item._id,
+          name: item.friend?.name || item.name || "Unknown",
+          email: item.friend?.email || item.email || "",
+        }));
+        setFriends(mappedFriends);
       }
     } catch (error) {
       console.error("Failed to fetch friends:", error);
@@ -116,7 +125,7 @@ export default function GroupsPage() {
     }));
   };
 
-  if (loading) {
+  if (status === "loading" || loading) {
     return (
       <AppShell>
         <div className="flex items-center justify-center min-h-[400px]">
