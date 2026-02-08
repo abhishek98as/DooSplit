@@ -168,14 +168,19 @@ export default function DashboardPage() {
         setGroupBalances(groupsWithBalances);
       }
 
-      // Fetch this month's expenses using offline store
+      // Fetch this month's expenses (using direct API call since dateRange isn't supported in offline store)
       const now = new Date();
       const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
 
-      const expenses = await offlineStore.getExpenses({
-        dateRange: { start: startOfMonth.toISOString(), end: now.toISOString() },
-        limit: 1000
-      });
+      const monthlyExpensesRes = await fetch(
+        `/api/expenses?startDate=${startOfMonth.toISOString()}&endDate=${endOfMonth.toISOString()}&limit=1000`
+      );
+      let expenses = [];
+      if (monthlyExpensesRes.ok) {
+        const monthlyExpensesData = await monthlyExpensesRes.json();
+        expenses = monthlyExpensesData.expenses || [];
+      }
         
         // Calculate total spending for this month
         const total = expenses.reduce((sum: number, expense: any) => {

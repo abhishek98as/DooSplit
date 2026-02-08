@@ -306,13 +306,6 @@ export default function GroupsPage() {
                         </div>
                       )}
                     </label>
-                      <input
-                        type="checkbox"
-                        checked={formData.memberIds.includes(friend._id)}
-                        onChange={() => toggleMemberSelection(friend._id)}
-                        className="rounded border-neutral-300"
-                      />
-                    </label>
                   ))
                 )}
               </div>
