@@ -103,8 +103,9 @@ export default function EditExpensePage() {
       const response = await fetch(`/api/expenses/${expenseId}`);
       if (!response.ok) throw new Error("Failed to fetch expense");
       
-      const data = await response.json();
-      
+      const result = await response.json();
+      const data = result.expense; // API returns { expense: { ... } }
+
       // Populate form fields
       setAmount(data.amount.toString());
       setDescription(data.description);
@@ -113,8 +114,12 @@ export default function EditExpensePage() {
       setNotes(data.notes || "");
       setImages(data.images || []);
       setCurrency(data.currency || "INR");
-      setSplitMethod(data.splitMethod || "equally");
-      setPaidBy(data.paidBy._id);
+      // splitMethod is not stored in the database, default to equally for editing
+      setSplitMethod("equally");
+
+      // Determine who paid from participants
+      const payer = data.participants?.find((p: any) => p.paidAmount > 0);
+      setPaidBy(payer?.userId?._id || data.createdBy._id);
 
       // Set selected group if exists
       if (data.groupId) {
@@ -127,15 +132,32 @@ export default function EditExpensePage() {
 
       // Pre-populate participants
       if (data.participants) {
-        const participantList = data.participants
+        // Map all participants including the current user
+        const participantList = data.participants.map((p: any) => ({
+          userId: p.userId._id,
+          name: p.userId.name,
+          owedAmount: p.owedAmount,
+          paidAmount: p.paidAmount,
+          isSettled: p.isSettled
+        }));
+        setParticipants(participantList);
+
+        // Set selected friends (exclude current user)
+        const selectedFriendsList = data.participants
           .filter((p: any) => p.userId._id !== session?.user?.id)
           .map((p: any) => ({
-            userId: p.userId._id,
-            name: p.userId.name,
-            owedAmount: p.owedAmount,
-            paidAmount: p.paidAmount
+            id: p.userId._id,
+            friend: {
+              id: p.userId._id,
+              name: p.userId.name,
+              email: p.userId.email || '',
+              profilePicture: p.userId.profilePicture,
+              isDummy: false
+            },
+            balance: 0, // We'll calculate this later if needed
+            friendshipDate: ''
           }));
-        setParticipants(data.participants);
+        setSelectedFriends(selectedFriendsList);
       }
     } catch (error) {
       console.error("Error fetching expense:", error);
