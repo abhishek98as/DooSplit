@@ -40,7 +40,7 @@ const GroupMemberSchema = new Schema<IGroupMember>(
 // Compound index to prevent duplicate memberships
 GroupMemberSchema.index({ groupId: 1, userId: 1 }, { unique: true });
 GroupMemberSchema.index({ userId: 1 });
-GroupMemberSchema.index({ groupId: 1 });
+// Removed: { groupId: 1 } (prefix of unique compound), { groupId: 1, role: 1 } (rarely queried)
 
 const GroupMember: Model<IGroupMember> =
   mongoose.models.GroupMember ||

@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import dbConnect from "@/lib/db";
-import Group from "@/models/Group";
 import GroupMember from "@/models/GroupMember";
 import User from "@/models/User";
 import { authOptions } from "@/lib/auth";
 import mongoose from "mongoose";
+import { invalidateUsersCache } from "@/lib/cache";
 
 // POST /api/groups/[id]/members - Add member to group
 export async function POST(
@@ -76,6 +76,25 @@ export async function POST(
       "userId",
       "name email profilePicture"
     );
+
+    const affectedUserIds = Array.from(
+      new Set(
+        [
+          session.user.id,
+          ...members.map((member: any) => member.userId?._id?.toString?.() || member.userId?.toString?.()),
+        ].filter(Boolean)
+      )
+    ) as string[];
+
+    await invalidateUsersCache(affectedUserIds, [
+      "groups",
+      "expenses",
+      "activities",
+      "dashboard-activity",
+      "friend-details",
+      "user-balance",
+      "analytics",
+    ]);
 
     return NextResponse.json(
       {
@@ -166,6 +185,26 @@ export async function DELETE(
       "userId",
       "name email profilePicture"
     );
+
+    const affectedUserIds = Array.from(
+      new Set(
+        [
+          session.user.id,
+          memberIdToRemove,
+          ...members.map((member: any) => member.userId?._id?.toString?.() || member.userId?.toString?.()),
+        ].filter(Boolean)
+      )
+    ) as string[];
+
+    await invalidateUsersCache(affectedUserIds, [
+      "groups",
+      "expenses",
+      "activities",
+      "dashboard-activity",
+      "friend-details",
+      "user-balance",
+      "analytics",
+    ]);
 
     return NextResponse.json(
       {

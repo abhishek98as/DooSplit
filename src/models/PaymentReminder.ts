@@ -64,7 +64,7 @@ const PaymentReminderSchema = new Schema<IPaymentReminder>(
 // Indexes for performance
 PaymentReminderSchema.index({ fromUserId: 1, createdAt: -1 });
 PaymentReminderSchema.index({ toUserId: 1, createdAt: -1 });
-PaymentReminderSchema.index({ status: 1 });
+// Removed: { status: 1 } — low cardinality (4 values)
 
 const PaymentReminder: Model<IPaymentReminder> =
   mongoose.models.PaymentReminder || mongoose.model<IPaymentReminder>("PaymentReminder", PaymentReminderSchema);

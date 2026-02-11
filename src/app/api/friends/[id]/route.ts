@@ -5,9 +5,18 @@ import dbConnect from "@/lib/db";
 import Friend from "@/models/Friend";
 import User from "@/models/User";
 import Expense from "@/models/Expense";
+import ExpenseParticipant from "@/models/ExpenseParticipant";
+import Settlement from "@/models/Settlement";
+import GroupMember from "@/models/GroupMember";
+import Group from "@/models/Group";
 import { authOptions } from "@/lib/auth";
+import {
+  CACHE_TTL,
+  buildUserScopedCacheKey,
+  getOrSetCacheJson,
+} from "@/lib/cache";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
 // GET /api/friends/[id] - Get friend details
 export async function GET(
@@ -19,10 +28,7 @@ export async function GET(
     const session = await getServerSession(authOptions);
 
     if (!session?.user?.id) {
-      return NextResponse.json(
-        { error: "Unauthorized" },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     await dbConnect();
@@ -33,162 +39,207 @@ export async function GET(
     const friendship = await Friend.findOne({
       $or: [
         { userId: session.user.id, friendId: id },
-        { userId: id, friendId: session.user.id }
+        { userId: id, friendId: session.user.id },
       ],
-      status: "accepted"
-    });
+      status: "accepted",
+    }).lean();
 
     if (!friendship) {
-      return NextResponse.json(
-        { error: "Friend not found" },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: "Friend not found" }, { status: 404 });
     }
 
-    // Get friend details
-    const friendId = friendship.userId.toString() === session.user.id
-      ? friendship.friendId
-      : friendship.userId;
+    const friendId =
+      friendship.userId.toString() === session.user.id
+        ? friendship.friendId.toString()
+        : friendship.userId.toString();
 
-    const friend = await User.findById(friendId).select(
-      "name email profilePicture createdAt"
+    const cacheKey = buildUserScopedCacheKey(
+      "friend-details",
+      session.user.id,
+      `${friendId}:${request.nextUrl.search}`
     );
 
-    if (!friend) {
-      return NextResponse.json(
-        { error: "Friend not found" },
-        { status: 404 }
+    const payload = await getOrSetCacheJson(cacheKey, CACHE_TTL.activities, async () => {
+      // Get friend details
+      const friend = await User.findById(friendId).select(
+        "name email profilePicture createdAt"
       );
-    }
 
-    // Calculate balance between friends from expenses and settlements
-    const ExpenseParticipant = (await import("@/models/ExpenseParticipant")).default;
-    const Settlement = (await import("@/models/Settlement")).default;
+      if (!friend) {
+        throw new Error("Friend not found");
+      }
 
-    const friendObjectId = new mongoose.Types.ObjectId(friendId.toString());
+      const friendObjectId = new mongoose.Types.ObjectId(friendId);
 
-    // Get all expenses where both users are participants
-    const expenseParticipants = await ExpenseParticipant.find({
-      userId: { $in: [userId, friendObjectId] }
-    });
+      // Get all expenses where both users are participants.
+      const pairParticipants = await ExpenseParticipant.find({
+        userId: { $in: [userId, friendObjectId] },
+      })
+        .select("expenseId userId paidAmount owedAmount")
+        .lean();
 
-    const expenseIds = [...new Set(expenseParticipants.map(ep => ep.expenseId.toString()))];
+      const pairByExpense = new Map<string, any[]>();
+      for (const participant of pairParticipants) {
+        const key = participant.expenseId.toString();
+        const list = pairByExpense.get(key) || [];
+        list.push(participant);
+        pairByExpense.set(key, list);
+      }
 
-    // Calculate balance from expenses
-    // Positive balance means friend owes you money
-    // Negative balance means you owe friend money
-    let balance = 0;
-
-    for (const expenseId of expenseIds) {
-      const participants = expenseParticipants.filter(ep => ep.expenseId.toString() === expenseId);
-      if (participants.length >= 2) { // Both users are in this expense
-        const userParticipant = participants.find(p => p.userId.toString() === session.user.id);
-        const friendParticipant = participants.find(p => p.userId.toString() === friendId.toString());
-
-        if (userParticipant && friendParticipant) {
-          // Calculate net position for each user in this expense
-          // Net position = paidAmount - owedAmount
-          // Positive net position means user is owed money
-          // Negative net position means user owes money
-          const userNetPosition = userParticipant.paidAmount - userParticipant.owedAmount;
-          const friendNetPosition = friendParticipant.paidAmount - friendParticipant.owedAmount;
-
-          // The balance from user's perspective is: what friend owes user minus what user owes friend
-          // Since friendNetPosition is negative when friend owes money, we need to add it
-          // If friendNetPosition is -50 (friend owes $50), balance += -50 = -50, but this should be +50 for user
-          // Wait, let me recalculate...
-
-          // Actually, if friend has negative net position (-50), that means friend owes $50
-          // So user should have positive balance (+50)
-          // Therefore: balance += (-1 * friendNetPosition)
-          balance -= friendNetPosition;
+      // Calculate balance from expenses.
+      let balance = 0;
+      for (const participants of pairByExpense.values()) {
+        if (participants.length < 2) {
+          continue;
         }
-      }
-    }
 
-    // Subtract settlements
-    const settlements = await Settlement.find({
-      $or: [
-        { fromUserId: userId, toUserId: friendObjectId },
-        { fromUserId: friendObjectId, toUserId: userId }
-      ]
-    });
+        const friendParticipant = participants.find(
+          (participant) => participant.userId.toString() === friendId
+        );
 
-    settlements.forEach((settlement: any) => {
-      if (settlement.fromUserId.toString() === session.user.id) {
-        // User paid friend
-        balance -= settlement.amount;
-      } else {
-        // Friend paid user
-        balance += settlement.amount;
-      }
-    });
-
-    // Get group breakdown
-    const GroupMember = (await import("@/models/GroupMember")).default;
-    const Group = (await import("@/models/Group")).default;
-
-    const userGroups = await GroupMember.find({ userId }).select('groupId');
-    const friendGroups = await GroupMember.find({ userId: friendObjectId }).select('groupId');
-
-    const userGroupIds = userGroups.map(g => g.groupId.toString());
-    const friendGroupIds = friendGroups.map(g => g.groupId.toString());
-    const commonGroupIds = userGroupIds.filter(id => friendGroupIds.includes(id));
-
-    const groupBreakdown = [];
-
-    for (const groupId of commonGroupIds) {
-      const group = await Group.findById(groupId).select('name');
-      if (!group) continue;
-
-      // Calculate balance for this specific group
-      const groupExpenses = await Expense.find({
-        groupId,
-        isDeleted: false
-      });
-
-      let groupBalance = 0;
-
-      for (const expense of groupExpenses) {
-        const expenseParticipants = await ExpenseParticipant.find({ expenseId: expense._id });
-        const userParticipant = expenseParticipants.find(p => p.userId.toString() === session.user.id);
-        const friendParticipant = expenseParticipants.find(p => p.userId.toString() === friendObjectId.toString());
-
-        if (userParticipant && friendParticipant) {
-          groupBalance += userParticipant.owedAmount;
+        if (!friendParticipant) {
+          continue;
         }
+
+        const friendNetPosition =
+          friendParticipant.paidAmount - friendParticipant.owedAmount;
+        balance -= friendNetPosition;
       }
 
-      // Get last activity date
-      const lastExpense = await Expense.findOne({
-        groupId,
-        isDeleted: false,
+      // Subtract settlements.
+      const settlements = await Settlement.find({
         $or: [
-          { createdBy: userId },
-          { createdBy: friendObjectId }
-        ]
-      }).sort({ updatedAt: -1 });
+          { fromUserId: userId, toUserId: friendObjectId },
+          { fromUserId: friendObjectId, toUserId: userId },
+        ],
+      })
+        .select("fromUserId toUserId amount")
+        .lean();
 
-      groupBreakdown.push({
-        groupId: group._id,
-        groupName: group.name,
-        balance: Math.round(groupBalance * 100) / 100,
-        lastActivity: lastExpense?.updatedAt || null
+      settlements.forEach((settlement: any) => {
+        if (settlement.fromUserId.toString() === session.user.id) {
+          balance -= settlement.amount;
+        } else {
+          balance += settlement.amount;
+        }
       });
+
+      // Get group breakdown.
+      const [userGroupIds, friendGroupIds] = await Promise.all([
+        GroupMember.find({ userId }).distinct("groupId"),
+        GroupMember.find({ userId: friendObjectId }).distinct("groupId"),
+      ]);
+
+      const friendGroupSet = new Set(friendGroupIds.map((groupId: any) => groupId.toString()));
+      const commonGroupIds = userGroupIds
+        .map((groupId: any) => groupId.toString())
+        .filter((groupId) => friendGroupSet.has(groupId));
+
+      let groupBreakdown: Array<{
+        groupId: mongoose.Types.ObjectId;
+        groupName: string;
+        balance: number;
+        lastActivity: Date | null;
+      }> = [];
+
+      if (commonGroupIds.length > 0) {
+        const commonGroupObjectIds = commonGroupIds.map(
+          (groupId) => new mongoose.Types.ObjectId(groupId)
+        );
+
+        const [groups, groupExpenses] = await Promise.all([
+          Group.find({ _id: { $in: commonGroupObjectIds } }).select("name").lean(),
+          Expense.find({
+            groupId: { $in: commonGroupObjectIds },
+            isDeleted: false,
+          })
+            .select("_id groupId createdBy updatedAt")
+            .lean(),
+        ]);
+
+        const expenseParticipants = await ExpenseParticipant.find({
+          expenseId: { $in: groupExpenses.map((expense) => expense._id) },
+        })
+          .select("expenseId userId owedAmount")
+          .lean();
+
+        const participantsByExpense = new Map<string, any[]>();
+        for (const participant of expenseParticipants) {
+          const key = participant.expenseId.toString();
+          const list = participantsByExpense.get(key) || [];
+          list.push(participant);
+          participantsByExpense.set(key, list);
+        }
+
+        const expensesByGroup = new Map<string, any[]>();
+        for (const expense of groupExpenses) {
+          if (!expense.groupId) {
+            continue;
+          }
+          const key = expense.groupId.toString();
+          const list = expensesByGroup.get(key) || [];
+          list.push(expense);
+          expensesByGroup.set(key, list);
+        }
+
+        groupBreakdown = groups.map((group) => {
+          const expenses = expensesByGroup.get(group._id.toString()) || [];
+
+          let groupBalance = 0;
+          let lastActivity: Date | null = null;
+
+          for (const expense of expenses) {
+            const participants = participantsByExpense.get(expense._id.toString()) || [];
+            const userParticipant = participants.find(
+              (participant: any) => participant.userId.toString() === session.user.id
+            );
+            const friendParticipant = participants.find(
+              (participant: any) => participant.userId.toString() === friendId
+            );
+
+            if (userParticipant && friendParticipant) {
+              groupBalance += userParticipant.owedAmount;
+            }
+
+            const isUserOrFriendExpense =
+              expense.createdBy.toString() === session.user.id ||
+              expense.createdBy.toString() === friendId;
+
+            if (isUserOrFriendExpense) {
+              if (!lastActivity || expense.updatedAt > lastActivity) {
+                lastActivity = expense.updatedAt;
+              }
+            }
+          }
+
+          return {
+            groupId: group._id,
+            groupName: group.name,
+            balance: Math.round(groupBalance * 100) / 100,
+            lastActivity,
+          };
+        });
+      }
+
+      return {
+        friend: {
+          _id: friend._id,
+          name: friend.name,
+          email: friend.email,
+          profilePicture: friend.profilePicture,
+          balance,
+          friendsSince: friendship.createdAt,
+        },
+        groupBreakdown,
+      };
+    });
+
+    return NextResponse.json(payload);
+  } catch (error: any) {
+    if (error.message === "Friend not found") {
+      return NextResponse.json({ error: "Friend not found" }, { status: 404 });
     }
 
-    return NextResponse.json({
-      friend: {
-        _id: friend._id,
-        name: friend.name,
-        email: friend.email,
-        profilePicture: friend.profilePicture,
-        balance: balance,
-        friendsSince: friendship.createdAt
-      },
-      groupBreakdown
-    });
-  } catch (error: any) {
     console.error("Friend details error:", error);
     return NextResponse.json(
       { error: "Failed to fetch friend details" },

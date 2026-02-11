@@ -56,9 +56,8 @@ const GroupSchema = new Schema<IGroup>(
 );
 
 // Indexes
-GroupSchema.index({ createdBy: 1 });
-GroupSchema.index({ createdAt: -1 });
-GroupSchema.index({ isActive: 1 });
+GroupSchema.index({ createdBy: 1, isActive: 1 });
+// Removed: { createdAt: -1 }, { isActive: 1, createdAt: -1 } — groups accessed via GroupMember $in lookups, not by these fields
 
 const Group: Model<IGroup> =
   mongoose.models.Group || mongoose.model<IGroup>("Group", GroupSchema);

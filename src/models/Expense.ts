@@ -102,11 +102,10 @@ const ExpenseSchema = new Schema<IExpense>(
 );
 
 // Indexes for efficient queries
-ExpenseSchema.index({ createdBy: 1, date: -1 });
-ExpenseSchema.index({ groupId: 1, date: -1 });
-ExpenseSchema.index({ date: -1 });
-ExpenseSchema.index({ category: 1 });
-ExpenseSchema.index({ isDeleted: 1 });
+ExpenseSchema.index({ createdBy: 1, isDeleted: 1, date: -1, createdAt: -1 });
+ExpenseSchema.index({ groupId: 1, isDeleted: 1, date: -1, createdAt: -1 });
+ExpenseSchema.index({ isDeleted: 1, date: -1, createdAt: -1 });
+// Removed: { category: 1 } (low cardinality), { isDeleted: 1 } (prefix of compound above)
 
 const Expense: Model<IExpense> =
   mongoose.models.Expense || mongoose.model<IExpense>("Expense", ExpenseSchema);

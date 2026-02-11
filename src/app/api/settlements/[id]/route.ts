@@ -4,6 +4,12 @@ import dbConnect from "@/lib/db";
 import Settlement from "@/models/Settlement";
 import { authOptions } from "@/lib/auth";
 import mongoose from "mongoose";
+import {
+  CACHE_TTL,
+  buildUserScopedCacheKey,
+  getOrSetCacheJson,
+  invalidateUsersCache
+} from "@/lib/cache";
 
 // GET /api/settlements/[id] - Get single settlement
 export async function GET(
@@ -19,29 +25,46 @@ export async function GET(
 
     await dbConnect();
 
-    const settlement = await Settlement.findById(id)
-      .populate("fromUserId", "name email profilePicture")
-      .populate("toUserId", "name email profilePicture")
-      .populate("groupId", "name image");
-
-    if (!settlement) {
-      return NextResponse.json(
-        { error: "Settlement not found" },
-        { status: 404 }
-      );
-    }
-
     const userId = new mongoose.Types.ObjectId(session.user.id);
+    const cacheKey = buildUserScopedCacheKey(
+      "settlement",
+      session.user.id,
+      id
+    );
 
-    // Check if user is involved in settlement
-    if (
-      settlement.fromUserId._id.toString() !== userId.toString() &&
-      settlement.toUserId._id.toString() !== userId.toString()
-    ) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    try {
+      const payload = await getOrSetCacheJson(cacheKey, CACHE_TTL.settlement, async () => {
+        const settlement = await Settlement.findById(id)
+          .populate("fromUserId", "name email profilePicture")
+          .populate("toUserId", "name email profilePicture")
+          .populate("groupId", "name image")
+          .lean();
+
+        if (!settlement) {
+          throw new Error("Settlement not found");
+        }
+
+        // Check if user is involved in settlement
+        if (
+          settlement.fromUserId._id.toString() !== userId.toString() &&
+          settlement.toUserId._id.toString() !== userId.toString()
+        ) {
+          throw new Error("Forbidden");
+        }
+
+        return { settlement };
+      });
+
+      return NextResponse.json(payload, { status: 200 });
+    } catch (cacheError: any) {
+      if (cacheError.message === "Settlement not found") {
+        return NextResponse.json({ error: "Settlement not found" }, { status: 404 });
+      }
+      if (cacheError.message === "Forbidden") {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+      throw cacheError;
     }
-
-    return NextResponse.json({ settlement }, { status: 200 });
   } catch (error: any) {
     console.error("Get settlement error:", error);
     return NextResponse.json(
@@ -85,6 +108,20 @@ export async function DELETE(
     }
 
     await Settlement.findByIdAndDelete(id);
+
+    await invalidateUsersCache(
+      [settlement.fromUserId.toString(), settlement.toUserId.toString()],
+      [
+        "friends",
+        "activities",
+        "dashboard-activity",
+        "friend-transactions",
+        "friend-details",
+        "user-balance",
+        "settlements",
+        "analytics",
+      ]
+    );
 
     return NextResponse.json(
       { message: "Settlement deleted successfully" },

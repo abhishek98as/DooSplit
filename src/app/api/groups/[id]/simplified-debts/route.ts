@@ -5,6 +5,11 @@ import { getGroupSimplifiedDebts } from "@/lib/balanceCalculator";
 import GroupMember from "@/models/GroupMember";
 import { authOptions } from "@/lib/auth";
 import mongoose from "mongoose";
+import {
+  CACHE_TTL,
+  buildUserScopedCacheKey,
+  getOrSetCacheJson,
+} from "@/lib/cache";
 
 export const dynamic = "force-dynamic";
 
@@ -29,7 +34,7 @@ export async function GET(
     const membership = await GroupMember.findOne({
       groupId: id,
       userId,
-    });
+    }).lean();
 
     if (!membership) {
       return NextResponse.json(
@@ -38,19 +43,24 @@ export async function GET(
       );
     }
 
-    // Get simplified debts
-    const simplifiedDebts = await getGroupSimplifiedDebts(id);
+    const cacheKey = buildUserScopedCacheKey(
+      "groups",
+      session.user.id,
+      `debts:${id}`
+    );
 
-    return NextResponse.json(
-      {
+    const payload = await getOrSetCacheJson(cacheKey, CACHE_TTL.friends, async () => {
+      const simplifiedDebts = await getGroupSimplifiedDebts(id);
+      return {
         ...simplifiedDebts,
         message:
           simplifiedDebts.savings > 0
             ? `Optimized ${simplifiedDebts.originalCount} transactions to ${simplifiedDebts.optimizedCount}, saving ${simplifiedDebts.savings} transaction${simplifiedDebts.savings !== 1 ? "s" : ""}!`
             : "Already optimized!",
-      },
-      { status: 200 }
-    );
+      };
+    });
+
+    return NextResponse.json(payload, { status: 200 });
   } catch (error: any) {
     console.error("Get simplified debts error:", error);
     return NextResponse.json(

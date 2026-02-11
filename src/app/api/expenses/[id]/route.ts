@@ -14,6 +14,12 @@ import { authOptions } from "@/lib/auth";
 import { notifyExpenseUpdated, notifyExpenseDeleted } from "@/lib/notificationService";
 import mongoose from "mongoose";
 import User from "@/models/User";
+import {
+  CACHE_TTL,
+  buildUserScopedCacheKey,
+  getOrSetCacheJson,
+  invalidateUsersCache
+} from "@/lib/cache";
 
 // GET /api/expenses/[id] - Get single expense
 export async function GET(
@@ -29,21 +35,11 @@ export async function GET(
 
     await dbConnect();
 
-    const expense = await Expense.findOne({
-      _id: id,
-      isDeleted: false,
-    })
-      .populate("createdBy", "name email profilePicture")
-      .populate("groupId", "name image");
-
-    if (!expense) {
-      return NextResponse.json({ error: "Expense not found" }, { status: 404 });
-    }
-
-    // Check if user is a participant
     const userId = new mongoose.Types.ObjectId(session.user.id);
+
+    // Check if user is a participant (authorization check - cannot cache this)
     const isParticipant = await ExpenseParticipant.findOne({
-      expenseId: expense._id,
+      expenseId: id,
       userId,
     });
 
@@ -51,31 +47,55 @@ export async function GET(
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    const participants = await ExpenseParticipant.find({
-      expenseId: expense._id,
-    }).populate("userId", "name email profilePicture");
+    const cacheKey = buildUserScopedCacheKey(
+      "expenses",
+      session.user.id,
+      `detail:${id}`
+    );
 
-    // Add version vector and ETag
-    const versionVector = {
-      version: 1,
-      lastModified: expense.updatedAt,
-      modifiedBy: expense.createdBy,
-    };
-    const etag = `"${expense._id}-1"`;
+    const payload = await getOrSetCacheJson(cacheKey, CACHE_TTL.expenses, async () => {
+      const expense = await Expense.findOne({
+        _id: id,
+        isDeleted: false,
+      })
+        .populate("createdBy", "name email profilePicture")
+        .populate("groupId", "name image");
 
-    return NextResponse.json(
-      {
+      if (!expense) {
+        throw new Error("Expense not found");
+      }
+
+      const participants = await ExpenseParticipant.find({
+        expenseId: expense._id,
+      }).populate("userId", "name email profilePicture");
+
+      // Add version vector and ETag
+      const versionVector = {
+        version: 1,
+        lastModified: expense.updatedAt,
+        modifiedBy: expense.createdBy,
+      };
+
+      return {
         expense: {
           ...expense.toJSON(),
           participants,
           _version: versionVector,
         },
+        etag: `"${expense._id}-1"`,
+        versionVector,
+      };
+    });
+
+    return NextResponse.json(
+      {
+        expense: payload.expense,
       },
       {
         status: 200,
         headers: {
-          'ETag': etag,
-          'X-Version-Vector': JSON.stringify(versionVector),
+          'ETag': payload.etag,
+          'X-Version-Vector': JSON.stringify(payload.versionVector),
         }
       }
     );
@@ -207,6 +227,12 @@ export async function PUT(
     // Add to edit history
     expense.editHistory.push(editEntry);
 
+    const previousParticipants = await ExpenseParticipant.find({
+      expenseId: expense._id,
+    })
+      .select("userId")
+      .lean();
+
     await expense.save();
 
     // If split changed, recalculate participants
@@ -319,6 +345,28 @@ export async function PUT(
     };
     const etag = `"${expense._id}-1"`;
 
+    const affectedUserIds = Array.from(
+      new Set(
+        [
+          session.user.id,
+          ...previousParticipants.map((p: any) => p.userId?.toString()),
+          ...expenseParticipants.map((p: any) => p.userId?._id?.toString?.() || p.userId?.toString?.()),
+        ].filter(Boolean)
+      )
+    ) as string[];
+
+    await invalidateUsersCache(affectedUserIds, [
+      "expenses",
+      "friends",
+      "groups",
+      "activities",
+      "dashboard-activity",
+      "friend-transactions",
+      "friend-details",
+      "user-balance",
+      "analytics",
+    ]);
+
     return NextResponse.json(
       {
         message: "Expense updated successfully",
@@ -398,6 +446,24 @@ export async function DELETE(
     } catch (notifError) {
       console.error("Failed to send notifications:", notifError);
     }
+
+    const affectedUserIds = Array.from(
+      new Set(
+        [session.user.id, ...participants.map((p: any) => p.userId?.toString())].filter(Boolean)
+      )
+    ) as string[];
+
+    await invalidateUsersCache(affectedUserIds, [
+      "expenses",
+      "friends",
+      "groups",
+      "activities",
+      "dashboard-activity",
+      "friend-transactions",
+      "friend-details",
+      "user-balance",
+      "analytics",
+    ]);
 
     return NextResponse.json(
       { message: "Expense deleted successfully" },

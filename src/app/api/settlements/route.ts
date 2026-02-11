@@ -2,10 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import dbConnect from "@/lib/db";
 import Settlement from "@/models/Settlement";
-import ExpenseParticipant from "@/models/ExpenseParticipant";
 import { authOptions } from "@/lib/auth";
 import { notifySettlement } from "@/lib/notificationService";
 import mongoose from "mongoose";
+import {
+  CACHE_TTL,
+  buildUserScopedCacheKey,
+  getOrSetCacheJson,
+  invalidateUsersCache
+} from "@/lib/cache";
 
 export const dynamic = 'force-dynamic';
 
@@ -26,45 +31,51 @@ export async function GET(request: NextRequest) {
     await dbConnect();
 
     const userId = new mongoose.Types.ObjectId(session.user.id);
+    const cacheKey = buildUserScopedCacheKey(
+      "settlements",
+      session.user.id,
+      request.nextUrl.search
+    );
 
-    // Build query - find settlements where user is sender or receiver
-    const query: any = {
-      $or: [{ fromUserId: userId }, { toUserId: userId }],
-    };
+    const payload = await getOrSetCacheJson(cacheKey, CACHE_TTL.settlements, async () => {
+      // Build query - find settlements where user is sender or receiver
+      const query: any = {
+        $or: [{ fromUserId: userId }, { toUserId: userId }],
+      };
 
-    if (groupId) query.groupId = new mongoose.Types.ObjectId(groupId);
-    if (friendId) {
-      const friendObjectId = new mongoose.Types.ObjectId(friendId);
-      query.$or = [
-        { fromUserId: userId, toUserId: friendObjectId },
-        { fromUserId: friendObjectId, toUserId: userId },
-      ];
-    }
+      if (groupId) query.groupId = new mongoose.Types.ObjectId(groupId);
+      if (friendId) {
+        const friendObjectId = new mongoose.Types.ObjectId(friendId);
+        query.$or = [
+          { fromUserId: userId, toUserId: friendObjectId },
+          { fromUserId: friendObjectId, toUserId: userId },
+        ];
+      }
 
-    const skip = (page - 1) * limit;
+      const skip = (page - 1) * limit;
 
-    const settlements = await Settlement.find(query)
-      .sort({ date: -1, createdAt: -1 })
-      .skip(skip)
-      .limit(limit)
-      .populate("fromUserId", "name email profilePicture")
-      .populate("toUserId", "name email profilePicture")
-      .populate("groupId", "name image");
+      const settlements = await Settlement.find(query)
+        .sort({ date: -1, createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .populate("fromUserId", "name email profilePicture")
+        .populate("toUserId", "name email profilePicture")
+        .populate("groupId", "name image")
+        .lean();
 
-    const total = await Settlement.countDocuments(query);
+      const total = await Settlement.countDocuments(query);
 
-    // Add version vectors to settlements
-    const settlementsWithVersions = settlements.map((settlement: any) => ({
-      ...settlement.toJSON(),
-      _version: {
-        version: settlement.version || 1,
-        lastModified: settlement.lastModified || settlement.updatedAt,
-        modifiedBy: settlement.modifiedBy || settlement.fromUserId,
-      },
-    }));
+      // Add version vectors to settlements
+      const settlementsWithVersions = settlements.map((settlement: any) => ({
+        ...settlement,
+        _version: {
+          version: settlement.version || 1,
+          lastModified: settlement.lastModified || settlement.updatedAt,
+          modifiedBy: settlement.modifiedBy || settlement.fromUserId,
+        },
+      }));
 
-    return NextResponse.json(
-      {
+      return {
         settlements: settlementsWithVersions,
         pagination: {
           page,
@@ -72,9 +83,10 @@ export async function GET(request: NextRequest) {
           total,
           totalPages: Math.ceil(total / limit),
         },
-      },
-      { status: 200 }
-    );
+      };
+    });
+
+    return NextResponse.json(payload, { status: 200 });
   } catch (error: any) {
     console.error("Get settlements error:", error);
     return NextResponse.json(
@@ -190,6 +202,21 @@ export async function POST(request: NextRequest) {
       modifiedBy: settlement.modifiedBy,
     };
     const etag = `"${settlement._id}-${settlement.version}"`;
+
+    await invalidateUsersCache(
+      [fromUserId, toUserId],
+      [
+        "friends",
+        "expenses",
+        "activities",
+        "dashboard-activity",
+        "friend-transactions",
+        "friend-details",
+        "user-balance",
+        "settlements",
+        "analytics",
+      ]
+    );
 
     return NextResponse.json(
       {

@@ -47,9 +47,9 @@ const ExpenseParticipantSchema = new Schema<IExpenseParticipant>(
 
 // Compound index to prevent duplicate participants
 ExpenseParticipantSchema.index({ expenseId: 1, userId: 1 }, { unique: true });
-ExpenseParticipantSchema.index({ userId: 1 });
-ExpenseParticipantSchema.index({ expenseId: 1 });
-ExpenseParticipantSchema.index({ isSettled: 1 });
+ExpenseParticipantSchema.index({ userId: 1, isSettled: 1, expenseId: 1 });
+ExpenseParticipantSchema.index({ expenseId: 1, isSettled: 1 });
+// Removed: { userId: 1 } (prefix of compound), { expenseId: 1 } (prefix of unique compound), { isSettled: 1 } (low cardinality boolean)
 
 const ExpenseParticipant: Model<IExpenseParticipant> =
   mongoose.models.ExpenseParticipant ||

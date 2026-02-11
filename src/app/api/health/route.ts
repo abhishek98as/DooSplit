@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import dbConnect from "@/lib/db";
 import { adminAuth, initError as firebaseInitError } from "@/lib/firebase-admin";
+import { getRedisClient } from "@/lib/redis";
 
 export const dynamic = "force-dynamic";
 
@@ -22,6 +23,8 @@ export async function GET() {
     FIREBASE_PRIVATE_KEY: !!process.env.FIREBASE_PRIVATE_KEY,
     FIREBASE_CLIENT_EMAIL: !!process.env.FIREBASE_CLIENT_EMAIL,
     ADMIN_EMAIL: !!process.env.ADMIN_EMAIL,
+    REDIS_URL: !!process.env.REDIS_URL,
+    REDIS_HOST: !!process.env.REDIS_HOST,
   };
 
   // Check MongoDB connection
@@ -42,6 +45,34 @@ export async function GET() {
       status: "error",
       error: error.message,
       code: error.code,
+    };
+  }
+
+  // Check Redis connection
+  try {
+    const startTime = Date.now();
+    const redis = await getRedisClient();
+    
+    if (redis?.isOpen) {
+      await redis.ping();
+      const pingTime = Date.now() - startTime;
+      
+      checks.redis = {
+        status: "connected",
+        pingMs: pingTime,
+        message: "Redis cache is active and operational",
+      };
+    } else {
+      checks.redis = {
+        status: "disabled",
+        message: "Redis not configured - app running without cache (slower performance)",
+      };
+    }
+  } catch (error: any) {
+    checks.redis = {
+      status: "error",
+      error: error.message,
+      message: "Redis connection failed - app running without cache (slower performance)",
     };
   }
 

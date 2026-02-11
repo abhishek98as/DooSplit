@@ -89,7 +89,7 @@ SettlementSchema.index({ fromUserId: 1, toUserId: 1 });
 SettlementSchema.index({ fromUserId: 1, date: -1 });
 SettlementSchema.index({ toUserId: 1, date: -1 });
 SettlementSchema.index({ groupId: 1, date: -1 });
-SettlementSchema.index({ date: -1 });
+// Removed: { fromUserId: 1, createdAt: -1 }, { toUserId: 1, createdAt: -1 } (overlap with date variants), { date: -1 } (rarely queried standalone)
 
 const Settlement: Model<ISettlement> =
   mongoose.models.Settlement ||

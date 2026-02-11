@@ -11,10 +11,11 @@ interface MongooseCache {
 }
 
 declare global {
+  // eslint-disable-next-line no-var
   var mongoose: MongooseCache | undefined;
 }
 
-let cached: MongooseCache = global.mongoose || { conn: null, promise: null };
+const cached: MongooseCache = global.mongoose || { conn: null, promise: null };
 
 if (!global.mongoose) {
   global.mongoose = cached;
@@ -27,7 +28,7 @@ function isConnectionHealthy(): boolean {
   if (!cached.conn) return false;
   // readyState: 0 = disconnected, 1 = connected, 2 = connecting, 3 = disconnecting
   const state = cached.conn.connection.readyState;
-  return state === 1; // Only consider "connected" as healthy
+  return state === 1;
 }
 
 async function dbConnect(): Promise<typeof mongoose> {
@@ -38,7 +39,11 @@ async function dbConnect(): Promise<typeof mongoose> {
 
   // If the connection exists but is unhealthy, reset it
   if (cached.conn && !isConnectionHealthy()) {
-    console.log("⚠️ MongoDB connection unhealthy (state:", cached.conn.connection.readyState, "), reconnecting...");
+    console.warn(
+      "MongoDB connection unhealthy (state:",
+      cached.conn.connection.readyState,
+      "), reconnecting..."
+    );
     cached.conn = null;
     cached.promise = null;
   }
@@ -53,30 +58,39 @@ async function dbConnect(): Promise<typeof mongoose> {
   }
 
   if (!cached.promise) {
+    const isProduction = process.env.NODE_ENV === "production";
+    const forceAutoIndex = process.env.MONGODB_AUTO_INDEX === "true";
+    const parsedPoolSize = Number.parseInt(process.env.MONGODB_MAX_POOL_SIZE || "5", 10);
+
     const opts = {
       bufferCommands: false,
-      maxPoolSize: 10,
-      serverSelectionTimeoutMS: 15000,
+      // Keep the pool conservative for Atlas free tiers (30 connection cap).
+      maxPoolSize: Number.isFinite(parsedPoolSize) ? parsedPoolSize : 5,
+      minPoolSize: 0,
+      maxIdleTimeMS: 30000,
+      waitQueueTimeoutMS: 5000,
+      serverSelectionTimeoutMS: 8000,
       socketTimeoutMS: 45000,
-      connectTimeoutMS: 15000,
-      family: 4, // Force IPv4 - helps with Atlas connectivity
+      connectTimeoutMS: 8000,
+      family: 4,
+      autoIndex: forceAutoIndex || !isProduction,
       retryWrites: true,
       retryReads: true,
     };
 
-    console.log("🔄 Connecting to MongoDB...");
+    console.log("Connecting to MongoDB...");
     cached.promise = mongoose.connect(MONGODB_URI, opts).then((mongoose) => {
-      console.log("✅ MongoDB connected successfully to:", mongoose.connection.host);
+      console.log("MongoDB connected:", mongoose.connection.host);
 
       // Listen for connection errors after initial connect
       mongoose.connection.on("error", (err) => {
-        console.error("❌ MongoDB connection error:", err.message);
+        console.error("MongoDB connection error:", err.message);
         cached.conn = null;
         cached.promise = null;
       });
 
       mongoose.connection.on("disconnected", () => {
-        console.warn("⚠️ MongoDB disconnected, will reconnect on next request");
+        console.warn("MongoDB disconnected, reconnecting on next request");
         cached.conn = null;
         cached.promise = null;
       });
@@ -87,11 +101,11 @@ async function dbConnect(): Promise<typeof mongoose> {
 
   try {
     cached.conn = await cached.promise;
-  } catch (e: any) {
+  } catch (error: any) {
     cached.promise = null;
     cached.conn = null;
-    console.error("❌ MongoDB connection failed:", e.message);
-    throw e;
+    console.error("MongoDB connection failed:", error.message);
+    throw error;
   }
 
   return cached.conn;

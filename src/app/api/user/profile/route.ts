@@ -5,6 +5,8 @@ import dbConnect from "@/lib/db";
 import User from "@/models/User";
 import { authOptions } from "@/lib/auth";
 
+import { invalidateUsersCache } from "@/lib/cache";
+
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
@@ -62,6 +64,19 @@ export async function PUT(request: NextRequest) {
     if (emailNotificationsEnabled !== undefined) user.emailNotificationsEnabled = emailNotificationsEnabled;
 
     await user.save();
+
+    // Invalidate caches that display user name/avatar
+    await invalidateUsersCache(
+      [session.user.id],
+      [
+        "friends",
+        "groups",
+        "activities",
+        "dashboard-activity",
+        "friend-details",
+        "expenses",
+      ]
+    );
 
     return NextResponse.json(
       {

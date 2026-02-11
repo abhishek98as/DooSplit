@@ -6,6 +6,12 @@ import GroupMember from "@/models/GroupMember";
 import Expense from "@/models/Expense";
 import { authOptions } from "@/lib/auth";
 import mongoose from "mongoose";
+import {
+  CACHE_TTL,
+  buildUserScopedCacheKey,
+  getOrSetCacheJson,
+  invalidateUsersCache
+} from "@/lib/cache";
 
 // GET /api/groups/[id] - Get single group
 export async function GET(
@@ -21,20 +27,11 @@ export async function GET(
 
     await dbConnect();
 
-    const group = await Group.findOne({
-      _id: id,
-      isActive: true,
-    }).populate("createdBy", "name email profilePicture");
-
-    if (!group) {
-      return NextResponse.json({ error: "Group not found" }, { status: 404 });
-    }
-
     const userId = new mongoose.Types.ObjectId(session.user.id);
 
-    // Check if user is a member
+    // Check if user is a member (authorization check - cannot cache this)
     const membership = await GroupMember.findOne({
-      groupId: group._id,
+      groupId: id,
       userId,
     });
 
@@ -42,22 +39,38 @@ export async function GET(
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    const members = await GroupMember.find({ groupId: group._id }).populate(
-      "userId",
-      "name email profilePicture"
+    const cacheKey = buildUserScopedCacheKey(
+      "groups",
+      session.user.id,
+      `detail:${id}`
     );
 
-    return NextResponse.json(
-      {
+    const payload = await getOrSetCacheJson(cacheKey, CACHE_TTL.groups, async () => {
+      const group = await Group.findOne({
+        _id: id,
+        isActive: true,
+      }).populate("createdBy", "name email profilePicture").lean();
+
+      if (!group) {
+        throw new Error("Group not found");
+      }
+
+      const members = await GroupMember.find({ groupId: group._id }).populate(
+        "userId",
+        "name email profilePicture"
+      ).lean();
+
+      return {
         group: {
-          ...group.toJSON(),
+          ...group,
           members,
           memberCount: members.length,
           userRole: membership.role,
         },
-      },
-      { status: 200 }
-    );
+      };
+    });
+
+    return NextResponse.json(payload, { status: 200 });
   } catch (error: any) {
     console.error("Get group error:", error);
     return NextResponse.json(
@@ -119,6 +132,23 @@ export async function PUT(
       "userId",
       "name email profilePicture"
     );
+
+    // Invalidate cache for all group members
+    const affectedUserIds = Array.from(
+      new Set(
+        [
+          session.user.id,
+          ...members.map((m: any) => m.userId?._id?.toString?.() || m.userId?.toString?.()),
+        ].filter(Boolean)
+      )
+    ) as string[];
+
+    await invalidateUsersCache(affectedUserIds, [
+      "groups",
+      "activities",
+      "dashboard-activity",
+      "analytics",
+    ]);
 
     return NextResponse.json(
       {
@@ -186,7 +216,23 @@ export async function DELETE(
       );
     }
 
+    const memberIds = await GroupMember.find({ groupId: id }).distinct("userId");
+
     await Group.findByIdAndUpdate(id, { isActive: false });
+
+    const affectedUserIds = Array.from(
+      new Set([session.user.id, ...memberIds.map((memberId: any) => memberId.toString())])
+    );
+
+    await invalidateUsersCache(affectedUserIds, [
+      "groups",
+      "expenses",
+      "activities",
+      "dashboard-activity",
+      "friend-details",
+      "user-balance",
+      "analytics",
+    ]);
 
     return NextResponse.json(
       { message: "Group deleted successfully" },

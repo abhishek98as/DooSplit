@@ -3,57 +3,60 @@ import { getServerSession } from "next-auth";
 import dbConnect from "@/lib/db";
 import Friend from "@/models/Friend";
 import User from "@/models/User";
-
 import { authOptions } from "@/lib/auth";
 import { notifyFriendRequest } from "@/lib/notificationService";
 import mongoose from "mongoose";
-import { calculateBalanceBetweenUsers } from "@/lib/balanceCalculator";
+import { getUserBalances } from "@/lib/balanceCalculator";
+import {
+  CACHE_TTL,
+  buildUserScopedCacheKey,
+  getOrSetCacheJson,
+  invalidateUsersCache,
+} from "@/lib/cache";
 
-export const dynamic = 'force-dynamic';
-export const maxDuration = 30; // 30 seconds timeout for Vercel serverless functions
+export const dynamic = "force-dynamic";
+export const maxDuration = 30;
 
 // GET /api/friends - List all friends
 export async function GET(request: NextRequest) {
   try {
-    console.log("🔍 Friends API: Starting request");
-
     const session = await getServerSession(authOptions);
-    console.log("🔍 Friends API: Session check", { hasSession: !!session, userId: session?.user?.id });
-
     if (!session?.user?.id) {
-      console.log("❌ Friends API: Unauthorized - no session");
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    console.log("🔍 Friends API: Connecting to database");
     await dbConnect();
-    console.log("✅ Friends API: Database connected");
 
-    const userId = new mongoose.Types.ObjectId(session.user.id);
-    console.log("🔍 Friends API: User ID", userId.toString());
+    const currentUserId = new mongoose.Types.ObjectId(session.user.id);
+    const cacheKey = buildUserScopedCacheKey(
+      "friends",
+      session.user.id,
+      request.nextUrl.search
+    );
 
-    // Find all accepted friendships
-    console.log("🔍 Friends API: Querying friendships");
-    const friendships = await Friend.find({
-      $or: [{ userId }, { friendId: userId }],
-      status: "accepted",
-    }).populate("userId friendId", "name email profilePicture isDummy");
-    console.log("✅ Friends API: Found friendships", friendships.length);
+    const payload = await getOrSetCacheJson(cacheKey, CACHE_TTL.friends, async () => {
+      const friendships = await Friend.find({
+        $or: [{ userId: currentUserId }, { friendId: currentUserId }],
+        status: "accepted",
+      })
+        .populate("userId friendId", "name email profilePicture isDummy")
+        .lean();
 
-    // Extract friend data and calculate balances
-    console.log("🔍 Friends API: Processing friendships");
-    const friendPromises = friendships.map(async (friendship: any) => {
-      try {
+      const balances = await getUserBalances(currentUserId);
+      const uniqueFriends = new Map<string, any>();
+
+      for (const friendship of friendships as any[]) {
         const friendData =
           friendship.userId._id.toString() === session.user.id
             ? friendship.friendId
             : friendship.userId;
 
-        console.log("🔍 Friends API: Calculating balance for", friendData.name);
-        // Calculate balance including paid/owed amounts and settlements
-        const balance = await calculateBalanceBetweenUsers(userId, friendData._id);
+        const friendId = friendData._id.toString();
+        if (uniqueFriends.has(friendId)) {
+          continue;
+        }
 
-        return {
+        uniqueFriends.set(friendId, {
           id: friendship._id,
           friend: {
             id: friendData._id,
@@ -62,38 +65,17 @@ export async function GET(request: NextRequest) {
             profilePicture: friendData.profilePicture,
             isDummy: friendData.isDummy || false,
           },
-          balance,
+          balance: balances.get(friendId) || 0,
           friendshipDate: friendship.createdAt,
-        };
-      } catch (error: any) {
-        console.error("❌ Friends API: Error processing friendship", friendship._id, error.message);
-        return null;
+        });
       }
+
+      return { friends: Array.from(uniqueFriends.values()) };
     });
 
-    console.log("🔍 Friends API: Waiting for all promises");
-    const allFriends = await Promise.all(friendPromises);
-    console.log("✅ Friends API: All promises resolved", allFriends.length);
-
-    // Filter out null results and deduplicate friends by friend ID (since each friendship creates two records)
-    const validFriends = allFriends.filter(friend => friend !== null);
-    console.log("🔍 Friends API: Valid friends after filtering", validFriends.length);
-
-    const uniqueFriends = new Map();
-    validFriends.forEach(friend => {
-      const friendId = friend.friend.id.toString();
-      if (!uniqueFriends.has(friendId)) {
-        uniqueFriends.set(friendId, friend);
-      }
-    });
-
-    const friendsWithBalances = Array.from(uniqueFriends.values());
-    console.log("✅ Friends API: Final friends count", friendsWithBalances.length);
-
-    return NextResponse.json({ friends: friendsWithBalances }, { status: 200 });
+    return NextResponse.json(payload, { status: 200 });
   } catch (error: any) {
-    console.error("❌ Friends API: Get friends error:", error);
-    console.error("❌ Friends API: Error stack:", error.stack);
+    console.error("Get friends error:", error);
     return NextResponse.json(
       { error: "Failed to fetch friends", details: error.message },
       { status: 500 }
@@ -155,6 +137,17 @@ export async function POST(request: NextRequest) {
         },
       ]);
 
+      await invalidateUsersCache(
+        [session.user.id, dummyUser._id.toString()],
+        [
+          "friends",
+          "activities",
+          "dashboard-activity",
+          "friend-transactions",
+          "friend-details",
+        ]
+      );
+
       return NextResponse.json(
         {
           message: `Dummy friend "${trimmedName}" created successfully`,
@@ -176,16 +169,16 @@ export async function POST(request: NextRequest) {
 
     // Find friend by email or userId
     if (email) {
-      friendUser = await User.findOne({ email: email.toLowerCase(), isDummy: { $ne: true } });
+      friendUser = await User.findOne({
+        email: email.toLowerCase(),
+        isDummy: { $ne: true },
+      });
     } else if (friendUserId) {
       friendUser = await User.findById(friendUserId);
     }
 
     if (!friendUser) {
-      return NextResponse.json(
-        { error: "User not found" },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
     if (friendUser._id.toString() === session.user.id) {
@@ -205,11 +198,9 @@ export async function POST(request: NextRequest) {
 
     if (existingFriendship) {
       if (existingFriendship.status === "accepted") {
-        return NextResponse.json(
-          { error: "Already friends" },
-          { status: 400 }
-        );
-      } else if (existingFriendship.status === "pending") {
+        return NextResponse.json({ error: "Already friends" }, { status: 400 });
+      }
+      if (existingFriendship.status === "pending") {
         return NextResponse.json(
           { error: "Friend request already sent" },
           { status: 400 }
@@ -244,6 +235,17 @@ export async function POST(request: NextRequest) {
       console.error("Failed to send notification:", notifError);
     }
 
+    await invalidateUsersCache(
+      [session.user.id, friendUser._id.toString()],
+      [
+        "friends",
+        "activities",
+        "dashboard-activity",
+        "friend-transactions",
+        "friend-details",
+      ]
+    );
+
     return NextResponse.json(
       {
         message: "Friend request sent successfully",
@@ -266,4 +268,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-

@@ -139,10 +139,10 @@ const UserSchema = new Schema<IUser>(
   }
 );
 
-// Index for faster queries
+// Indexes for faster queries
 // Note: email index is already created by 'unique: true' in field definition
-// Note: phone index is already created by 'sparse: true' in field definition
-UserSchema.index({ createdAt: -1 });
+UserSchema.index({ isDummy: 1, createdBy: 1 });
+// Removed: { createdAt: -1 }, { isActive: 1 }, { emailVerified: 1 } — low cardinality booleans and rarely queried standalone
 
 // Don't return password in queries by default
 UserSchema.set("toJSON", {

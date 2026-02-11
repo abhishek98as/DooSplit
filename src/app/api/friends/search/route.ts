@@ -44,30 +44,29 @@ export async function GET(request: NextRequest) {
       isActive: true,
     })
       .select("name email profilePicture")
-      .limit(10);
+      .limit(10)
+      .lean();
 
-    // Check friendship status with each user
-    const usersWithStatus = await Promise.all(
-      users.map(async (user) => {
-        const friendship = await Friend.findOne({
-          userId,
-          friendId: user._id,
-        });
+    // Batch friendship lookup (fixes N+1 — single query instead of 1 per user)
+    const userIds = users.map((u: any) => u._id);
+    const friendships = await Friend.find({
+      userId,
+      friendId: { $in: userIds },
+    })
+      .select("friendId status")
+      .lean();
 
-        let status = "none";
-        if (friendship) {
-          status = friendship.status;
-        }
-
-        return {
-          id: user._id,
-          name: user.name,
-          email: user.email,
-          profilePicture: user.profilePicture,
-          friendshipStatus: status,
-        };
-      })
+    const friendshipMap = new Map(
+      friendships.map((f: any) => [f.friendId.toString(), f.status])
     );
+
+    const usersWithStatus = users.map((user: any) => ({
+      id: user._id,
+      name: user.name,
+      email: user.email,
+      profilePicture: user.profilePicture,
+      friendshipStatus: friendshipMap.get(user._id.toString()) || "none",
+    }));
 
     return NextResponse.json({ users: usersWithStatus }, { status: 200 });
   } catch (error: any) {

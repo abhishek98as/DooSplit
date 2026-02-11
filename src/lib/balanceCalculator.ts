@@ -1,6 +1,12 @@
 import mongoose from "mongoose";
+import Expense from "@/models/Expense";
 import ExpenseParticipant from "@/models/ExpenseParticipant";
 import Settlement from "@/models/Settlement";
+import {
+  buildUserScopedCacheKey,
+  getOrSetCacheJson,
+  CACHE_TTL,
+} from "@/lib/cache";
 
 export interface Balance {
   userId: string;
@@ -18,29 +24,68 @@ export interface UserBalance {
 }
 
 /**
- * Calculate balance between two users
+ * Calculate balance between two users with caching
  */
 export async function calculateBalanceBetweenUsers(
   userId1: string | mongoose.Types.ObjectId,
-  userId2: string | mongoose.Types.ObjectId
+  userId2: string | mongoose.Types.ObjectId,
+  skipCache: boolean = false
 ): Promise<number> {
   const id1 = new mongoose.Types.ObjectId(userId1);
   const id2 = new mongoose.Types.ObjectId(userId2);
 
-  // Get all expense participants for both users
+  // Create deterministic cache key (sorted IDs to ensure consistency)
+  const sortedIds = [id1.toString(), id2.toString()].sort();
+  const cacheKey = buildUserScopedCacheKey(
+    "user-balance",
+    sortedIds[0],
+    sortedIds[1]
+  );
+
+  if (skipCache) {
+    return await calculateBalanceBetweenUsersInternal(id1, id2);
+  }
+
+  return await getOrSetCacheJson(cacheKey, CACHE_TTL.friends, async () => {
+    return await calculateBalanceBetweenUsersInternal(id1, id2);
+  });
+}
+
+/**
+ * Internal calculation without caching
+ */
+async function calculateBalanceBetweenUsersInternal(
+  id1: mongoose.Types.ObjectId,
+  id2: mongoose.Types.ObjectId
+): Promise<number> {
+  // Get all expense participants for both users in one query
   const participants = await ExpenseParticipant.find({
     userId: { $in: [id1, id2] },
     isSettled: false,
-  }).populate({
-    path: "expenseId",
-    match: { isDeleted: false },
-  });
+  })
+    .select("expenseId userId paidAmount owedAmount")
+    .lean();
+
+  // Get distinct expense IDs and filter for non-deleted expenses
+  const expenseIds = [...new Set(participants.map((p) => p.expenseId))];
+  const validExpenses = await Expense.find({
+    _id: { $in: expenseIds },
+    isDeleted: false,
+  })
+    .select("_id")
+    .lean();
+
+  const validExpenseIds = new Set(validExpenses.map((e) => e._id.toString()));
+
+  // Filter participants to only include those with valid expenses
+  const validParticipants = participants.filter((p) =>
+    validExpenseIds.has(p.expenseId.toString())
+  );
 
   // Group by expense
   const expenseMap = new Map();
-  participants.forEach((p: any) => {
-    if (!p.expenseId) return;
-    const expenseId = p.expenseId._id.toString();
+  validParticipants.forEach((p: any) => {
+    const expenseId = p.expenseId.toString();
     if (!expenseMap.has(expenseId)) {
       expenseMap.set(expenseId, []);
     }
@@ -71,7 +116,9 @@ export async function calculateBalanceBetweenUsers(
       { fromUserId: id1, toUserId: id2 },
       { fromUserId: id2, toUserId: id1 },
     ],
-  });
+  })
+    .select("fromUserId toUserId amount")
+    .lean();
 
   settlements.forEach((settlement) => {
     if (settlement.fromUserId.toString() === id1.toString()) {
@@ -97,21 +144,31 @@ export async function getUserBalances(
     userId: id,
     isSettled: false,
   })
-    .populate({
-      path: "expenseId",
-      match: { isDeleted: false },
-    })
+    .select("expenseId userId paidAmount owedAmount")
     .lean();
 
-  const expenseIds = participants
-    .filter((p: any) => p.expenseId)
-    .map((p: any) => p.expenseId._id);
+  const expenseIds = participants.map((p: any) => p.expenseId);
 
-  // Get all participants for those expenses
+  // Filter for non-deleted expenses in one query
+  const validExpenses = await Expense.find({
+    _id: { $in: expenseIds },
+    isDeleted: false,
+  }).select('_id').lean();
+
+  const validExpenseIds = new Set(validExpenses.map(e => e._id.toString()));
+
+  // Filter participants to only include those with valid expenses
+  const validParticipants = participants.filter(p =>
+    validExpenseIds.has(p.expenseId.toString())
+  );
+
+  // Get all participants for valid expenses
   const allParticipants = await ExpenseParticipant.find({
-    expenseId: { $in: expenseIds },
+    expenseId: { $in: Array.from(validExpenseIds) },
     isSettled: false,
-  }).lean();
+  })
+    .select("expenseId userId paidAmount owedAmount")
+    .lean();
 
   // Calculate balances
   const balances = new Map<string, number>();
@@ -159,7 +216,9 @@ export async function getUserBalances(
   // Apply settlements
   const settlements = await Settlement.find({
     $or: [{ fromUserId: id }, { toUserId: id }],
-  }).lean();
+  })
+    .select("fromUserId toUserId amount")
+    .lean();
 
   settlements.forEach((settlement: any) => {
     const otherUserId =
@@ -236,28 +295,98 @@ export interface SimplifiedDebts {
 export async function simplifyGroupDebts(
   userIds: (string | mongoose.Types.ObjectId)[]
 ): Promise<SimplifiedDebts> {
-  // Get all balances between users
+  const objectIds = userIds.map(id => new mongoose.Types.ObjectId(id));
+  const idStrings = userIds.map(id => id.toString());
+
+  // Get all expense participants for users in the group
+  const participants = await ExpenseParticipant.find({
+    userId: { $in: objectIds },
+    isSettled: false,
+  })
+    .select("expenseId userId paidAmount owedAmount")
+    .lean();
+
+  const expenseIds = participants.map(p => p.expenseId);
+
+  // Filter for non-deleted expenses
+  const validExpenses = await Expense.find({
+    _id: { $in: expenseIds },
+    isDeleted: false,
+  }).select('_id').lean();
+
+  const validExpenseIds = new Set(validExpenses.map(e => e._id.toString()));
+
+  // Filter participants to valid expenses
+  const validParticipants = participants.filter(p =>
+    validExpenseIds.has(p.expenseId.toString())
+  );
+
+  // Get all participants for valid expenses
+  const allParticipants = await ExpenseParticipant.find({
+    expenseId: { $in: Array.from(validExpenseIds) },
+    isSettled: false,
+  })
+    .select("expenseId userId paidAmount owedAmount")
+    .lean();
+
+  // Calculate balances in memory
   const balanceMap = new Map<string, number>();
 
-  // Calculate net balance for each user
-  for (const userId of userIds) {
-    const userBalance = await getUserBalances(userId);
-    const id = userId.toString();
-
-    if (!balanceMap.has(id)) {
-      balanceMap.set(id, 0);
+  // Group by expense and calculate balances
+  const expenseMap = new Map();
+  allParticipants.forEach((p: any) => {
+    const expenseId = p.expenseId.toString();
+    if (!expenseMap.has(expenseId)) {
+      expenseMap.set(expenseId, []);
     }
+    expenseMap.get(expenseId).push(p);
+  });
 
-    userBalance.forEach((balance, otherId) => {
-      if (userIds.some((uid) => uid.toString() === otherId)) {
-        const currentBalance = balanceMap.get(id) || 0;
-        balanceMap.set(id, currentBalance + balance);
+  expenseMap.forEach((parts: any[]) => {
+    parts.forEach((userPart) => {
+      const userId = userPart.userId.toString();
+      if (!idStrings.includes(userId)) return;
 
-        const otherBalance = balanceMap.get(otherId) || 0;
-        balanceMap.set(otherId, otherBalance - balance);
-      }
+      parts.forEach((otherPart) => {
+        if (userPart.userId.toString() === otherPart.userId.toString()) return;
+
+        const otherUserId = otherPart.userId.toString();
+        if (!idStrings.includes(otherUserId)) return;
+
+        const userNet = userPart.paidAmount - userPart.owedAmount;
+        const otherNet = otherPart.paidAmount - otherPart.owedAmount;
+
+        // Net effect on user's balance with other user
+        const balanceChange = userNet;
+
+        const currentBalance = balanceMap.get(userId) || 0;
+        balanceMap.set(userId, currentBalance + balanceChange);
+      });
     });
-  }
+  });
+
+  // Apply settlements
+  const settlements = await Settlement.find({
+    $or: [
+      { fromUserId: { $in: objectIds } },
+      { toUserId: { $in: objectIds } },
+    ],
+  })
+    .select("fromUserId toUserId amount")
+    .lean();
+
+  settlements.forEach((settlement: any) => {
+    const fromUserId = settlement.fromUserId.toString();
+    const toUserId = settlement.toUserId.toString();
+
+    if (idStrings.includes(fromUserId) && idStrings.includes(toUserId)) {
+      const fromBalance = balanceMap.get(fromUserId) || 0;
+      balanceMap.set(fromUserId, fromBalance - settlement.amount);
+
+      const toBalance = balanceMap.get(toUserId) || 0;
+      balanceMap.set(toUserId, toBalance + settlement.amount);
+    }
+  });
 
   // Count original transactions (every non-zero balance pair)
   let originalCount = 0;

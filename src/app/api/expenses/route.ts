@@ -9,6 +9,12 @@ import { notifyExpenseCreated } from "@/lib/notificationService";
 import mongoose from "mongoose";
 import Group from "@/models/Group";
 import User from "@/models/User";
+import {
+  CACHE_TTL,
+  buildUserScopedCacheKey,
+  getOrSetCacheJson,
+  invalidateUsersCache,
+} from "@/lib/cache";
 
 export const dynamic = 'force-dynamic';
 
@@ -21,8 +27,8 @@ export async function GET(request: NextRequest) {
     }
 
     const searchParams = request.nextUrl.searchParams;
-    const page = parseInt(searchParams.get("page") || "1");
-    const limit = parseInt(searchParams.get("limit") || "20");
+    const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
+    const limit = Math.min(100, Math.max(1, parseInt(searchParams.get("limit") || "20", 10)));
     const category = searchParams.get("category");
     const groupId = searchParams.get("groupId");
     const startDate = searchParams.get("startDate");
@@ -30,50 +36,74 @@ export async function GET(request: NextRequest) {
 
     await dbConnect();
 
-    const userId = new mongoose.Types.ObjectId(session.user.id);
-
-    // Find expenses where user is a participant
-    const participantRecords = await ExpenseParticipant.find({ userId }).select(
-      "expenseId"
+    const cacheKey = buildUserScopedCacheKey(
+      "expenses",
+      session.user.id,
+      request.nextUrl.search
     );
-    const expenseIds = participantRecords.map((p) => p.expenseId);
 
-    // Build query
-    const query: any = {
-      _id: { $in: expenseIds },
-      isDeleted: false,
-    };
+    const payload = await getOrSetCacheJson(cacheKey, CACHE_TTL.expenses, async () => {
+      const userId = new mongoose.Types.ObjectId(session.user.id);
 
-    if (category) query.category = category;
-    if (groupId) query.groupId = new mongoose.Types.ObjectId(groupId);
+      // Find expenses where user is a participant.
+      const expenseIds = await ExpenseParticipant.find({ userId }).distinct("expenseId");
 
-    // Add date range filtering
-    if (startDate || endDate) {
-      query.date = {};
-      if (startDate) query.date.$gte = new Date(startDate);
-      if (endDate) query.date.$lte = new Date(endDate);
-    }
+      if (expenseIds.length === 0) {
+        return {
+          expenses: [],
+          pagination: {
+            page,
+            limit,
+            total: 0,
+            totalPages: 0,
+          },
+        };
+      }
 
-    const skip = (page - 1) * limit;
+      // Build query
+      const query: any = {
+        _id: { $in: expenseIds },
+        isDeleted: false,
+      };
 
-    const expenses = await Expense.find(query)
-      .sort({ date: -1, createdAt: -1 })
-      .skip(skip)
-      .limit(limit)
-      .populate("createdBy", "name email profilePicture")
-      .populate("groupId", "name image")
-      .lean();
+      if (category) query.category = category;
+      if (groupId) query.groupId = new mongoose.Types.ObjectId(groupId);
 
-    const total = await Expense.countDocuments(query);
+      // Add date range filtering
+      if (startDate || endDate) {
+        query.date = {};
+        if (startDate) query.date.$gte = new Date(startDate);
+        if (endDate) query.date.$lte = new Date(endDate);
+      }
 
-    // Get participants for each expense
-    const expensesWithParticipants = await Promise.all(
-      expenses.map(async (expense) => {
-        const participants = await ExpenseParticipant.find({
-          expenseId: expense._id,
-        }).populate("userId", "name email profilePicture");
+      const skip = (page - 1) * limit;
 
-        // Add version vector to each expense
+      const expenses = await Expense.find(query)
+        .sort({ date: -1, createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .populate("createdBy", "name email profilePicture")
+        .populate("groupId", "name image")
+        .lean();
+
+      const total = await Expense.countDocuments(query);
+
+      const expenseIdsOnPage = expenses.map((expense) => expense._id);
+      const allParticipants = await ExpenseParticipant.find({
+        expenseId: { $in: expenseIdsOnPage },
+      })
+        .populate("userId", "name email profilePicture")
+        .lean();
+
+      const participantsByExpense = new Map<string, any[]>();
+      for (const participant of allParticipants) {
+        const key = participant.expenseId.toString();
+        const list = participantsByExpense.get(key) || [];
+        list.push(participant);
+        participantsByExpense.set(key, list);
+      }
+
+      const expensesWithParticipants = expenses.map((expense) => {
         const versionVector = {
           version: 1,
           lastModified: expense.updatedAt,
@@ -82,14 +112,12 @@ export async function GET(request: NextRequest) {
 
         return {
           ...expense,
-          participants,
+          participants: participantsByExpense.get(expense._id.toString()) || [],
           _version: versionVector,
         };
-      })
-    );
+      });
 
-    return NextResponse.json(
-      {
+      return {
         expenses: expensesWithParticipants,
         pagination: {
           page,
@@ -97,7 +125,11 @@ export async function GET(request: NextRequest) {
           total,
           totalPages: Math.ceil(total / limit),
         },
-      },
+      };
+    });
+
+    return NextResponse.json(
+      payload,
       { status: 200 }
     );
   } catch (error: any) {
@@ -300,6 +332,26 @@ export async function POST(request: NextRequest) {
     };
     const etag = `\"${expense._id}-1\"`;
 
+    const affectedUserIds = Array.from(
+      new Set(
+        [session.user.id, ...splitParticipants.map((p: any) => p.userId?.toString())].filter(
+          Boolean
+        )
+      )
+    ) as string[];
+
+    await invalidateUsersCache(affectedUserIds, [
+      "expenses",
+      "friends",
+      "groups",
+      "activities",
+      "dashboard-activity",
+      "friend-transactions",
+      "friend-details",
+      "user-balance",
+      "analytics",
+    ]);
+
     return NextResponse.json(
       {
         message: "Expense created successfully",
@@ -325,4 +377,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-
