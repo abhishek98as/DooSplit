@@ -15,6 +15,11 @@ import {
   getOrSetCacheJsonWithMeta,
   invalidateUsersCache,
 } from "@/lib/cache";
+import {
+  mirrorUpsertToSupabase,
+  readWithMode,
+} from "@/lib/data";
+import { mongoReadRepository, supabaseReadRepository } from "@/lib/data/read-routing";
 
 export const dynamic = 'force-dynamic';
 
@@ -44,93 +49,32 @@ export async function GET(request: NextRequest) {
     const { data: payload, cacheStatus } = await getOrSetCacheJsonWithMeta(
       cacheKey,
       CACHE_TTL.expenses,
-      async () => {
-      await dbConnect();
-
-      const userId = new mongoose.Types.ObjectId(session.user.id);
-
-      // Find expenses where user is a participant.
-      const expenseIds = await ExpenseParticipant.find({ userId }).distinct("expenseId");
-
-      if (expenseIds.length === 0) {
-        return {
-          expenses: [],
-          pagination: {
-            page,
-            limit,
-            total: 0,
-            totalPages: 0,
-          },
-        };
-      }
-
-      // Build query
-      const query: any = {
-        _id: { $in: expenseIds },
-        isDeleted: false,
-      };
-
-      if (category) query.category = category;
-      if (groupId) query.groupId = new mongoose.Types.ObjectId(groupId);
-
-      // Add date range filtering
-      if (startDate || endDate) {
-        query.date = {};
-        if (startDate) query.date.$gte = new Date(startDate);
-        if (endDate) query.date.$lte = new Date(endDate);
-      }
-
-      const skip = (page - 1) * limit;
-
-      const expenses = await Expense.find(query)
-        .sort({ date: -1, createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .populate("createdBy", "name email profilePicture")
-        .populate("groupId", "name image")
-        .lean();
-
-      const total = await Expense.countDocuments(query);
-
-      const expenseIdsOnPage = expenses.map((expense) => expense._id);
-      const allParticipants = await ExpenseParticipant.find({
-        expenseId: { $in: expenseIdsOnPage },
-      })
-        .populate("userId", "name email profilePicture")
-        .lean();
-
-      const participantsByExpense = new Map<string, any[]>();
-      for (const participant of allParticipants) {
-        const key = participant.expenseId.toString();
-        const list = participantsByExpense.get(key) || [];
-        list.push(participant);
-        participantsByExpense.set(key, list);
-      }
-
-      const expensesWithParticipants = expenses.map((expense) => {
-        const versionVector = {
-          version: 1,
-          lastModified: expense.updatedAt,
-          modifiedBy: expense.createdBy,
-        };
-
-        return {
-          ...expense,
-          participants: participantsByExpense.get(expense._id.toString()) || [],
-          _version: versionVector,
-        };
-      });
-
-      return {
-        expenses: expensesWithParticipants,
-        pagination: {
-          page,
-          limit,
-          total,
-          totalPages: Math.ceil(total / limit),
-        },
-      };
-    }
+      async () =>
+        readWithMode({
+          routeName: "/api/expenses",
+          userId: session.user.id,
+          requestKey: request.nextUrl.search,
+          mongoRead: () =>
+            mongoReadRepository.getExpenses({
+              userId: session.user.id,
+              page,
+              limit,
+              category,
+              groupId,
+              startDate,
+              endDate,
+            }),
+          supabaseRead: () =>
+            supabaseReadRepository.getExpenses({
+              userId: session.user.id,
+              page,
+              limit,
+              category,
+              groupId,
+              startDate,
+              endDate,
+            }),
+        })
     );
 
     return NextResponse.json(
@@ -310,6 +254,40 @@ export async function POST(request: NextRequest) {
     const expenseParticipants = await ExpenseParticipant.find({
       expenseId: expense._id,
     }).populate("userId", "name email profilePicture");
+
+    await mirrorUpsertToSupabase("expenses", expense._id.toString(), {
+      id: expense._id.toString(),
+      amount: Number(expense.amount || amount),
+      description: expense.description,
+      category: expense.category || "other",
+      date: expense.date || date || new Date(),
+      currency: expense.currency || "INR",
+      created_by: userId.toString(),
+      group_id: groupId || null,
+      images: images || [],
+      notes: notes || null,
+      is_deleted: false,
+      edit_history: [],
+      created_at: expense.createdAt,
+      updated_at: expense.updatedAt,
+    });
+
+    for (const participant of expenseParticipants as any[]) {
+      await mirrorUpsertToSupabase(
+        "expense_participants",
+        participant._id.toString(),
+        {
+          id: participant._id.toString(),
+          expense_id: expense._id.toString(),
+          user_id: participant.userId._id.toString(),
+          paid_amount: Number(participant.paidAmount || 0),
+          owed_amount: Number(participant.owedAmount || 0),
+          is_settled: !!participant.isSettled,
+          created_at: participant.createdAt,
+          updated_at: participant.updatedAt,
+        }
+      );
+    }
 
     // Get creator's name and group name for notification
     const creator = await User.findById(userId).select("name");

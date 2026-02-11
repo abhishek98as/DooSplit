@@ -1,6 +1,7 @@
 import dbConnect from "@/lib/db";
 import Notification from "@/models/Notification";
 import mongoose from "mongoose";
+import { mirrorUpsertToSupabase } from "@/lib/data";
 
 export interface CreateNotificationParams {
   userId: mongoose.Types.ObjectId | string;
@@ -22,6 +23,17 @@ export async function createNotification(params: CreateNotificationParams) {
       message: params.message,
       data: params.data || {},
       isRead: false,
+    });
+
+    await mirrorUpsertToSupabase("notifications", notification._id.toString(), {
+      id: notification._id.toString(),
+      user_id: notification.userId.toString(),
+      type: notification.type,
+      message: notification.message,
+      data: notification.data || {},
+      is_read: !!notification.isRead,
+      created_at: notification.createdAt,
+      updated_at: notification.updatedAt,
     });
 
     return notification;
@@ -47,6 +59,19 @@ export async function createNotifications(notifications: CreateNotificationParam
         isRead: false,
       }))
     );
+
+    for (const notification of created) {
+      await mirrorUpsertToSupabase("notifications", notification._id.toString(), {
+        id: notification._id.toString(),
+        user_id: notification.userId.toString(),
+        type: notification.type,
+        message: notification.message,
+        data: notification.data || {},
+        is_read: !!notification.isRead,
+        created_at: notification.createdAt,
+        updated_at: notification.updatedAt,
+      });
+    }
 
     return created;
   } catch (error) {

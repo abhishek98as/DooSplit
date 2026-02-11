@@ -2,5 +2,11 @@
   "buildCommand": "npm run build",
   "outputDirectory": ".next",
   "framework": "nextjs",
-  "regions": ["sin1"]
+  "regions": ["bom1"],
+  "crons": [
+    {
+      "path": "/api/internal/outbox/flush",
+      "schedule": "*/1 * * * *"
+    }
+  ]
 }

@@ -10,14 +10,21 @@
     "admin:reset": "node scripts/admin/force-reset-admin.js",
     "perf:seed": "node scripts/perf/seed-test-data.js",
     "perf:bench": "node scripts/perf/benchmark-read-flow.js",
-    "perf:cleanup": "node scripts/perf/cleanup-test-data.js"
+    "perf:cleanup": "node scripts/perf/cleanup-test-data.js",
+    "migrate:mongodb-to-supabase": "node scripts/migrate/mongo-to-supabase.js",
+    "migrate:validate-parity": "node scripts/migrate/validate-parity.js",
+    "migrate:reconcile": "node scripts/migrate/reconcile-diffs.js",
+    "migrate:imagekit-to-supabase": "node scripts/migrate/imagekit-to-supabase.js",
+    "validate:supabase": "node scripts/validate-supabase-config.js"
   },
   "dependencies": {
     "@imagekit/nodejs": "^7.3.0",
+    "@supabase/supabase-js": "^2.57.4",
     "@types/bcryptjs": "^2.4.6",
     "bcryptjs": "^2.4.3",
     "firebase": "^12.9.0",
     "firebase-admin": "^13.6.1",
+    "jsonwebtoken": "^9.0.2",
     "jspdf": "^2.5.2",
     "jspdf-autotable": "^3.8.4",
     "lucide-react": "^0.563.0",
@@ -34,6 +41,7 @@
     "zustand": "^5.0.11"
   },
   "devDependencies": {
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^20",
     "@types/nodemailer": "^7.0.9",
     "@types/react": "^19",
@@ -42,6 +50,7 @@
     "eslint": "^9",
     "eslint-config-next": "15.5.12",
     "postcss": "^8",
+    "supabase": "^2.76.8",
     "tailwindcss": "^3.4.1",
     "typescript": "^5"
   }

@@ -4,6 +4,7 @@ import dbConnect from "@/lib/db";
 import Notification from "@/models/Notification";
 import { authOptions } from "@/lib/auth";
 import mongoose from "mongoose";
+import { mirrorDeleteToSupabase, mirrorUpsertToSupabase } from "@/lib/data";
 
 // PUT /api/notifications/[id] - Mark single notification as read
 export async function PUT(
@@ -33,6 +34,17 @@ export async function PUT(
         { status: 404 }
       );
     }
+
+    await mirrorUpsertToSupabase("notifications", notification._id.toString(), {
+      id: notification._id.toString(),
+      user_id: notification.userId.toString(),
+      type: notification.type,
+      message: notification.message,
+      data: notification.data || {},
+      is_read: true,
+      created_at: notification.createdAt,
+      updated_at: notification.updatedAt,
+    });
 
     return NextResponse.json(
       {
@@ -77,6 +89,8 @@ export async function DELETE(
         { status: 404 }
       );
     }
+
+    await mirrorDeleteToSupabase("notifications", id);
 
     return NextResponse.json(
       { message: "Notification deleted" },

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { uploadImage, ImageType, UploadOptions, VALIDATION } from "@/lib/imagekit-service";
+import { ImageType, UploadOptions, VALIDATION } from "@/lib/imagekit-service";
+import { uploadManagedImage } from "@/lib/storage/image-storage";
 
 export const dynamic = 'force-dynamic';
 
@@ -62,7 +63,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Upload image
-    const imageRef = await uploadImage(buffer, file.name, uploadOptions);
+    const imageRef = await uploadManagedImage(buffer, file.name, uploadOptions);
 
     console.log(`✅ Image uploaded via API: ${imageRef.name} (${imageRef.fileId})`);
 

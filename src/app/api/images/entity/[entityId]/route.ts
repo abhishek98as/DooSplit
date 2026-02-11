@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { getImagesForEntity, ImageType } from "@/lib/imagekit-service";
+import { ImageType } from "@/lib/imagekit-service";
+import { getManagedImagesForEntity } from "@/lib/storage/image-storage";
 
 export const dynamic = 'force-dynamic';
 
@@ -33,7 +34,7 @@ export async function GET(
     // For expense images, you might want to check if the user has access to that expense
     // This would require checking expense membership/ownership in your database
 
-    const images = await getImagesForEntity(entityId, type);
+    const images = await getManagedImagesForEntity(entityId, type);
 
     return NextResponse.json({
       images,

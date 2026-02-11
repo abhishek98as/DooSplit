@@ -22,6 +22,30 @@ export interface CacheResult<T> {
   cacheStatus: CacheStatus;
 }
 
+interface MemoryCacheEntry {
+  value: string;
+  expiresAt: number;
+}
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __doosplitMemoryCache: Map<string, MemoryCacheEntry> | undefined;
+  // eslint-disable-next-line no-var
+  var __doosplitMemoryRegistry: Map<string, Set<string>> | undefined;
+}
+
+const memoryCache: Map<string, MemoryCacheEntry> =
+  global.__doosplitMemoryCache || new Map<string, MemoryCacheEntry>();
+const memoryRegistry: Map<string, Set<string>> =
+  global.__doosplitMemoryRegistry || new Map<string, Set<string>>();
+
+if (!global.__doosplitMemoryCache) {
+  global.__doosplitMemoryCache = memoryCache;
+}
+if (!global.__doosplitMemoryRegistry) {
+  global.__doosplitMemoryRegistry = memoryRegistry;
+}
+
 /**
  * Build a deterministic, user-scoped cache key.
  * Format: PREFIX:scope:user:userId:sha1(input)
@@ -57,6 +81,34 @@ function parseKeyParts(key: string): { scope: string; userId: string } | null {
     return { scope, userId };
   }
   return null;
+}
+
+function memoryGet<T>(key: string): T | null {
+  const entry = memoryCache.get(key);
+  if (!entry) {
+    return null;
+  }
+  if (entry.expiresAt <= Date.now()) {
+    memoryCache.delete(key);
+    return null;
+  }
+  return JSON.parse(entry.value) as T;
+}
+
+function memorySet(key: string, value: unknown, ttlSeconds: number): void {
+  memoryCache.set(key, {
+    value: JSON.stringify(value),
+    expiresAt: Date.now() + ttlSeconds * 1000,
+  });
+
+  const parsed = parseKeyParts(key);
+  if (!parsed) {
+    return;
+  }
+  const regKey = registryKey(parsed.scope, parsed.userId);
+  const tracked = memoryRegistry.get(regKey) || new Set<string>();
+  tracked.add(key);
+  memoryRegistry.set(regKey, tracked);
 }
 
 /**
@@ -97,6 +149,14 @@ export async function getOrSetCacheJsonWithMeta<T>(
     }
   }
 
+  const memoryCached = memoryGet<T>(key);
+  if (memoryCached !== null) {
+    return {
+      data: memoryCached,
+      cacheStatus: "HIT",
+    };
+  }
+
   const fresh = await loader();
 
   if (redis) {
@@ -116,6 +176,9 @@ export async function getOrSetCacheJsonWithMeta<T>(
       console.warn("Redis write failed, continuing without cache:", error.message);
     }
   }
+
+  // Keep a process-local fallback cache for Redis-disabled environments.
+  memorySet(key, fresh, ttlSeconds);
 
   return {
     data: fresh,
@@ -143,9 +206,6 @@ export async function invalidateUsersCache(
   }
 
   const redis = await getRedisClient();
-  if (!redis) {
-    return;
-  }
 
   const uniqueUsers = Array.from(
     new Set(userIds.map((id) => id.toString()).filter(Boolean))
@@ -157,19 +217,29 @@ export async function invalidateUsersCache(
     for (const userId of uniqueUsers) {
       for (const scope of scopes) {
         const regKey = registryKey(scope, userId);
+        if (redis) {
+          // Get all tracked keys for this user+scope (1 op)
+          const trackedKeys = await redis.sMembers(regKey);
 
-        // Get all tracked keys for this user+scope (1 op)
-        const trackedKeys = await redis.sMembers(regKey);
-
-        if (trackedKeys.length > 0) {
-          keysToDelete.push(...trackedKeys);
+          if (trackedKeys.length > 0) {
+            keysToDelete.push(...trackedKeys);
+          }
+          // Always delete the registry key itself
+          keysToDelete.push(regKey);
         }
-        // Always delete the registry key itself
-        keysToDelete.push(regKey);
+
+        // Clear process-local fallback keys.
+        const trackedMemoryKeys = memoryRegistry.get(regKey);
+        if (trackedMemoryKeys) {
+          for (const key of trackedMemoryKeys) {
+            memoryCache.delete(key);
+          }
+          memoryRegistry.delete(regKey);
+        }
       }
     }
 
-    if (keysToDelete.length > 0) {
+    if (redis && keysToDelete.length > 0) {
       // Delete all keys in one batch (single DEL call = 1 op)
       await redis.del(keysToDelete);
     }

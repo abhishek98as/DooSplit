@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { getImageByReferenceId, deleteImage } from "@/lib/imagekit-service";
+import { deleteManagedImage, getManagedImageByReferenceId } from "@/lib/storage/image-storage";
 
 export const dynamic = 'force-dynamic';
 
@@ -13,7 +13,7 @@ export async function GET(
   try {
     const { referenceId } = await params;
 
-    const image = await getImageByReferenceId(referenceId);
+    const image = await getManagedImageByReferenceId(referenceId);
     if (!image) {
       return NextResponse.json({ error: "Image not found" }, { status: 404 });
     }
@@ -43,7 +43,7 @@ export async function DELETE(
     const { referenceId } = await params;
 
     // Get image details first to check ownership
-    const image = await getImageByReferenceId(referenceId);
+    const image = await getManagedImageByReferenceId(referenceId);
     if (!image) {
       return NextResponse.json({ error: "Image not found" }, { status: 404 });
     }
@@ -59,7 +59,7 @@ export async function DELETE(
       // TODO: Add expense ownership verification
     }
 
-    const success = await deleteImage(referenceId);
+    const success = await deleteManagedImage(referenceId);
 
     if (success) {
       return NextResponse.json({

@@ -11,6 +11,11 @@ import {
   getOrSetCacheJsonWithMeta,
   invalidateUsersCache,
 } from "@/lib/cache";
+import {
+  mirrorUpsertToSupabase,
+  readWithMode,
+} from "@/lib/data";
+import { mongoReadRepository, supabaseReadRepository } from "@/lib/data/read-routing";
 
 export const dynamic = 'force-dynamic';
 
@@ -23,7 +28,6 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const userId = new mongoose.Types.ObjectId(session.user.id);
     const cacheKey = buildUserScopedCacheKey(
       "groups",
       session.user.id,
@@ -34,57 +38,22 @@ export async function GET(request: NextRequest) {
       cacheKey,
       CACHE_TTL.groups,
       async () => {
-      await dbConnect();
-
-      // Find groups where user is a member
-      const memberRecords = await GroupMember.find({ userId })
-        .select("groupId role")
-        .lean();
-      const groupIds = memberRecords.map((m: any) => m.groupId);
-
-      if (groupIds.length === 0) {
-        return { groups: [] };
+        return readWithMode({
+          routeName: "/api/groups",
+          userId: session.user.id,
+          requestKey: request.nextUrl.search,
+          mongoRead: () =>
+            mongoReadRepository.getGroups({
+              userId: session.user.id,
+              requestSearch: request.nextUrl.search,
+            }),
+          supabaseRead: () =>
+            supabaseReadRepository.getGroups({
+              userId: session.user.id,
+              requestSearch: request.nextUrl.search,
+            }),
+        });
       }
-
-      const groups = await Group.find({
-        _id: { $in: groupIds },
-        isActive: true,
-      })
-        .populate("createdBy", "name email profilePicture")
-        .sort({ createdAt: -1 })
-        .lean();
-
-      const members = await GroupMember.find({
-        groupId: { $in: groups.map((group) => group._id) },
-      })
-        .populate("userId", "name email profilePicture")
-        .lean();
-
-      const membersByGroup = new Map<string, any[]>();
-      for (const member of members) {
-        const key = member.groupId.toString();
-        const list = membersByGroup.get(key) || [];
-        list.push(member);
-        membersByGroup.set(key, list);
-      }
-
-      const roleByGroup = new Map(
-        memberRecords.map((member: any) => [member.groupId.toString(), member.role])
-      );
-
-      const groupsWithDetails = groups.map((group) => {
-        const groupMembers = membersByGroup.get(group._id.toString()) || [];
-
-        return {
-          ...group,
-          memberCount: groupMembers.length,
-          members: groupMembers,
-          userRole: roleByGroup.get(group._id.toString()) || "member",
-        };
-      });
-
-      return { groups: groupsWithDetails };
-    }
     );
 
     return NextResponse.json(payload, {
@@ -146,7 +115,7 @@ export async function POST(request: NextRequest) {
 
     // Add other members
     if (memberIds && Array.isArray(memberIds) && memberIds.length > 0) {
-      const memberDocs = memberIds
+    const memberDocs = memberIds
         .filter((id: string) => id !== userId.toString())
         .map((id: string) => ({
           groupId: group._id,
@@ -157,6 +126,32 @@ export async function POST(request: NextRequest) {
       if (memberDocs.length > 0) {
         await GroupMember.insertMany(memberDocs);
       }
+    }
+
+    await mirrorUpsertToSupabase("groups", group._id.toString(), {
+      id: group._id.toString(),
+      name: group.name,
+      description: group.description || null,
+      image: group.image || null,
+      type: group.type,
+      currency: group.currency,
+      created_by: userId.toString(),
+      is_active: group.isActive !== false,
+      created_at: group.createdAt,
+      updated_at: group.updatedAt,
+    });
+
+    const allMembers = await GroupMember.find({ groupId: group._id }).lean();
+    for (const member of allMembers as any[]) {
+      await mirrorUpsertToSupabase("group_members", member._id.toString(), {
+        id: member._id.toString(),
+        group_id: member.groupId.toString(),
+        user_id: member.userId.toString(),
+        role: member.role || "member",
+        joined_at: member.joinedAt || member.createdAt,
+        created_at: member.createdAt,
+        updated_at: member.updatedAt,
+      });
     }
 
     const populatedGroup = await Group.findById(group._id).populate(

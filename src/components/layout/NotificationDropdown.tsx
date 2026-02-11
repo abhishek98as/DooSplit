@@ -4,6 +4,7 @@ import { useEffect, useState, useRef } from "react";
 import { useSession } from "next-auth/react";
 import { Bell, X, Check, DollarSign, Users, Receipt } from "lucide-react";
 import Link from "next/link";
+import { subscribeToUserRealtime } from "@/lib/realtime/client";
 
 interface Notification {
   _id: string;
@@ -22,12 +23,49 @@ export default function NotificationDropdown() {
   const [isOpen, setIsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    if (status === "authenticated") {
-      fetchNotifications();
+    if (status !== "authenticated" || !session?.user?.id) {
+      return;
     }
-  }, [status]);
+
+    void fetchNotifications();
+
+    let isMounted = true;
+    let unsubscribe: (() => void) | null = null;
+
+    const scheduleRefresh = () => {
+      if (refreshTimerRef.current) {
+        clearTimeout(refreshTimerRef.current);
+      }
+      refreshTimerRef.current = setTimeout(() => {
+        if (isMounted) {
+          void fetchNotifications();
+        }
+      }, 350);
+    };
+
+    void subscribeToUserRealtime(session.user.id, () => {
+      scheduleRefresh();
+    }).then((cleanup) => {
+      if (!isMounted) {
+        cleanup();
+        return;
+      }
+      unsubscribe = cleanup;
+    });
+
+    return () => {
+      isMounted = false;
+      if (refreshTimerRef.current) {
+        clearTimeout(refreshTimerRef.current);
+      }
+      if (unsubscribe) {
+        unsubscribe();
+      }
+    };
+  }, [session?.user?.id, status]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {

@@ -11,6 +11,11 @@ import {
   getOrSetCacheJsonWithMeta,
   invalidateUsersCache
 } from "@/lib/cache";
+import {
+  mirrorUpsertToSupabase,
+  readWithMode,
+} from "@/lib/data";
+import { mongoReadRepository, supabaseReadRepository } from "@/lib/data/read-routing";
 
 export const dynamic = 'force-dynamic';
 
@@ -29,7 +34,6 @@ export async function GET(request: NextRequest) {
     const groupId = searchParams.get("groupId");
     const friendId = searchParams.get("friendId");
 
-    const userId = new mongoose.Types.ObjectId(session.user.id);
     const cacheKey = buildUserScopedCacheKey(
       "settlements",
       session.user.id,
@@ -39,55 +43,28 @@ export async function GET(request: NextRequest) {
     const { data: payload, cacheStatus } = await getOrSetCacheJsonWithMeta(
       cacheKey,
       CACHE_TTL.settlements,
-      async () => {
-      await dbConnect();
-      // Build query - find settlements where user is sender or receiver
-      const query: any = {
-        $or: [{ fromUserId: userId }, { toUserId: userId }],
-      };
-
-      if (groupId) query.groupId = new mongoose.Types.ObjectId(groupId);
-      if (friendId) {
-        const friendObjectId = new mongoose.Types.ObjectId(friendId);
-        query.$or = [
-          { fromUserId: userId, toUserId: friendObjectId },
-          { fromUserId: friendObjectId, toUserId: userId },
-        ];
-      }
-
-      const skip = (page - 1) * limit;
-
-      const settlements = await Settlement.find(query)
-        .sort({ date: -1, createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .populate("fromUserId", "name email profilePicture")
-        .populate("toUserId", "name email profilePicture")
-        .populate("groupId", "name image")
-        .lean();
-
-      const total = await Settlement.countDocuments(query);
-
-      // Add version vectors to settlements
-      const settlementsWithVersions = settlements.map((settlement: any) => ({
-        ...settlement,
-        _version: {
-          version: settlement.version || 1,
-          lastModified: settlement.lastModified || settlement.updatedAt,
-          modifiedBy: settlement.modifiedBy || settlement.fromUserId,
-        },
-      }));
-
-      return {
-        settlements: settlementsWithVersions,
-        pagination: {
-          page,
-          limit,
-          total,
-          totalPages: Math.ceil(total / limit),
-        },
-      };
-    }
+      async () =>
+        readWithMode({
+          routeName: "/api/settlements",
+          userId: session.user.id,
+          requestKey: request.nextUrl.search,
+          mongoRead: () =>
+            mongoReadRepository.getSettlements({
+              userId: session.user.id,
+              page,
+              limit,
+              groupId,
+              friendId,
+            }),
+          supabaseRead: () =>
+            supabaseReadRepository.getSettlements({
+              userId: session.user.id,
+              page,
+              limit,
+              groupId,
+              friendId,
+            }),
+        })
     );
 
     return NextResponse.json(payload, {
@@ -184,6 +161,24 @@ export async function POST(request: NextRequest) {
       .populate("fromUserId", "name email profilePicture")
       .populate("toUserId", "name email profilePicture")
       .populate("groupId", "name image");
+
+    await mirrorUpsertToSupabase("settlements", settlement._id.toString(), {
+      id: settlement._id.toString(),
+      from_user_id: fromUserId,
+      to_user_id: toUserId,
+      amount: Number(amount),
+      currency: currency || "INR",
+      method: String(method || "upi").toLowerCase(),
+      note: note || null,
+      screenshot: screenshot || null,
+      date: date || new Date(),
+      group_id: groupId || null,
+      version: settlement.version || 1,
+      last_modified: settlement.lastModified || new Date(),
+      modified_by: session.user.id,
+      created_at: settlement.createdAt,
+      updated_at: settlement.updatedAt,
+    });
 
     // Send notification to the other party
     try {

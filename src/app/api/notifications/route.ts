@@ -4,6 +4,7 @@ import dbConnect from "@/lib/db";
 import Notification from "@/models/Notification";
 import { authOptions } from "@/lib/auth";
 import mongoose from "mongoose";
+import { mirrorUpsertToSupabase } from "@/lib/data";
 
 export const dynamic = 'force-dynamic';
 
@@ -69,6 +70,24 @@ export async function PUT(request: NextRequest) {
       { userId, isRead: false },
       { isRead: true }
     );
+
+    const updated = await Notification.find({ userId })
+      .sort({ createdAt: -1 })
+      .limit(50)
+      .lean();
+
+    for (const item of updated as any[]) {
+      await mirrorUpsertToSupabase("notifications", item._id.toString(), {
+        id: item._id.toString(),
+        user_id: item.userId.toString(),
+        type: item.type,
+        message: item.message,
+        data: item.data || {},
+        is_read: true,
+        created_at: item.createdAt,
+        updated_at: item.updatedAt,
+      });
+    }
 
     return NextResponse.json(
       { message: "All notifications marked as read" },

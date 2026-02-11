@@ -6,13 +6,17 @@ import User from "@/models/User";
 import { authOptions } from "@/lib/auth";
 import { notifyFriendRequest } from "@/lib/notificationService";
 import mongoose from "mongoose";
-import { getUserBalances } from "@/lib/balanceCalculator";
 import {
   CACHE_TTL,
   buildUserScopedCacheKey,
   getOrSetCacheJsonWithMeta,
   invalidateUsersCache,
 } from "@/lib/cache";
+import {
+  mirrorUpsertToSupabase,
+  readWithMode,
+} from "@/lib/data";
+import { mongoReadRepository, supabaseReadRepository } from "@/lib/data/read-routing";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -26,7 +30,6 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const currentUserId = new mongoose.Types.ObjectId(session.user.id);
     const cacheKey = buildUserScopedCacheKey(
       "friends",
       session.user.id,
@@ -37,45 +40,22 @@ export async function GET(request: NextRequest) {
       cacheKey,
       CACHE_TTL.friends,
       async () => {
-      await dbConnect();
-
-      const friendships = await Friend.find({
-        $or: [{ userId: currentUserId }, { friendId: currentUserId }],
-        status: "accepted",
-      })
-        .populate("userId friendId", "name email profilePicture isDummy")
-        .lean();
-
-      const balances = await getUserBalances(currentUserId);
-      const uniqueFriends = new Map<string, any>();
-
-      for (const friendship of friendships as any[]) {
-        const friendData =
-          friendship.userId._id.toString() === session.user.id
-            ? friendship.friendId
-            : friendship.userId;
-
-        const friendId = friendData._id.toString();
-        if (uniqueFriends.has(friendId)) {
-          continue;
-        }
-
-        uniqueFriends.set(friendId, {
-          id: friendship._id,
-          friend: {
-            id: friendData._id,
-            name: friendData.name,
-            email: friendData.email,
-            profilePicture: friendData.profilePicture,
-            isDummy: friendData.isDummy || false,
-          },
-          balance: balances.get(friendId) || 0,
-          friendshipDate: friendship.createdAt,
+        return readWithMode({
+          routeName: "/api/friends",
+          userId: session.user.id,
+          requestKey: request.nextUrl.search,
+          mongoRead: () =>
+            mongoReadRepository.getFriends({
+              userId: session.user.id,
+              requestSearch: request.nextUrl.search,
+            }),
+          supabaseRead: () =>
+            supabaseReadRepository.getFriends({
+              userId: session.user.id,
+              requestSearch: request.nextUrl.search,
+            }),
         });
       }
-
-      return { friends: Array.from(uniqueFriends.values()) };
-    }
     );
 
     return NextResponse.json(payload, {
@@ -133,7 +113,7 @@ export async function POST(request: NextRequest) {
       });
 
       // Auto-create accepted friendship
-      await Friend.insertMany([
+      const createdFriendships = await Friend.insertMany([
         {
           userId: currentUserId,
           friendId: dummyUser._id,
@@ -147,6 +127,43 @@ export async function POST(request: NextRequest) {
           requestedBy: currentUserId,
         },
       ]);
+
+      await mirrorUpsertToSupabase("users", dummyUser._id.toString(), {
+        id: dummyUser._id.toString(),
+        email: String(dummyUser.email || "").toLowerCase(),
+        password: dummyUser.password || null,
+        name: dummyUser.name,
+        profile_picture: dummyUser.profilePicture || null,
+        default_currency: dummyUser.defaultCurrency || "INR",
+        timezone: dummyUser.timezone || "Asia/Kolkata",
+        language: dummyUser.language || "en",
+        is_active: dummyUser.isActive !== false,
+        is_dummy: !!dummyUser.isDummy,
+        created_by: currentUserId.toString(),
+        role: dummyUser.role === "admin" ? "admin" : "user",
+        email_verified: !!dummyUser.emailVerified,
+        auth_provider: dummyUser.authProvider === "firebase" ? "firebase" : "email",
+        created_at: dummyUser.createdAt,
+        updated_at: dummyUser.updatedAt,
+      });
+
+      const outgoingId = createdFriendships[0]._id.toString();
+      const incomingId = createdFriendships[1]._id.toString();
+
+      await mirrorUpsertToSupabase("friendships", outgoingId, {
+        id: outgoingId,
+        user_id: currentUserId.toString(),
+        friend_id: dummyUser._id.toString(),
+        status: "accepted",
+        requested_by: currentUserId.toString(),
+      });
+      await mirrorUpsertToSupabase("friendships", incomingId, {
+        id: incomingId,
+        user_id: dummyUser._id.toString(),
+        friend_id: currentUserId.toString(),
+        status: "accepted",
+        requested_by: currentUserId.toString(),
+      });
 
       await invalidateUsersCache(
         [session.user.id, dummyUser._id.toString()],
@@ -228,11 +245,30 @@ export async function POST(request: NextRequest) {
     });
 
     // Create reverse entry
-    await Friend.create({
+    const reverseFriendship = await Friend.create({
       userId: friendUser._id,
       friendId: currentUserId,
       status: "pending",
       requestedBy: currentUserId,
+    });
+
+    await mirrorUpsertToSupabase("friendships", friendship._id.toString(), {
+      id: friendship._id.toString(),
+      user_id: currentUserId.toString(),
+      friend_id: friendUser._id.toString(),
+      status: "pending",
+      requested_by: currentUserId.toString(),
+      created_at: friendship.createdAt,
+      updated_at: friendship.updatedAt,
+    });
+    await mirrorUpsertToSupabase("friendships", reverseFriendship._id.toString(), {
+      id: reverseFriendship._id.toString(),
+      user_id: friendUser._id.toString(),
+      friend_id: currentUserId.toString(),
+      status: "pending",
+      requested_by: currentUserId.toString(),
+      created_at: reverseFriendship.createdAt,
+      updated_at: reverseFriendship.updatedAt,
     });
 
     // Send notification to the friend
