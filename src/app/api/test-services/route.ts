@@ -150,7 +150,7 @@ export async function GET(request: NextRequest) {
     const adminPassword = "Abhi@1357#";
 
     // Try to seed the admin user
-    await seedAdminUser();
+    await seedAdminUser({ forceReset: true });
 
     const adminUser = await User.findOne({
       email: adminEmail.toLowerCase(),

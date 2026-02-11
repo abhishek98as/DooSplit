@@ -10,20 +10,19 @@ import mongoose from "mongoose";
 import {
   CACHE_TTL,
   buildUserScopedCacheKey,
-  getOrSetCacheJson,
+  getOrSetCacheJsonWithMeta,
 } from "@/lib/cache";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
   try {
+    const routeStart = Date.now();
     const session = await getServerSession(authOptions);
 
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-
-    await dbConnect();
 
     const userId = new mongoose.Types.ObjectId(session.user.id);
     const cacheKey = buildUserScopedCacheKey(
@@ -32,10 +31,11 @@ export async function GET(request: NextRequest) {
       request.nextUrl.search
     );
 
-    const payload = await getOrSetCacheJson(
+    const { data: payload, cacheStatus } = await getOrSetCacheJsonWithMeta(
       cacheKey,
       CACHE_TTL.dashboardActivity,
       async () => {
+        await dbConnect();
         const activities: any[] = [];
 
         // Get recent expenses where user is involved (last 12)
@@ -150,7 +150,12 @@ export async function GET(request: NextRequest) {
       }
     );
 
-    return NextResponse.json(payload);
+    return NextResponse.json(payload, {
+      headers: {
+        "X-Doosplit-Cache": cacheStatus,
+        "X-Doosplit-Route-Ms": String(Date.now() - routeStart),
+      },
+    });
   } catch (error: any) {
     console.error("Dashboard activity error:", error);
     return NextResponse.json(

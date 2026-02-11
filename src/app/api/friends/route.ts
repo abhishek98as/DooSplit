@@ -10,7 +10,7 @@ import { getUserBalances } from "@/lib/balanceCalculator";
 import {
   CACHE_TTL,
   buildUserScopedCacheKey,
-  getOrSetCacheJson,
+  getOrSetCacheJsonWithMeta,
   invalidateUsersCache,
 } from "@/lib/cache";
 
@@ -20,12 +20,11 @@ export const maxDuration = 30;
 // GET /api/friends - List all friends
 export async function GET(request: NextRequest) {
   try {
+    const routeStart = Date.now();
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-
-    await dbConnect();
 
     const currentUserId = new mongoose.Types.ObjectId(session.user.id);
     const cacheKey = buildUserScopedCacheKey(
@@ -34,7 +33,12 @@ export async function GET(request: NextRequest) {
       request.nextUrl.search
     );
 
-    const payload = await getOrSetCacheJson(cacheKey, CACHE_TTL.friends, async () => {
+    const { data: payload, cacheStatus } = await getOrSetCacheJsonWithMeta(
+      cacheKey,
+      CACHE_TTL.friends,
+      async () => {
+      await dbConnect();
+
       const friendships = await Friend.find({
         $or: [{ userId: currentUserId }, { friendId: currentUserId }],
         status: "accepted",
@@ -71,9 +75,16 @@ export async function GET(request: NextRequest) {
       }
 
       return { friends: Array.from(uniqueFriends.values()) };
-    });
+    }
+    );
 
-    return NextResponse.json(payload, { status: 200 });
+    return NextResponse.json(payload, {
+      status: 200,
+      headers: {
+        "X-Doosplit-Cache": cacheStatus,
+        "X-Doosplit-Route-Ms": String(Date.now() - routeStart),
+      },
+    });
   } catch (error: any) {
     console.error("Get friends error:", error);
     return NextResponse.json(

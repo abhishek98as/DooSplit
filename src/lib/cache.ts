@@ -4,16 +4,23 @@ import { getRedisClient } from "@/lib/redis";
 const CACHE_PREFIX = process.env.CACHE_PREFIX || "doosplit:v1";
 
 export const CACHE_TTL = {
-  expenses: 45,
-  friends: 45,
-  groups: 60,
-  activities: 30,
-  dashboardActivity: 30,
-  settlements: 45,
-  settlement: 30,
-  analytics: 120,
-  userBalance: 45,
+  expenses: 180,
+  friends: 180,
+  groups: 180,
+  activities: 120,
+  dashboardActivity: 120,
+  settlements: 180,
+  settlement: 120,
+  analytics: 180,
+  userBalance: 120,
 };
+
+export type CacheStatus = "HIT" | "MISS";
+
+export interface CacheResult<T> {
+  data: T;
+  cacheStatus: CacheStatus;
+}
 
 /**
  * Build a deterministic, user-scoped cache key.
@@ -61,13 +68,29 @@ export async function getOrSetCacheJson<T>(
   ttlSeconds: number,
   loader: () => Promise<T>
 ): Promise<T> {
+  const result = await getOrSetCacheJsonWithMeta(key, ttlSeconds, loader);
+  return result.data;
+}
+
+/**
+ * Get cached JSON or load fresh data and cache it.
+ * Returns cache metadata for diagnostics.
+ */
+export async function getOrSetCacheJsonWithMeta<T>(
+  key: string,
+  ttlSeconds: number,
+  loader: () => Promise<T>
+): Promise<CacheResult<T>> {
   const redis = await getRedisClient();
 
   if (redis) {
     try {
       const cached = await redis.get(key);
       if (cached) {
-        return JSON.parse(cached) as T;
+        return {
+          data: JSON.parse(cached) as T,
+          cacheStatus: "HIT",
+        };
       }
     } catch (error: any) {
       console.warn("Redis read failed, falling back to DB:", error.message);
@@ -94,7 +117,10 @@ export async function getOrSetCacheJson<T>(
     }
   }
 
-  return fresh;
+  return {
+    data: fresh,
+    cacheStatus: "MISS",
+  };
 }
 
 /**

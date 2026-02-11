@@ -50,6 +50,8 @@ class OfflineStore {
   private indexedDB = getIndexedDB();
   private onlineStatus: boolean = typeof window !== 'undefined' ? navigator.onLine : true;
   private syncInProgress: boolean = false;
+  private inFlightRequests = new Map<string, Promise<any>>();
+  private revalidateInFlight = new Set<string>();
 
   constructor() {
     // Only add listeners on client side
@@ -82,6 +84,72 @@ class OfflineStore {
     return this.syncInProgress;
   }
 
+  private buildRequestKey(
+    url: string,
+    options: RequestInit = {},
+    cacheKey?: string
+  ): string {
+    const method = (options.method || "GET").toUpperCase();
+    const body = typeof options.body === "string" ? options.body : "";
+    return `${method}:${url}:${cacheKey || ""}:${body}`;
+  }
+
+  private async fetchFromNetwork<T>(
+    url: string,
+    options: RequestInit = {}
+  ): Promise<T> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+
+    try {
+      const response = await fetch(url, {
+        ...options,
+        headers: {
+          "Content-Type": "application/json",
+          ...options.headers,
+        },
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      return await response.json();
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  private async revalidateInBackground<T>(
+    url: string,
+    options: RequestInit,
+    cacheKey: string | undefined,
+    requestKey: string
+  ): Promise<void> {
+    if (!cacheKey) {
+      return;
+    }
+
+    const revalidateKey = `revalidate:${requestKey}`;
+    if (this.revalidateInFlight.has(revalidateKey)) {
+      return;
+    }
+
+    this.revalidateInFlight.add(revalidateKey);
+    try {
+      const data = await this.fetchFromNetwork<T>(url, options);
+      await this.indexedDB.putMetadata(`cache_${cacheKey}`, {
+        data,
+        timestamp: Date.now(),
+      });
+    } catch (error) {
+      console.warn(`Background revalidation failed for ${url}:`, error);
+    } finally {
+      this.revalidateInFlight.delete(revalidateKey);
+    }
+  }
+
   // Generic API fetch with caching
   private async fetchWithCache<T>(
     url: string,
@@ -89,58 +157,64 @@ class OfflineStore {
     cacheKey?: string
   ): Promise<T> {
     const cacheTime = 5 * 60 * 1000; // 5 minutes cache
+    const requestKey = this.buildRequestKey(url, options, cacheKey);
+    const existing = this.inFlightRequests.get(requestKey);
+    if (existing) {
+      return existing as Promise<T>;
+    }
 
-    try {
-      if (this.isOnline()) {
-        const response = await fetch(url, {
-          ...options,
-          headers: {
-            'Content-Type': 'application/json',
-            ...options.headers,
-          },
-        });
+    const requestPromise = (async () => {
+      let cached: { data: T; timestamp: number } | null = null;
 
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-
-        const data = await response.json();
-
-        // Cache the response
-        if (cacheKey) {
-          await this.indexedDB.putMetadata(`cache_${cacheKey}`, {
-            data,
-            timestamp: Date.now(),
-          });
-        }
-
-        return data;
-      } else {
-        // Try to get from cache
-        if (cacheKey) {
-          const cached = await this.indexedDB.getMetadata(`cache_${cacheKey}`);
-          if (cached && (Date.now() - cached.timestamp) < cacheTime) {
-            return cached.data;
-          }
-        }
-
-        // If no cache or expired, get from IndexedDB
-        throw new Error('Offline - no cached data available');
-      }
-    } catch (error) {
-      console.error(`API call failed for ${url}:`, error);
-
-      // Try to get from IndexedDB as fallback
       if (cacheKey) {
-        const cached = await this.indexedDB.getMetadata(`cache_${cacheKey}`);
-        if (cached) {
-          console.log('Using cached data for', url);
+        try {
+          cached = await this.indexedDB.getMetadata(`cache_${cacheKey}`);
+        } catch {
+          cached = null;
+        }
+      }
+
+      const hasFreshCache =
+        !!cached && Date.now() - cached.timestamp < cacheTime;
+
+      if (this.isOnline()) {
+        if (hasFreshCache && cached) {
+          void this.revalidateInBackground<T>(url, options, cacheKey, requestKey);
           return cached.data;
         }
+
+        try {
+          const data = await this.fetchFromNetwork<T>(url, options);
+
+          if (cacheKey) {
+            await this.indexedDB.putMetadata(`cache_${cacheKey}`, {
+              data,
+              timestamp: Date.now(),
+            });
+          }
+
+          return data;
+        } catch (error) {
+          console.error(`API call failed for ${url}:`, error);
+          if (cached) {
+            console.log("Using cached data for", url);
+            return cached.data;
+          }
+          throw error;
+        }
       }
 
-      throw error;
-    }
+      if (cached) {
+        return cached.data;
+      }
+
+      throw new Error("Offline - no cached data available");
+    })().finally(() => {
+      this.inFlightRequests.delete(requestKey);
+    });
+
+    this.inFlightRequests.set(requestKey, requestPromise);
+    return requestPromise;
   }
 
   // Expenses operations

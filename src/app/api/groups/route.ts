@@ -8,7 +8,7 @@ import mongoose from "mongoose";
 import {
   CACHE_TTL,
   buildUserScopedCacheKey,
-  getOrSetCacheJson,
+  getOrSetCacheJsonWithMeta,
   invalidateUsersCache,
 } from "@/lib/cache";
 
@@ -17,12 +17,11 @@ export const dynamic = 'force-dynamic';
 // GET /api/groups - List groups
 export async function GET(request: NextRequest) {
   try {
+    const routeStart = Date.now();
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-
-    await dbConnect();
 
     const userId = new mongoose.Types.ObjectId(session.user.id);
     const cacheKey = buildUserScopedCacheKey(
@@ -31,7 +30,12 @@ export async function GET(request: NextRequest) {
       request.nextUrl.search
     );
 
-    const payload = await getOrSetCacheJson(cacheKey, CACHE_TTL.groups, async () => {
+    const { data: payload, cacheStatus } = await getOrSetCacheJsonWithMeta(
+      cacheKey,
+      CACHE_TTL.groups,
+      async () => {
+      await dbConnect();
+
       // Find groups where user is a member
       const memberRecords = await GroupMember.find({ userId })
         .select("groupId role")
@@ -80,9 +84,16 @@ export async function GET(request: NextRequest) {
       });
 
       return { groups: groupsWithDetails };
-    });
+    }
+    );
 
-    return NextResponse.json(payload, { status: 200 });
+    return NextResponse.json(payload, {
+      status: 200,
+      headers: {
+        "X-Doosplit-Cache": cacheStatus,
+        "X-Doosplit-Route-Ms": String(Date.now() - routeStart),
+      },
+    });
   } catch (error: any) {
     console.error("Get groups error:", error);
     return NextResponse.json(
@@ -196,4 +207,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-

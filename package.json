@@ -6,7 +6,11 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "admin:reset": "node scripts/admin/force-reset-admin.js",
+    "perf:seed": "node scripts/perf/seed-test-data.js",
+    "perf:bench": "node scripts/perf/benchmark-read-flow.js",
+    "perf:cleanup": "node scripts/perf/cleanup-test-data.js"
   },
   "dependencies": {
     "@imagekit/nodejs": "^7.3.0",

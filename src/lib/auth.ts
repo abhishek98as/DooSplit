@@ -3,7 +3,6 @@ import CredentialsProvider from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 import dbConnect from "@/lib/db";
 import User from "@/models/User";
-import { seedAdminUser } from "./seedAdmin";
 import { adminAuth, initError as firebaseInitError } from "./firebase-admin";
 
 export const authOptions: AuthOptions = {
@@ -41,9 +40,6 @@ export const authOptions: AuthOptions = {
 
           await dbConnect();
           
-          // Seed admin user on first login attempt
-          await seedAdminUser();
-
           // Check if user already exists with email/password auth
           let user = await User.findOne({ email: email.toLowerCase(), isDummy: { $ne: true } });
 
@@ -114,13 +110,6 @@ export const authOptions: AuthOptions = {
         } catch (dbError: any) {
           console.error("❌ Database connection failed during login:", dbError.message);
           throw new Error("Service temporarily unavailable. Please try again.");
-        }
-
-        try {
-          await seedAdminUser();
-        } catch (seedError: any) {
-          // Non-blocking: just log, don't fail login
-          console.warn("⚠️ Admin seed skipped:", seedError.message);
         }
 
         try {

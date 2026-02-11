@@ -10,7 +10,7 @@ import mongoose from "mongoose";
 import {
   CACHE_TTL,
   buildUserScopedCacheKey,
-  getOrSetCacheJson,
+  getOrSetCacheJsonWithMeta,
 } from "@/lib/cache";
 
 export const dynamic = "force-dynamic";
@@ -18,6 +18,7 @@ export const dynamic = "force-dynamic";
 // GET /api/activities - Get activity feed
 export async function GET(request: NextRequest) {
   try {
+    const routeStart = Date.now();
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -27,8 +28,6 @@ export async function GET(request: NextRequest) {
     const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
     const limit = Math.min(100, Math.max(1, parseInt(searchParams.get("limit") || "20", 10)));
 
-    await dbConnect();
-
     const userId = new mongoose.Types.ObjectId(session.user.id);
     const fetchLimit = Math.min(200, page * limit + limit);
     const cacheKey = buildUserScopedCacheKey(
@@ -37,7 +36,11 @@ export async function GET(request: NextRequest) {
       request.nextUrl.search
     );
 
-    const payload = await getOrSetCacheJson(cacheKey, CACHE_TTL.activities, async () => {
+    const { data: payload, cacheStatus } = await getOrSetCacheJsonWithMeta(
+      cacheKey,
+      CACHE_TTL.activities,
+      async () => {
+      await dbConnect();
       // Get expenses where user is involved
       const expenseIds = await ExpenseParticipant.find({ userId }).distinct("expenseId");
 
@@ -141,9 +144,16 @@ export async function GET(request: NextRequest) {
           totalPages: Math.ceil(activities.length / limit),
         },
       };
-    });
+    }
+    );
 
-    return NextResponse.json(payload, { status: 200 });
+    return NextResponse.json(payload, {
+      status: 200,
+      headers: {
+        "X-Doosplit-Cache": cacheStatus,
+        "X-Doosplit-Route-Ms": String(Date.now() - routeStart),
+      },
+    });
   } catch (error: any) {
     console.error("Get activities error:", error);
     return NextResponse.json(

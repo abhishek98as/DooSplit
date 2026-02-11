@@ -12,7 +12,7 @@ import User from "@/models/User";
 import {
   CACHE_TTL,
   buildUserScopedCacheKey,
-  getOrSetCacheJson,
+  getOrSetCacheJsonWithMeta,
   invalidateUsersCache,
 } from "@/lib/cache";
 
@@ -21,6 +21,7 @@ export const dynamic = 'force-dynamic';
 // GET /api/expenses - List expenses
 export async function GET(request: NextRequest) {
   try {
+    const routeStart = Date.now();
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -34,15 +35,18 @@ export async function GET(request: NextRequest) {
     const startDate = searchParams.get("startDate");
     const endDate = searchParams.get("endDate");
 
-    await dbConnect();
-
     const cacheKey = buildUserScopedCacheKey(
       "expenses",
       session.user.id,
       request.nextUrl.search
     );
 
-    const payload = await getOrSetCacheJson(cacheKey, CACHE_TTL.expenses, async () => {
+    const { data: payload, cacheStatus } = await getOrSetCacheJsonWithMeta(
+      cacheKey,
+      CACHE_TTL.expenses,
+      async () => {
+      await dbConnect();
+
       const userId = new mongoose.Types.ObjectId(session.user.id);
 
       // Find expenses where user is a participant.
@@ -126,11 +130,18 @@ export async function GET(request: NextRequest) {
           totalPages: Math.ceil(total / limit),
         },
       };
-    });
+    }
+    );
 
     return NextResponse.json(
       payload,
-      { status: 200 }
+      {
+        status: 200,
+        headers: {
+          "X-Doosplit-Cache": cacheStatus,
+          "X-Doosplit-Route-Ms": String(Date.now() - routeStart),
+        },
+      }
     );
   } catch (error: any) {
     console.error("Get expenses error:", error);

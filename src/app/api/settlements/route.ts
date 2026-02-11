@@ -8,7 +8,7 @@ import mongoose from "mongoose";
 import {
   CACHE_TTL,
   buildUserScopedCacheKey,
-  getOrSetCacheJson,
+  getOrSetCacheJsonWithMeta,
   invalidateUsersCache
 } from "@/lib/cache";
 
@@ -17,6 +17,7 @@ export const dynamic = 'force-dynamic';
 // GET /api/settlements - List settlements
 export async function GET(request: NextRequest) {
   try {
+    const routeStart = Date.now();
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -28,8 +29,6 @@ export async function GET(request: NextRequest) {
     const groupId = searchParams.get("groupId");
     const friendId = searchParams.get("friendId");
 
-    await dbConnect();
-
     const userId = new mongoose.Types.ObjectId(session.user.id);
     const cacheKey = buildUserScopedCacheKey(
       "settlements",
@@ -37,7 +36,11 @@ export async function GET(request: NextRequest) {
       request.nextUrl.search
     );
 
-    const payload = await getOrSetCacheJson(cacheKey, CACHE_TTL.settlements, async () => {
+    const { data: payload, cacheStatus } = await getOrSetCacheJsonWithMeta(
+      cacheKey,
+      CACHE_TTL.settlements,
+      async () => {
+      await dbConnect();
       // Build query - find settlements where user is sender or receiver
       const query: any = {
         $or: [{ fromUserId: userId }, { toUserId: userId }],
@@ -84,9 +87,16 @@ export async function GET(request: NextRequest) {
           totalPages: Math.ceil(total / limit),
         },
       };
-    });
+    }
+    );
 
-    return NextResponse.json(payload, { status: 200 });
+    return NextResponse.json(payload, {
+      status: 200,
+      headers: {
+        "X-Doosplit-Cache": cacheStatus,
+        "X-Doosplit-Route-Ms": String(Date.now() - routeStart),
+      },
+    });
   } catch (error: any) {
     console.error("Get settlements error:", error);
     return NextResponse.json(

@@ -10,15 +10,31 @@ interface MongooseCache {
   promise: Promise<typeof mongoose> | null;
 }
 
+interface AdminSeedState {
+  started: boolean;
+  promise: Promise<void> | null;
+}
+
 declare global {
   // eslint-disable-next-line no-var
   var mongoose: MongooseCache | undefined;
+  // eslint-disable-next-line no-var
+  var __adminSeedState: AdminSeedState | undefined;
 }
 
 const cached: MongooseCache = global.mongoose || { conn: null, promise: null };
 
 if (!global.mongoose) {
   global.mongoose = cached;
+}
+
+const adminSeedState: AdminSeedState = global.__adminSeedState || {
+  started: false,
+  promise: null,
+};
+
+if (!global.__adminSeedState) {
+  global.__adminSeedState = adminSeedState;
 }
 
 /**
@@ -29,6 +45,24 @@ function isConnectionHealthy(): boolean {
   // readyState: 0 = disconnected, 1 = connected, 2 = connecting, 3 = disconnecting
   const state = cached.conn.connection.readyState;
   return state === 1;
+}
+
+function ensureAdminSeedOnce(): void {
+  if (adminSeedState.started) {
+    return;
+  }
+
+  adminSeedState.started = true;
+  adminSeedState.promise = (async () => {
+    try {
+      const { seedAdminUser } = await import("./seedAdmin");
+      await seedAdminUser({ skipDbConnect: true });
+    } catch (error: any) {
+      console.warn("Admin seed skipped:", error?.message || "unknown error");
+    } finally {
+      adminSeedState.promise = null;
+    }
+  })();
 }
 
 async function dbConnect(): Promise<typeof mongoose> {
@@ -81,6 +115,7 @@ async function dbConnect(): Promise<typeof mongoose> {
     console.log("Connecting to MongoDB...");
     cached.promise = mongoose.connect(MONGODB_URI, opts).then((mongoose) => {
       console.log("MongoDB connected:", mongoose.connection.host);
+      ensureAdminSeedOnce();
 
       // Listen for connection errors after initial connect
       mongoose.connection.on("error", (err) => {
