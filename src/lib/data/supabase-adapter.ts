@@ -287,7 +287,7 @@ async function getExpenses(input: ExpensesReadInput): Promise<ExpensesPayload> {
     // Get all groups in one query
     groupIds.length > 0
       ? supabase.from("groups").select("id,name,image").in("id", groupIds)
-      : Promise.resolve({ data: [] })
+      : Promise.resolve({ data: [], error: null })
   ]);
 
   if (participantRows.error) throw participantRows.error;
