@@ -420,7 +420,7 @@ async function getDashboardActivity(
       .in("id", allUserIds),
     allGroupIds.length > 0
       ? supabase.from("groups").select("id,name,image").in("id", allGroupIds)
-      : Promise.resolve({ data: [] })
+      : Promise.resolve({ data: [], error: null })
   ]);
 
   if (usersResult.error) throw usersResult.error;
@@ -723,7 +723,7 @@ async function getSettlements(input: SettlementsReadInput): Promise<SettlementsP
       .in("id", allUserIds),
     allGroupIds.length > 0
       ? supabase.from("groups").select("id,name,image").in("id", allGroupIds)
-      : Promise.resolve({ data: [] })
+      : Promise.resolve({ data: [], error: null })
   ]);
 
   if (usersResult.error) throw usersResult.error;
