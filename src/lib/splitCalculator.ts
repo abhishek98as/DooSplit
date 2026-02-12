@@ -1,42 +1,42 @@
-import mongoose from "mongoose";
+type IdLike = string | { toString(): string };
 
 export interface Participant {
-  userId: string | mongoose.Types.ObjectId;
+  userId: IdLike;
   paidAmount: number;
   owedAmount: number;
 }
 
 export interface SplitEquallyParams {
   amount: number;
-  participants: string[] | mongoose.Types.ObjectId[];
-  paidBy: string | mongoose.Types.ObjectId;
+  participants: IdLike[];
+  paidBy: IdLike;
 }
 
 export interface SplitByAmountsParams {
   amount: number;
   participants: Array<{
-    userId: string | mongoose.Types.ObjectId;
+    userId: IdLike;
     owedAmount: number;
   }>;
-  paidBy: string | mongoose.Types.ObjectId;
+  paidBy: IdLike;
 }
 
 export interface SplitByPercentagesParams {
   amount: number;
   participants: Array<{
-    userId: string | mongoose.Types.ObjectId;
+    userId: IdLike;
     percentage: number;
   }>;
-  paidBy: string | mongoose.Types.ObjectId;
+  paidBy: IdLike;
 }
 
 export interface SplitBySharesParams {
   amount: number;
   participants: Array<{
-    userId: string | mongoose.Types.ObjectId;
+    userId: IdLike;
     shares: number;
   }>;
-  paidBy: string | mongoose.Types.ObjectId;
+  paidBy: IdLike;
 }
 
 /**

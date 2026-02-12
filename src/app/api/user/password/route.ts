@@ -1,22 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
 import bcrypt from "bcryptjs";
-import dbConnect from "@/lib/db";
-import User from "@/models/User";
-import { authOptions } from "@/lib/auth";
+import { requireUser } from "@/lib/auth/require-user";
+import { requireSupabaseAdmin } from "@/lib/supabase/app";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
 export async function PUT(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
-
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const auth = await requireUser(request);
+    if (auth.response || !auth.user) {
+      return auth.response as NextResponse;
     }
 
     const body = await request.json();
-    const { currentPassword, newPassword } = body;
+    const { currentPassword, newPassword } = body || {};
 
     if (!currentPassword || !newPassword) {
       return NextResponse.json(
@@ -25,24 +22,36 @@ export async function PUT(request: NextRequest) {
       );
     }
 
-    if (newPassword.length < 6) {
+    if (String(newPassword).length < 6) {
       return NextResponse.json(
         { error: "New password must be at least 6 characters long" },
         { status: 400 }
       );
     }
 
-    await dbConnect();
+    const supabase = requireSupabaseAdmin();
+    const { data: row, error } = await supabase
+      .from("users")
+      .select("id,password,auth_provider")
+      .eq("id", auth.user.id)
+      .maybeSingle();
 
-    const user = await User.findById(session.user.id).select("+password");
-    if (!user) {
+    if (error) {
+      throw error;
+    }
+    if (!row) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
+    if (!row.password) {
+      return NextResponse.json(
+        { error: "Password login is not enabled for this account" },
+        { status: 400 }
+      );
+    }
 
-    // Verify current password
     const isPasswordValid = await bcrypt.compare(
-      currentPassword,
-      user.password
+      String(currentPassword),
+      String(row.password)
     );
     if (!isPasswordValid) {
       return NextResponse.json(
@@ -51,9 +60,15 @@ export async function PUT(request: NextRequest) {
       );
     }
 
-    // Hash and save new password
-    user.password = await bcrypt.hash(newPassword, 10);
-    await user.save();
+    const hashedPassword = await bcrypt.hash(String(newPassword), 10);
+    const { error: updateError } = await supabase
+      .from("users")
+      .update({ password: hashedPassword })
+      .eq("id", auth.user.id);
+
+    if (updateError) {
+      throw updateError;
+    }
 
     return NextResponse.json(
       { message: "Password updated successfully" },
@@ -67,3 +82,4 @@ export async function PUT(request: NextRequest) {
     );
   }
 }
+

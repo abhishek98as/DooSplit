@@ -1,21 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import dbConnect from "@/lib/db";
-import User from "@/models/User";
-import { authOptions } from "@/lib/auth";
+import { requireUser } from "@/lib/auth/require-user";
+import { requireSupabaseAdmin } from "@/lib/supabase/app";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
-// POST /api/notifications/subscribe - Subscribe to push notifications
 export async function POST(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const auth = await requireUser(request);
+    if (auth.response || !auth.user) {
+      return auth.response as NextResponse;
     }
 
     const body = await request.json();
-    const { subscription } = body;
+    const subscription = body?.subscription;
 
     if (!subscription || !subscription.endpoint) {
       return NextResponse.json(
@@ -24,16 +21,21 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    await dbConnect();
+    const supabase = requireSupabaseAdmin();
+    const { error } = await supabase
+      .from("users")
+      .update({
+        push_subscription: subscription,
+        push_notifications_enabled: true,
+      })
+      .eq("id", auth.user.id);
 
-    // Update user with push subscription
-    await User.findByIdAndUpdate(session.user.id, {
-      pushSubscription: subscription,
-      pushNotificationsEnabled: true,
-    });
+    if (error) {
+      throw error;
+    }
 
     return NextResponse.json({
-      message: "Successfully subscribed to push notifications"
+      message: "Successfully subscribed to push notifications",
     });
   } catch (error: any) {
     console.error("Subscribe to notifications error:", error);
@@ -44,24 +46,28 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// DELETE /api/notifications/subscribe - Unsubscribe from push notifications
 export async function DELETE(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const auth = await requireUser(request);
+    if (auth.response || !auth.user) {
+      return auth.response as NextResponse;
     }
 
-    await dbConnect();
+    const supabase = requireSupabaseAdmin();
+    const { error } = await supabase
+      .from("users")
+      .update({
+        push_subscription: null,
+        push_notifications_enabled: false,
+      })
+      .eq("id", auth.user.id);
 
-    // Remove push subscription from user
-    await User.findByIdAndUpdate(session.user.id, {
-      $unset: { pushSubscription: 1 },
-      pushNotificationsEnabled: false,
-    });
+    if (error) {
+      throw error;
+    }
 
     return NextResponse.json({
-      message: "Successfully unsubscribed from push notifications"
+      message: "Successfully unsubscribed from push notifications",
     });
   } catch (error: any) {
     console.error("Unsubscribe from notifications error:", error);
@@ -71,3 +77,4 @@ export async function DELETE(request: NextRequest) {
     );
   }
 }
+

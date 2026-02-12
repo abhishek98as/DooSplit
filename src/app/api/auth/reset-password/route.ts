@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
-import dbConnect from "@/lib/db";
-import User from "@/models/User";
+import { requireSupabaseAdmin } from "@/lib/supabase/app";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { token, password } = body;
+    const token = String(body?.token || "");
+    const password = String(body?.password || "");
 
     if (!token || !password) {
       return NextResponse.json(
@@ -24,13 +24,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    await dbConnect();
+    const supabase = requireSupabaseAdmin();
+    const { data: user, error } = await supabase
+      .from("users")
+      .select("id,reset_password_expires")
+      .eq("reset_password_token", token)
+      .gt("reset_password_expires", new Date().toISOString())
+      .maybeSingle();
 
-    const user = await User.findOne({
-      resetPasswordToken: token,
-      resetPasswordExpires: { $gt: new Date() },
-    });
-
+    if (error) {
+      throw error;
+    }
     if (!user) {
       return NextResponse.json(
         { error: "Invalid or expired reset token" },
@@ -38,14 +42,19 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Hash new password
     const hashedPassword = await bcrypt.hash(password, 10);
+    const { error: updateError } = await supabase
+      .from("users")
+      .update({
+        password: hashedPassword,
+        reset_password_token: null,
+        reset_password_expires: null,
+      })
+      .eq("id", user.id);
 
-    // Update password and clear reset token
-    user.password = hashedPassword;
-    user.resetPasswordToken = undefined;
-    user.resetPasswordExpires = undefined;
-    await user.save();
+    if (updateError) {
+      throw updateError;
+    }
 
     return NextResponse.json(
       { message: "Password reset successfully" },

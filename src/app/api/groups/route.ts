@@ -1,59 +1,39 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import dbConnect from "@/lib/db";
-import Group from "@/models/Group";
-import GroupMember from "@/models/GroupMember";
-import { authOptions } from "@/lib/auth";
-import mongoose from "mongoose";
 import {
   CACHE_TTL,
   buildUserScopedCacheKey,
   getOrSetCacheJsonWithMeta,
   invalidateUsersCache,
 } from "@/lib/cache";
-import {
-  mirrorUpsertToSupabase,
-  readWithMode,
-} from "@/lib/data";
-import { mongoReadRepository, supabaseReadRepository } from "@/lib/data/read-routing";
+import { supabaseReadRepository } from "@/lib/data/supabase-adapter";
+import { requireUser } from "@/lib/auth/require-user";
+import { newAppId, requireSupabaseAdmin } from "@/lib/supabase/app";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
-// GET /api/groups - List groups
 export async function GET(request: NextRequest) {
   try {
     const routeStart = Date.now();
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const auth = await requireUser(request);
+    if (auth.response || !auth.user) {
+      return auth.response as NextResponse;
     }
+    const userId = auth.user.id;
 
     const cacheKey = buildUserScopedCacheKey(
       "groups",
-      session.user.id,
+      userId,
       request.nextUrl.search
     );
 
     const { data: payload, cacheStatus } = await getOrSetCacheJsonWithMeta(
       cacheKey,
       CACHE_TTL.groups,
-      async () => {
-        return readWithMode({
-          routeName: "/api/groups",
-          userId: session.user.id,
-          requestKey: request.nextUrl.search,
-          mongoRead: () =>
-            mongoReadRepository.getGroups({
-              userId: session.user.id,
-              requestSearch: request.nextUrl.search,
-            }),
-          supabaseRead: () =>
-            supabaseReadRepository.getGroups({
-              userId: session.user.id,
-              requestSearch: request.nextUrl.search,
-            }),
-        });
-      }
+      async () =>
+        supabaseReadRepository.getGroups({
+          userId,
+          requestSearch: request.nextUrl.search,
+        })
     );
 
     return NextResponse.json(payload, {
@@ -65,130 +45,162 @@ export async function GET(request: NextRequest) {
     });
   } catch (error: any) {
     console.error("Get groups error:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch groups" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to fetch groups" }, { status: 500 });
   }
 }
 
-// POST /api/groups - Create group
 export async function POST(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const auth = await requireUser(request);
+    if (auth.response || !auth.user) {
+      return auth.response as NextResponse;
     }
+    const userId = auth.user.id;
 
     const body = await request.json();
-    const { name, description, image, type, currency, memberIds } = body;
+    const { name, description, image, type, currency, memberIds } = body || {};
 
-    // Validation
     if (!name) {
-      return NextResponse.json(
-        { error: "Group name is required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Group name is required" }, { status: 400 });
     }
 
-    await dbConnect();
+    const supabase = requireSupabaseAdmin();
+    const groupId = newAppId();
+    const nowIso = new Date().toISOString();
 
-    const userId = new mongoose.Types.ObjectId(session.user.id);
+    const { data: groupRow, error: groupError } = await supabase
+      .from("groups")
+      .insert({
+        id: groupId,
+        name: String(name).trim(),
+        description: description || "",
+        image: image || null,
+        type: type || "trip",
+        currency: currency || "INR",
+        created_by: userId,
+        is_active: true,
+        created_at: nowIso,
+        updated_at: nowIso,
+      })
+      .select("*")
+      .single();
 
-    // Create group
-    const group = await Group.create({
-      name,
-      description: description || "",
-      image: image || null,
-      type: type || "trip",
-      currency: currency || "INR",
-      createdBy: userId,
-      isActive: true,
-    });
-
-    // Add creator as admin
-    await GroupMember.create({
-      groupId: group._id,
-      userId,
-      role: "admin",
-    });
-
-    // Add other members
-    if (memberIds && Array.isArray(memberIds) && memberIds.length > 0) {
-    const memberDocs = memberIds
-        .filter((id: string) => id !== userId.toString())
-        .map((id: string) => ({
-          groupId: group._id,
-          userId: new mongoose.Types.ObjectId(id),
-          role: "member",
-        }));
-
-      if (memberDocs.length > 0) {
-        await GroupMember.insertMany(memberDocs);
-      }
+    if (groupError || !groupRow) {
+      throw groupError || new Error("Failed to create group");
     }
 
-    await mirrorUpsertToSupabase("groups", group._id.toString(), {
-      id: group._id.toString(),
-      name: group.name,
-      description: group.description || null,
-      image: group.image || null,
-      type: group.type,
-      currency: group.currency,
-      created_by: userId.toString(),
-      is_active: group.isActive !== false,
-      created_at: group.createdAt,
-      updated_at: group.updatedAt,
-    });
-
-    const allMembers = await GroupMember.find({ groupId: group._id }).lean();
-    for (const member of allMembers as any[]) {
-      await mirrorUpsertToSupabase("group_members", member._id.toString(), {
-        id: member._id.toString(),
-        group_id: member.groupId.toString(),
-        user_id: member.userId.toString(),
-        role: member.role || "member",
-        joined_at: member.joinedAt || member.createdAt,
-        created_at: member.createdAt,
-        updated_at: member.updatedAt,
-      });
-    }
-
-    const populatedGroup = await Group.findById(group._id).populate(
-      "createdBy",
-      "name email profilePicture"
-    );
-
-    const members = await GroupMember.find({ groupId: group._id }).populate(
-      "userId",
-      "name email profilePicture"
-    );
-
-    const affectedUserIds = Array.from(
+    const dedupMembers = Array.from(
       new Set(
-        [
-          session.user.id,
-          ...(memberIds && Array.isArray(memberIds) ? memberIds.map((id: string) => id) : []),
-        ].filter(Boolean)
+        (Array.isArray(memberIds) ? memberIds : [])
+          .map((id: any) => String(id))
+          .filter((id: string) => id && id !== userId)
       )
     );
 
-    await invalidateUsersCache(affectedUserIds, [
-      "groups",
-      "expenses",
-      "activities",
-      "dashboard-activity",
-      "friend-details",
-      "user-balance",
-    ]);
+    const memberRows = [
+      {
+        id: newAppId(),
+        group_id: groupId,
+        user_id: userId,
+        role: "admin",
+        joined_at: nowIso,
+        created_at: nowIso,
+        updated_at: nowIso,
+      },
+      ...dedupMembers.map((id) => ({
+        id: newAppId(),
+        group_id: groupId,
+        user_id: id,
+        role: "member",
+        joined_at: nowIso,
+        created_at: nowIso,
+        updated_at: nowIso,
+      })),
+    ];
+
+    const { error: membersInsertError } = await supabase
+      .from("group_members")
+      .insert(memberRows);
+    if (membersInsertError) {
+      throw membersInsertError;
+    }
+
+    const { data: members, error: membersError } = await supabase
+      .from("group_members")
+      .select("*")
+      .eq("group_id", groupId);
+    if (membersError) {
+      throw membersError;
+    }
+
+    const userIds = Array.from(
+      new Set((members || []).map((member: any) => String(member.user_id)))
+    );
+    const { data: users, error: usersError } = await supabase
+      .from("users")
+      .select("id,name,email,profile_picture")
+      .in("id", userIds);
+    if (usersError) {
+      throw usersError;
+    }
+    const usersMap = new Map((users || []).map((user: any) => [String(user.id), user]));
+
+    const createdByUser = usersMap.get(userId);
+    const hydratedMembers = (members || []).map((member: any) => {
+      const user = usersMap.get(String(member.user_id));
+      return {
+        _id: member.id,
+        groupId: member.group_id,
+        userId: user
+          ? {
+              _id: user.id,
+              name: user.name,
+              email: user.email,
+              profilePicture: user.profile_picture || null,
+            }
+          : null,
+        role: member.role,
+        joinedAt: member.joined_at,
+        createdAt: member.created_at,
+        updatedAt: member.updated_at,
+      };
+    });
+
+    await invalidateUsersCache(
+      Array.from(new Set([userId, ...dedupMembers])),
+      [
+        "groups",
+        "expenses",
+        "activities",
+        "dashboard-activity",
+        "friend-details",
+        "user-balance",
+      ]
+    );
 
     return NextResponse.json(
       {
         message: "Group created successfully",
         group: {
-          ...populatedGroup!.toJSON(),
-          members,
-          memberCount: members.length,
+          _id: groupRow.id,
+          name: groupRow.name,
+          description: groupRow.description,
+          image: groupRow.image,
+          type: groupRow.type,
+          currency: groupRow.currency,
+          createdBy: createdByUser
+            ? {
+                _id: createdByUser.id,
+                name: createdByUser.name,
+                email: createdByUser.email,
+                profilePicture: createdByUser.profile_picture || null,
+              }
+            : null,
+          isActive: groupRow.is_active,
+          createdAt: groupRow.created_at,
+          updatedAt: groupRow.updated_at,
+          members: hydratedMembers,
+          memberCount: hydratedMembers.length,
           userRole: "admin",
         },
       },
@@ -202,3 +214,4 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+

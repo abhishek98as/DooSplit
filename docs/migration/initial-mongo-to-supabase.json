@@ -2,73 +2,61 @@
   "runId": "initial",
   "dryRun": false,
   "batchSize": 200,
-  "startedAt": "2026-02-11T16:56:29.116Z",
+  "startedAt": "2026-02-11T18:17:22.370Z",
   "collections": [
     {
       "collection": "users",
       "table": "users",
       "total": 10,
-      "processed": 0,
-      "errors": 10,
+      "processed": 10,
+      "errors": 0,
       "dryRun": false,
-      "details": [
-        "Could not find the table 'public.users' in the schema cache"
-      ]
+      "details": []
     },
     {
       "collection": "friends",
       "table": "friendships",
       "total": 18,
-      "processed": 0,
-      "errors": 18,
+      "processed": 18,
+      "errors": 0,
       "dryRun": false,
-      "details": [
-        "Could not find the table 'public.friendships' in the schema cache"
-      ]
+      "details": []
     },
     {
       "collection": "groups",
       "table": "groups",
       "total": 2,
-      "processed": 0,
-      "errors": 2,
+      "processed": 2,
+      "errors": 0,
       "dryRun": false,
-      "details": [
-        "Could not find the table 'public.groups' in the schema cache"
-      ]
+      "details": []
     },
     {
       "collection": "groupmembers",
       "table": "group_members",
       "total": 3,
-      "processed": 0,
-      "errors": 3,
+      "processed": 3,
+      "errors": 0,
       "dryRun": false,
-      "details": [
-        "Could not find the table 'public.group_members' in the schema cache"
-      ]
+      "details": []
     },
     {
       "collection": "expenses",
       "table": "expenses",
       "total": 4,
-      "processed": 0,
-      "errors": 4,
+      "processed": 4,
+      "errors": 0,
       "dryRun": false,
-      "details": [
-        "Could not find the table 'public.expenses' in the schema cache"
-      ]
+      "details": []
     },
     {
       "collection": "expenseparticipants",
       "table": "expense_participants",
       "total": 10,
-      "processed": 0,
-      "errors": 10,
+      "processed": 10,
+      "errors": 0,
       "dryRun": false,
-      "details": [
-        "Could not find the table 'public.expense_participants' in the schema cache"
-      ]
+      "details": []
     },
     {
       "collection": "settlements",
@@ -83,23 +71,19 @@
       "collection": "notifications",
       "table": "notifications",
       "total": 12,
-      "processed": 0,
-      "errors": 12,
+      "processed": 12,
+      "errors": 0,
       "dryRun": false,
-      "details": [
-        "Could not find the table 'public.notifications' in the schema cache"
-      ]
+      "details": []
     },
     {
       "collection": "invitations",
       "table": "invitations",
       "total": 5,
-      "processed": 0,
-      "errors": 5,
+      "processed": 5,
+      "errors": 0,
       "dryRun": false,
-      "details": [
-        "Could not find the table 'public.invitations' in the schema cache"
-      ]
+      "details": []
     },
     {
       "collection": "paymentreminders",
@@ -111,5 +95,5 @@
       "details": []
     }
   ],
-  "finishedAt": "2026-02-11T16:56:31.223Z"
+  "finishedAt": "2026-02-11T18:17:24.541Z"
 }

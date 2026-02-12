@@ -1,15 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
-import dbConnect from "@/lib/db";
-import User from "@/models/User";
 import { sendEmailVerification } from "@/lib/email";
+import { requireSupabaseAdmin } from "@/lib/supabase/app";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { email } = body;
+    const email = String(body?.email || "").toLowerCase().trim();
 
     if (!email) {
       return NextResponse.json(
@@ -18,45 +17,54 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    await dbConnect();
+    const supabase = requireSupabaseAdmin();
+    const { data: user, error } = await supabase
+      .from("users")
+      .select("id,email,name,email_verified,auth_provider")
+      .eq("email", email)
+      .maybeSingle();
 
-    // Find user by email
-    const user = await User.findOne({ email: email.toLowerCase() });
-
+    if (error) {
+      throw error;
+    }
     if (!user) {
       return NextResponse.json(
         { error: "No account found with this email address" },
         { status: 404 }
       );
     }
-
-    // Check if already verified
-    if (user.emailVerified) {
+    if (user.email_verified) {
       return NextResponse.json(
         { error: "Email is already verified" },
         { status: 400 }
       );
     }
-
-    // Check if user uses email/password auth
-    if (user.authProvider !== "email") {
+    if (user.auth_provider !== "email") {
       return NextResponse.json(
         { error: "This account uses a different authentication method" },
         { status: 400 }
       );
     }
 
-    // Generate new verification token
     const verificationToken = crypto.randomBytes(32).toString("hex");
-    const verificationTokenExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+    const verificationTokenExpires = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
-    // Update user with new token
-    user.resetPasswordToken = verificationToken;
-    user.resetPasswordExpires = verificationTokenExpires;
-    await user.save();
+    const { error: updateError } = await supabase
+      .from("users")
+      .update({
+        reset_password_token: verificationToken,
+        reset_password_expires: verificationTokenExpires.toISOString(),
+      })
+      .eq("id", user.id);
 
-    // Send verification email
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.NEXTAUTH_URL || "http://localhost:3000";
+    if (updateError) {
+      throw updateError;
+    }
+
+    const appUrl =
+      process.env.NEXT_PUBLIC_APP_URL ||
+      process.env.NEXTAUTH_URL ||
+      "http://localhost:3000";
     const verificationUrl = `${appUrl}/api/auth/verify-email?token=${verificationToken}`;
 
     await sendEmailVerification({
@@ -77,3 +85,4 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+

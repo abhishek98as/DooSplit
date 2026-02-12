@@ -1,180 +1,179 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import dbConnect from "@/lib/db";
-import Expense from "@/models/Expense";
-import ExpenseParticipant from "@/models/ExpenseParticipant";
-import Settlement from "@/models/Settlement";
-import { authOptions } from "@/lib/auth";
-import mongoose from "mongoose";
 import {
   CACHE_TTL,
   buildUserScopedCacheKey,
   getOrSetCacheJson,
 } from "@/lib/cache";
+import { requireUser } from "@/lib/auth/require-user";
+import { requireSupabaseAdmin } from "@/lib/supabase/app";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
-// GET /api/analytics - Get analytics data
+function getStartDate(timeframe: string): Date {
+  const now = new Date();
+  switch (timeframe) {
+    case "week":
+      return new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    case "month":
+      return new Date(now.getFullYear(), now.getMonth(), 1);
+    case "quarter": {
+      const quarter = Math.floor(now.getMonth() / 3);
+      return new Date(now.getFullYear(), quarter * 3, 1);
+    }
+    case "year":
+      return new Date(now.getFullYear(), 0, 1);
+    default:
+      return new Date(0);
+  }
+}
+
+function round2(value: number): number {
+  return Number(value.toFixed(2));
+}
+
 export async function GET(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const auth = await requireUser(request);
+    if (auth.response || !auth.user) {
+      return auth.response as NextResponse;
     }
+    const userId = auth.user.id;
 
     const searchParams = request.nextUrl.searchParams;
-    const timeframe = searchParams.get("timeframe") || "month"; // month, quarter, year, all
+    const timeframe = searchParams.get("timeframe") || "month";
+    const startDate = getStartDate(timeframe);
+    const supabase = requireSupabaseAdmin();
 
-    await dbConnect();
-
-    const userId = new mongoose.Types.ObjectId(session.user.id);
     const cacheKey = buildUserScopedCacheKey(
       "analytics",
-      session.user.id,
+      userId,
       `timeframe=${timeframe}`
     );
 
     const payload = await getOrSetCacheJson(cacheKey, CACHE_TTL.analytics, async () => {
-      // Calculate date range
-      const now = new Date();
-      let startDate: Date;
-
-      switch (timeframe) {
-        case "week":
-          startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-          break;
-        case "month":
-          startDate = new Date(now.getFullYear(), now.getMonth(), 1);
-          break;
-        case "quarter":
-          const quarter = Math.floor(now.getMonth() / 3);
-          startDate = new Date(now.getFullYear(), quarter * 3, 1);
-          break;
-        case "year":
-          startDate = new Date(now.getFullYear(), 0, 1);
-          break;
-        default:
-          startDate = new Date(0); // All time
+      const { data: userParticipants, error: participantsError } = await supabase
+        .from("expense_participants")
+        .select("expense_id,owed_amount,paid_amount")
+        .eq("user_id", userId);
+      if (participantsError) {
+        throw participantsError;
       }
 
-      // Get user's expenses
-      const participantRecords = await ExpenseParticipant.find({ userId });
-      const expenseIds = participantRecords.map((p) => p.expenseId);
+      const expenseIds = Array.from(
+        new Set((userParticipants || []).map((participant: any) => String(participant.expense_id)))
+      );
+      if (expenseIds.length === 0) {
+        return {
+          summary: {
+            totalExpenses: 0,
+            totalSpent: 0,
+            totalPaid: 0,
+            totalSettled: 0,
+            averageExpense: 0,
+          },
+          categoryBreakdown: [],
+          monthlyTrend: [],
+          topCategories: [],
+        };
+      }
 
-      const expenses = await Expense.find({
-        _id: { $in: expenseIds },
-        isDeleted: false,
-        date: { $gte: startDate },
-      }).lean();
+      const { data: expenses, error: expensesError } = await supabase
+        .from("expenses")
+        .select("id,amount,category,date,is_deleted")
+        .in("id", expenseIds)
+        .eq("is_deleted", false)
+        .gte("date", startDate.toISOString());
+      if (expensesError) {
+        throw expensesError;
+      }
 
-      // Category breakdown
-      const categoryData = expenses.reduce((acc: any, expense: any) => {
-        const category = expense.category || "other";
+      const expenseRows = expenses || [];
+      const filteredExpenseIds = new Set(expenseRows.map((row: any) => String(row.id)));
+      const participantByExpense = new Map<string, any>();
+      for (const participant of userParticipants || []) {
+        const expenseId = String(participant.expense_id);
+        if (filteredExpenseIds.has(expenseId)) {
+          participantByExpense.set(expenseId, participant);
+        }
+      }
+
+      const categoryData = expenseRows.reduce((acc: Record<string, { count: number; total: number }>, expense: any) => {
+        const category = String(expense.category || "other");
         if (!acc[category]) {
           acc[category] = { count: 0, total: 0 };
         }
         acc[category].count += 1;
-        acc[category].total += expense.amount;
+        acc[category].total += Number(expense.amount || 0);
         return acc;
       }, {});
 
       const categoryBreakdown = Object.keys(categoryData).map((category) => ({
         category,
         count: categoryData[category].count,
-        total: categoryData[category].total,
+        total: round2(categoryData[category].total),
       }));
 
-      // Monthly trend (last 6 months) - batch participant queries
-      const monthlyData = [];
-      const allMonthExpenseIds: string[] = [];
-
-      // First pass: collect all expense IDs for all months
+      const now = new Date();
+      const monthlyTrend: Array<{ month: string; expenses: number; total: number }> = [];
       for (let i = 5; i >= 0; i--) {
         const monthStart = new Date(now.getFullYear(), now.getMonth() - i, 1);
-        const monthEnd = new Date(now.getFullYear(), now.getMonth() - i + 1, 0);
+        const monthEnd = new Date(now.getFullYear(), now.getMonth() - i + 1, 0, 23, 59, 59, 999);
 
-        const monthExpenses = expenses.filter((e: any) => {
-          const expenseDate = new Date(e.date);
+        const monthExpenses = expenseRows.filter((expense: any) => {
+          const expenseDate = new Date(expense.date);
           return expenseDate >= monthStart && expenseDate <= monthEnd;
         });
 
-        monthlyData.push({
+        let totalSpentForMonth = 0;
+        for (const expense of monthExpenses) {
+          const participant = participantByExpense.get(String(expense.id));
+          totalSpentForMonth += Number(participant?.owed_amount || 0);
+        }
+
+        monthlyTrend.push({
           month: monthStart.toLocaleDateString("en-US", {
             month: "short",
             year: "numeric",
           }),
           expenses: monthExpenses.length,
-          expenseIds: monthExpenses.map((e: any) => e._id.toString()),
-          total: 0, // Will be filled in second pass
+          total: round2(totalSpentForMonth),
         });
-
-        allMonthExpenseIds.push(...monthExpenses.map((e: any) => e._id));
       }
 
-      // Batch query for all monthly participants
-      const allMonthParticipants = await ExpenseParticipant.find({
-        userId,
-        expenseId: { $in: allMonthExpenseIds },
-      });
+      let totalSpent = 0;
+      let totalPaid = 0;
+      for (const participant of participantByExpense.values()) {
+        totalSpent += Number(participant.owed_amount || 0);
+        totalPaid += Number(participant.paid_amount || 0);
+      }
 
-      // Group participants by expense ID for quick lookup
-      const participantsByExpense = new Map();
-      allMonthParticipants.forEach((p: any) => {
-        const key = p.expenseId.toString();
-        if (!participantsByExpense.has(key)) {
-          participantsByExpense.set(key, []);
-        }
-        participantsByExpense.get(key).push(p);
-      });
+      const { data: settlements, error: settlementsError } = await supabase
+        .from("settlements")
+        .select("amount")
+        .or(`from_user_id.eq.${userId},to_user_id.eq.${userId}`)
+        .gte("date", startDate.toISOString());
+      if (settlementsError) {
+        throw settlementsError;
+      }
 
-      // Second pass: calculate totals using batched data
-      monthlyData.forEach((monthData: any) => {
-        let totalSpent = 0;
-        monthData.expenseIds.forEach((expenseId: string) => {
-          const participants = participantsByExpense.get(expenseId) || [];
-          totalSpent += participants.reduce((sum: number, p: any) => sum + p.owedAmount, 0);
-        });
-        monthData.total = totalSpent;
-        delete monthData.expenseIds; // Clean up temporary field
-      });
-
-      // Total statistics
-      const allParticipants = await ExpenseParticipant.find({
-        userId,
-        expenseId: { $in: expenses.map((e: any) => e._id) },
-      });
-
-      const totalSpent = allParticipants.reduce(
-        (sum, p) => sum + p.owedAmount,
-        0
-      );
-      const totalPaid = allParticipants.reduce(
-        (sum, p) => sum + p.paidAmount,
+      const totalSettled = (settlements || []).reduce(
+        (sum: number, settlement: any) => sum + Number(settlement.amount || 0),
         0
       );
 
-      // Settlement stats
-      const settlements = await Settlement.find({
-        $or: [{ fromUserId: userId }, { toUserId: userId }],
-        date: { $gte: startDate },
-      });
-
-      const totalSettled = settlements.reduce(
-        (sum, s) => sum + s.amount,
-        0
-      );
+      const summary = {
+        totalExpenses: expenseRows.length,
+        totalSpent: round2(totalSpent),
+        totalPaid: round2(totalPaid),
+        totalSettled: round2(totalSettled),
+        averageExpense: expenseRows.length > 0 ? round2(totalSpent / expenseRows.length) : 0,
+      };
 
       return {
-        summary: {
-          totalExpenses: expenses.length,
-          totalSpent,
-          totalPaid,
-          totalSettled,
-          averageExpense: expenses.length > 0 ? totalSpent / expenses.length : 0,
-        },
+        summary,
         categoryBreakdown,
-        monthlyTrend: monthlyData,
-        topCategories: categoryBreakdown
+        monthlyTrend,
+        topCategories: [...categoryBreakdown]
           .sort((a, b) => b.total - a.total)
           .slice(0, 5),
       };
@@ -189,4 +188,3 @@ export async function GET(request: NextRequest) {
     );
   }
 }
-

@@ -1,30 +1,34 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import bcrypt from "bcryptjs";
-import dbConnect from "@/lib/db";
-import User from "@/models/User";
-import { authOptions } from "@/lib/auth";
-
 import { invalidateUsersCache } from "@/lib/cache";
+import { requireUser } from "@/lib/auth/require-user";
+import { mapUserRow, requireSupabaseAdmin } from "@/lib/supabase/app";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
-
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const auth = await requireUser(request);
+    if (auth.response || !auth.user) {
+      return auth.response as NextResponse;
     }
 
-    await dbConnect();
+    const supabase = requireSupabaseAdmin();
+    const { data: row, error } = await supabase
+      .from("users")
+      .select(
+        "id,email,name,phone,profile_picture,default_currency,language,timezone,push_notifications_enabled,email_notifications_enabled,push_subscription,role,is_active,is_dummy,auth_provider,email_verified,created_at,updated_at"
+      )
+      .eq("id", auth.user.id)
+      .maybeSingle();
 
-    const user = await User.findById(session.user.id).select("-password");
-    if (!user) {
+    if (error) {
+      throw error;
+    }
+    if (!row) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
-    return NextResponse.json({ user }, { status: 200 });
+    return NextResponse.json({ user: mapUserRow(row) }, { status: 200 });
   } catch (error: any) {
     console.error("Get profile error:", error);
     return NextResponse.json(
@@ -36,61 +40,67 @@ export async function GET(request: NextRequest) {
 
 export async function PUT(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
-
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const auth = await requireUser(request);
+    if (auth.response || !auth.user) {
+      return auth.response as NextResponse;
     }
 
     const body = await request.json();
-    const { name, phone, profilePicture, defaultCurrency, language, timezone, pushNotificationsEnabled, emailNotificationsEnabled } =
-      body;
+    const {
+      name,
+      phone,
+      profilePicture,
+      defaultCurrency,
+      language,
+      timezone,
+      pushNotificationsEnabled,
+      emailNotificationsEnabled,
+      pushSubscription,
+    } = body || {};
 
-    await dbConnect();
+    const updatePayload: Record<string, any> = {};
+    if (name !== undefined) updatePayload.name = String(name).trim();
+    if (phone !== undefined) updatePayload.phone = phone ? String(phone).trim() : null;
+    if (profilePicture !== undefined) updatePayload.profile_picture = profilePicture || null;
+    if (defaultCurrency !== undefined) updatePayload.default_currency = defaultCurrency;
+    if (language !== undefined) updatePayload.language = language;
+    if (timezone !== undefined) updatePayload.timezone = timezone;
+    if (pushNotificationsEnabled !== undefined) {
+      updatePayload.push_notifications_enabled = !!pushNotificationsEnabled;
+    }
+    if (emailNotificationsEnabled !== undefined) {
+      updatePayload.email_notifications_enabled = !!emailNotificationsEnabled;
+    }
+    if (pushSubscription !== undefined) {
+      updatePayload.push_subscription = pushSubscription || null;
+    }
 
-    const user = await User.findById(session.user.id);
-    if (!user) {
+    const supabase = requireSupabaseAdmin();
+    const { data: row, error } = await supabase
+      .from("users")
+      .update(updatePayload)
+      .eq("id", auth.user.id)
+      .select(
+        "id,email,name,phone,profile_picture,default_currency,language,timezone,push_notifications_enabled,email_notifications_enabled,push_subscription,role,is_active,is_dummy,auth_provider,email_verified,created_at,updated_at"
+      )
+      .maybeSingle();
+
+    if (error) {
+      throw error;
+    }
+    if (!row) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
-    // Update fields
-    if (name) user.name = name.trim();
-    if (phone !== undefined) user.phone = phone?.trim() || undefined;
-    if (profilePicture !== undefined) user.profilePicture = profilePicture;
-    if (defaultCurrency) user.defaultCurrency = defaultCurrency;
-    if (language) user.language = language;
-    if (timezone) user.timezone = timezone;
-    if (pushNotificationsEnabled !== undefined) user.pushNotificationsEnabled = pushNotificationsEnabled;
-    if (emailNotificationsEnabled !== undefined) user.emailNotificationsEnabled = emailNotificationsEnabled;
-
-    await user.save();
-
-    // Invalidate caches that display user name/avatar
     await invalidateUsersCache(
-      [session.user.id],
-      [
-        "friends",
-        "groups",
-        "activities",
-        "dashboard-activity",
-        "friend-details",
-        "expenses",
-      ]
+      [auth.user.id],
+      ["friends", "groups", "activities", "dashboard-activity", "friend-details", "expenses"]
     );
 
     return NextResponse.json(
       {
         message: "Profile updated successfully",
-        user: {
-          id: user._id,
-          name: user.name,
-          email: user.email,
-          phone: user.phone,
-          profilePicture: user.profilePicture,
-          defaultCurrency: user.defaultCurrency,
-          language: user.language,
-          timezone: user.timezone,
-        },
+        user: mapUserRow(row),
       },
       { status: 200 }
     );
@@ -102,3 +112,4 @@ export async function PUT(request: NextRequest) {
     );
   }
 }
+

@@ -1,9 +1,18 @@
 import { AuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
-import dbConnect from "@/lib/db";
-import User from "@/models/User";
 import { adminAuth, initError as firebaseInitError } from "./firebase-admin";
+import { newAppId, requireSupabaseAdmin } from "@/lib/supabase/app";
+
+function toSessionUser(row: any) {
+  return {
+    id: String(row.id),
+    email: row.email,
+    name: row.name,
+    image: row.profile_picture || null,
+    role: row.role || "user",
+  };
+}
 
 export const authOptions: AuthOptions = {
   providers: [
@@ -20,17 +29,19 @@ export const authOptions: AuthOptions = {
         if (!credentials?.idToken) {
           throw new Error("No Firebase ID token provided");
         }
-
         if (!adminAuth) {
           console.error("Firebase Admin SDK not initialized:", firebaseInitError);
-          throw new Error("Google sign-in is unavailable. Please use email/password login.");
+          throw new Error(
+            "Google sign-in is unavailable. Please use email/password login."
+          );
         }
 
         try {
-          // Verify Firebase ID token
           const decodedToken = await adminAuth.verifyIdToken(credentials.idToken);
           const firebaseUid = decodedToken.uid;
-          const email = decodedToken.email || credentials.email;
+          const email = (decodedToken.email || credentials.email || "")
+            .toLowerCase()
+            .trim();
           const name = decodedToken.name || credentials.name || "User";
           const image = decodedToken.picture || credentials.image || null;
 
@@ -38,58 +49,75 @@ export const authOptions: AuthOptions = {
             throw new Error("No email associated with this account");
           }
 
-          await dbConnect();
-          
-          // Check if user already exists with email/password auth
-          let user = await User.findOne({ email: email.toLowerCase(), isDummy: { $ne: true } });
+          const supabase = requireSupabaseAdmin();
+          const { data: existing, error: existingError } = await supabase
+            .from("users")
+            .select("*")
+            .eq("email", email)
+            .eq("is_dummy", false)
+            .maybeSingle();
 
-          if (user && user.authProvider === "email") {
-            // Email account exists - prevent Firebase sign-in
-            throw new Error("An account with this email already exists using email/password login. Please use email/password to sign in instead.");
+          if (existingError) {
+            throw existingError;
           }
 
-          if (!user) {
-            // Create new user from Firebase auth
+          if (existing && existing.auth_provider === "email") {
+            throw new Error(
+              "An account with this email already exists using email/password login. Please use email/password to sign in instead."
+            );
+          }
+
+          let userRow = existing;
+          if (!userRow) {
             const randomPassword = await bcrypt.hash(
               Math.random().toString(36).slice(-12) + firebaseUid,
               10
             );
+            const newId = newAppId();
+            const { data: created, error: createError } = await supabase
+              .from("users")
+              .insert({
+                id: newId,
+                email,
+                name,
+                profile_picture: image,
+                password: randomPassword,
+                email_verified: !!decodedToken.email_verified,
+                auth_provider: "firebase",
+                is_active: true,
+                is_dummy: false,
+                role: "user",
+              })
+              .select("*")
+              .single();
 
-            user = await User.create({
-              email: email.toLowerCase(),
-              name,
-              profilePicture: image || undefined,
-              password: randomPassword,
-              emailVerified: decodedToken.email_verified || false,
-              authProvider: "firebase",
-              isActive: true,
-            });
-          } else {
-            // Existing Firebase user - update profile picture if changed
-            if (image && user.profilePicture !== image) {
-              user.profilePicture = image;
-              await user.save();
+            if (createError || !created) {
+              throw createError || new Error("Failed to create user");
+            }
+            userRow = created;
+          } else if (image && userRow.profile_picture !== image) {
+            const { data: updated } = await supabase
+              .from("users")
+              .update({ profile_picture: image })
+              .eq("id", userRow.id)
+              .select("*")
+              .maybeSingle();
+            if (updated) {
+              userRow = updated;
             }
           }
 
-          if (!user.isActive) {
+          if (userRow.is_active === false) {
             throw new Error("Account is deactivated");
           }
 
-          return {
-            id: user._id.toString(),
-            email: user.email,
-            name: user.name,
-            image: user.profilePicture,
-            role: user.role,
-          };
+          return toSessionUser(userRow);
         } catch (error: any) {
           console.error("Firebase auth error:", error.message);
           throw new Error(error.message || "Authentication failed");
         }
       },
     }),
-    // Legacy credentials provider (email/password directly against MongoDB)
     CredentialsProvider({
       id: "credentials",
       name: "Credentials",
@@ -104,66 +132,56 @@ export const authOptions: AuthOptions = {
         }
 
         const rememberMe = credentials.rememberMe === "true";
+        const email = credentials.email.toLowerCase().trim();
 
         try {
-          await dbConnect();
-        } catch (dbError: any) {
-          console.error("❌ Database connection failed during login:", dbError.message);
-          throw new Error("Service temporarily unavailable. Please try again.");
-        }
+          const supabase = requireSupabaseAdmin();
+          const { data: user, error } = await supabase
+            .from("users")
+            .select("*")
+            .eq("email", email)
+            .maybeSingle();
 
-        try {
-          const user = await User.findOne({ email: credentials.email.toLowerCase() }).select(
-            "+password"
-          );
-
+          if (error) {
+            throw error;
+          }
           if (!user) {
-            console.log(`❌ Login failed: User not found for email ${credentials.email.toLowerCase()}`);
             throw new Error("Invalid email or password");
           }
-
-          if (!user.isActive) {
-            console.log(`❌ Login failed: Account deactivated for ${credentials.email.toLowerCase()}`);
+          if (user.is_active === false) {
             throw new Error("Account is deactivated");
           }
-
           if (!user.password) {
-            console.log(`❌ Login failed: No password set for ${credentials.email.toLowerCase()}`);
             throw new Error("Invalid email or password");
           }
 
           const isPasswordValid = await bcrypt.compare(
             credentials.password,
-            user.password
+            String(user.password)
           );
-
           if (!isPasswordValid) {
-            console.log(`❌ Login failed: Password mismatch for ${credentials.email.toLowerCase()}`);
             throw new Error("Invalid email or password");
           }
 
-          // Check email verification for email/password accounts
-          if (user.authProvider === "email" && !user.emailVerified) {
-            console.log(`❌ Login failed: Email not verified for ${credentials.email.toLowerCase()}`);
-            throw new Error("Please verify your email address before signing in. Check your inbox for the verification link.");
+          if (user.auth_provider === "email" && !user.email_verified) {
+            throw new Error(
+              "Please verify your email address before signing in. Check your inbox for the verification link."
+            );
           }
 
-          console.log(`✅ Login successful for ${user.email} (role: ${user.role}, verified: ${user.emailVerified})`);
-
           return {
-            id: user._id.toString(),
-            email: user.email,
-            name: user.name,
-            image: user.profilePicture,
-            role: user.role,
+            ...toSessionUser(user),
             rememberMe,
           };
         } catch (error: any) {
-          // Re-throw auth errors as-is, wrap unexpected errors
-          if (error.message.includes("Invalid") || error.message.includes("deactivated")) {
+          if (
+            error.message.includes("Invalid") ||
+            error.message.includes("deactivated") ||
+            error.message.includes("verify")
+          ) {
             throw error;
           }
-          console.error("❌ Unexpected error during login:", error.message);
+          console.error("Unexpected error during login:", error.message);
           throw new Error("Login failed. Please try again.");
         }
       },
@@ -177,7 +195,6 @@ export const authOptions: AuthOptions = {
         token.rememberMe = (user as any).rememberMe || false;
       }
 
-      // Update token if session update is triggered
       if (trigger === "update" && session) {
         token = { ...token, ...session };
       }
@@ -190,13 +207,14 @@ export const authOptions: AuthOptions = {
         session.user.role = token.role as string;
       }
 
-      // Set custom session expiry based on rememberMe preference
       if (token.rememberMe) {
-        // Extend session to 90 days for "remember me"
-        session.expires = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString();
+        session.expires = new Date(
+          Date.now() + 90 * 24 * 60 * 60 * 1000
+        ).toISOString();
       } else {
-        // Default to 30 days
-        session.expires = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+        session.expires = new Date(
+          Date.now() + 30 * 24 * 60 * 60 * 1000
+        ).toISOString();
       }
 
       return session;
@@ -209,8 +227,11 @@ export const authOptions: AuthOptions = {
   },
   session: {
     strategy: "jwt",
-    maxAge: 30 * 24 * 60 * 60, // 30 days
+    maxAge: 30 * 24 * 60 * 60,
   },
   secret: process.env.NEXTAUTH_SECRET,
-  debug: process.env.NODE_ENV !== "production" || process.env.NEXTAUTH_DEBUG === "true",
+  debug:
+    process.env.NODE_ENV !== "production" ||
+    process.env.NEXTAUTH_DEBUG === "true",
 };
+

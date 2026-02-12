@@ -1,47 +1,61 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import dbConnect from "@/lib/db";
-import Notification from "@/models/Notification";
-import { authOptions } from "@/lib/auth";
-import mongoose from "mongoose";
-import { mirrorUpsertToSupabase } from "@/lib/data";
+import { requireUser } from "@/lib/auth/require-user";
+import { requireSupabaseAdmin } from "@/lib/supabase/app";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
-// GET /api/notifications - Get user notifications
+function mapNotificationRow(row: any) {
+  return {
+    _id: row.id,
+    id: row.id,
+    userId: row.user_id,
+    type: row.type,
+    message: row.message,
+    data: row.data || {},
+    isRead: !!row.is_read,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 export async function GET(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const auth = await requireUser(request);
+    if (auth.response || !auth.user) {
+      return auth.response as NextResponse;
     }
 
-    const searchParams = request.nextUrl.searchParams;
-    const unreadOnly = searchParams.get("unreadOnly") === "true";
+    const unreadOnly = request.nextUrl.searchParams.get("unreadOnly") === "true";
+    const supabase = requireSupabaseAdmin();
 
-    await dbConnect();
-
-    const userId = new mongoose.Types.ObjectId(session.user.id);
-
-    const query: any = { userId };
+    let query = supabase
+      .from("notifications")
+      .select("*")
+      .eq("user_id", auth.user.id)
+      .order("created_at", { ascending: false })
+      .limit(50);
     if (unreadOnly) {
-      query.isRead = false;
+      query = query.eq("is_read", false);
     }
 
-    const notifications = await Notification.find(query)
-      .sort({ createdAt: -1 })
-      .limit(50)
-      .lean();
+    const { data: notifications, error } = await query;
+    if (error) {
+      throw error;
+    }
 
-    const unreadCount = await Notification.countDocuments({
-      userId,
-      isRead: false,
-    });
+    const { count: unreadCount, error: countError } = await supabase
+      .from("notifications")
+      .select("*", { count: "exact", head: true })
+      .eq("user_id", auth.user.id)
+      .eq("is_read", false);
+    if (countError) {
+      throw countError;
+    }
 
     return NextResponse.json(
       {
-        notifications,
-        unreadCount,
+        notifications: (notifications || []).map(mapNotificationRow),
+        unreadCount: unreadCount || 0,
       },
       { status: 200 }
     );
@@ -54,39 +68,22 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// PUT /api/notifications - Mark all as read
 export async function PUT(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const auth = await requireUser(request);
+    if (auth.response || !auth.user) {
+      return auth.response as NextResponse;
     }
 
-    await dbConnect();
+    const supabase = requireSupabaseAdmin();
+    const { error } = await supabase
+      .from("notifications")
+      .update({ is_read: true })
+      .eq("user_id", auth.user.id)
+      .eq("is_read", false);
 
-    const userId = new mongoose.Types.ObjectId(session.user.id);
-
-    await Notification.updateMany(
-      { userId, isRead: false },
-      { isRead: true }
-    );
-
-    const updated = await Notification.find({ userId })
-      .sort({ createdAt: -1 })
-      .limit(50)
-      .lean();
-
-    for (const item of updated as any[]) {
-      await mirrorUpsertToSupabase("notifications", item._id.toString(), {
-        id: item._id.toString(),
-        user_id: item.userId.toString(),
-        type: item.type,
-        message: item.message,
-        data: item.data || {},
-        is_read: true,
-        created_at: item.createdAt,
-        updated_at: item.updatedAt,
-      });
+    if (error) {
+      throw error;
     }
 
     return NextResponse.json(

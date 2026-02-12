@@ -7,15 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "admin:reset": "node scripts/admin/force-reset-admin.js",
-    "perf:seed": "node scripts/perf/seed-test-data.js",
-    "perf:bench": "node scripts/perf/benchmark-read-flow.js",
-    "perf:cleanup": "node scripts/perf/cleanup-test-data.js",
-    "migrate:mongodb-to-supabase": "node scripts/migrate/mongo-to-supabase.js",
-    "migrate:validate-parity": "node scripts/migrate/validate-parity.js",
-    "migrate:reconcile": "node scripts/migrate/reconcile-diffs.js",
-    "migrate:imagekit-to-supabase": "node scripts/migrate/imagekit-to-supabase.js",
-    "validate:supabase": "node scripts/validate-supabase-config.js"
+    "validate:supabase": "node scripts/validate-supabase-config.js",
+    "seed:supabase": "node scripts/seed-supabase.js"
   },
   "dependencies": {
     "@imagekit/nodejs": "^7.3.0",
@@ -28,8 +21,6 @@
     "jspdf": "^2.5.2",
     "jspdf-autotable": "^3.8.4",
     "lucide-react": "^0.563.0",
-    "mongodb": "^7.1.0",
-    "mongoose": "^9.1.6",
     "next": "15.5.12",
     "next-auth": "^4.24.13",
     "nodemailer": "^7.0.13",

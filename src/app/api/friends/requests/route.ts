@@ -1,40 +1,58 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import dbConnect from "@/lib/db";
-import Friend from "@/models/Friend";
-import { authOptions } from "@/lib/auth";
-import mongoose from "mongoose";
+import { requireUser } from "@/lib/auth/require-user";
+import { requireSupabaseAdmin } from "@/lib/supabase/app";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const auth = await requireUser(request);
+    if (auth.response || !auth.user) {
+      return auth.response as NextResponse;
     }
 
-    await dbConnect();
+    const supabase = requireSupabaseAdmin();
+    const { data: pendingRequests, error } = await supabase
+      .from("friendships")
+      .select("id,friend_id,created_at")
+      .eq("user_id", auth.user.id)
+      .eq("status", "pending")
+      .neq("requested_by", auth.user.id);
 
-    const userId = new mongoose.Types.ObjectId(session.user.id);
+    if (error) {
+      throw error;
+    }
 
-    // Find pending requests where current user is the receiver
-    const pendingRequests = await Friend.find({
-      userId,
-      status: "pending",
-      requestedBy: { $ne: userId },
-    }).populate("friendId", "name email profilePicture");
+    const friendIds = Array.from(
+      new Set((pendingRequests || []).map((item: any) => String(item.friend_id)))
+    );
+    let usersMap = new Map<string, any>();
+    if (friendIds.length > 0) {
+      const { data: users, error: usersError } = await supabase
+        .from("users")
+        .select("id,name,email,profile_picture")
+        .in("id", friendIds);
+      if (usersError) {
+        throw usersError;
+      }
+      usersMap = new Map((users || []).map((u: any) => [String(u.id), u]));
+    }
 
-    const requests = pendingRequests.map((req: any) => ({
-      id: req._id,
-      from: {
-        id: req.friendId._id,
-        name: req.friendId.name,
-        email: req.friendId.email,
-        profilePicture: req.friendId.profilePicture,
-      },
-      createdAt: req.createdAt,
-    }));
+    const requests = (pendingRequests || []).map((req: any) => {
+      const from = usersMap.get(String(req.friend_id));
+      return {
+        id: req.id,
+        from: from
+          ? {
+              id: from.id,
+              name: from.name,
+              email: from.email,
+              profilePicture: from.profile_picture || null,
+            }
+          : null,
+        createdAt: req.created_at,
+      };
+    });
 
     return NextResponse.json({ requests }, { status: 200 });
   } catch (error: any) {

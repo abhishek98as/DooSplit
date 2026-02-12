@@ -1,68 +1,86 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import dbConnect from "@/lib/db";
-import PaymentReminder from "@/models/PaymentReminder";
-import { authOptions } from "@/lib/auth";
 import { sendPaymentReminder } from "@/lib/email";
-import mongoose from "mongoose";
+import { requireUser } from "@/lib/auth/require-user";
+import { newAppId, requireSupabaseAdmin } from "@/lib/supabase/app";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
-// GET /api/payment-reminders - Get payment reminders for current user
+async function fetchUsersMap(ids: string[]) {
+  const unique = Array.from(new Set(ids.filter(Boolean)));
+  if (unique.length === 0) {
+    return new Map<string, any>();
+  }
+  const supabase = requireSupabaseAdmin();
+  const { data: users, error } = await supabase
+    .from("users")
+    .select("id,name,email,profile_picture")
+    .in("id", unique);
+  if (error) {
+    throw error;
+  }
+  return new Map((users || []).map((user: any) => [String(user.id), user]));
+}
+
 export async function GET(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const auth = await requireUser(request);
+    if (auth.response || !auth.user) {
+      return auth.response as NextResponse;
     }
 
-    const { searchParams } = new URL(request.url);
-    const type = searchParams.get("type") || "received"; // "received" or "sent"
+    const type = request.nextUrl.searchParams.get("type") || "received";
+    const supabase = requireSupabaseAdmin();
+    let query = supabase
+      .from("payment_reminders")
+      .select("*")
+      .order("created_at", { ascending: false });
+    query = type === "sent"
+      ? query.eq("from_user_id", auth.user.id)
+      : query.eq("to_user_id", auth.user.id);
 
-    await dbConnect();
-    const userId = new mongoose.Types.ObjectId(session.user.id);
-
-    let query;
-    if (type === "sent") {
-      query = { fromUserId: userId };
-    } else {
-      query = { toUserId: userId };
+    const { data: reminders, error } = await query;
+    if (error) {
+      throw error;
     }
 
-    const reminders = await PaymentReminder.find(query)
-      .populate("fromUserId", "name email profilePicture")
-      .populate("toUserId", "name email profilePicture")
-      .sort({ createdAt: -1 });
+    const usersMap = await fetchUsersMap(
+      (reminders || []).flatMap((r: any) => [r.from_user_id, r.to_user_id])
+    );
 
-    const formattedReminders = reminders.map(reminder => ({
-      id: reminder._id,
-      fromUser: {
-        id: (reminder.fromUserId as any)._id,
-        name: (reminder.fromUserId as any).name,
-        email: (reminder.fromUserId as any).email,
-        profilePicture: (reminder.fromUserId as any).profilePicture,
-      },
-      toUser: {
-        id: (reminder.toUserId as any)._id,
-        name: (reminder.toUserId as any).name,
-        email: (reminder.toUserId as any).email,
-        profilePicture: (reminder.toUserId as any).profilePicture,
-      },
-      amount: reminder.amount,
-      currency: reminder.currency,
-      message: reminder.message,
-      status: reminder.status,
-      sentAt: reminder.sentAt,
-      readAt: reminder.readAt,
-      paidAt: reminder.paidAt,
-      createdAt: reminder.createdAt,
-      updatedAt: reminder.updatedAt,
-    }));
-
-    return NextResponse.json({
-      reminders: formattedReminders,
-      type
+    const formattedReminders = (reminders || []).map((reminder: any) => {
+      const fromUser = usersMap.get(String(reminder.from_user_id));
+      const toUser = usersMap.get(String(reminder.to_user_id));
+      return {
+        id: reminder.id,
+        fromUser: fromUser
+          ? {
+              id: fromUser.id,
+              name: fromUser.name,
+              email: fromUser.email,
+              profilePicture: fromUser.profile_picture || null,
+            }
+          : null,
+        toUser: toUser
+          ? {
+              id: toUser.id,
+              name: toUser.name,
+              email: toUser.email,
+              profilePicture: toUser.profile_picture || null,
+            }
+          : null,
+        amount: Number(reminder.amount || 0),
+        currency: reminder.currency,
+        message: reminder.message,
+        status: reminder.status,
+        sentAt: reminder.sent_at,
+        readAt: reminder.read_at,
+        paidAt: reminder.paid_at,
+        createdAt: reminder.created_at,
+        updatedAt: reminder.updated_at,
+      };
     });
+
+    return NextResponse.json({ reminders: formattedReminders, type });
   } catch (error: any) {
     console.error("Get payment reminders error:", error);
     return NextResponse.json(
@@ -72,16 +90,18 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// POST /api/payment-reminders - Create a new payment reminder
 export async function POST(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const auth = await requireUser(request);
+    if (auth.response || !auth.user) {
+      return auth.response as NextResponse;
     }
 
     const body = await request.json();
-    const { toUserId, amount, currency, message } = body;
+    const toUserId = String(body?.toUserId || "");
+    const amount = Number(body?.amount || 0);
+    const currency = String(body?.currency || "INR");
+    const message = body?.message ? String(body.message).trim() : null;
 
     if (!toUserId || !amount) {
       return NextResponse.json(
@@ -89,79 +109,98 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
-
     if (amount <= 0) {
       return NextResponse.json(
         { error: "Amount must be greater than 0" },
         { status: 400 }
       );
     }
-
-    await dbConnect();
-    const fromUserId = new mongoose.Types.ObjectId(session.user.id);
-    const toUserObjectId = new mongoose.Types.ObjectId(toUserId);
-
-    // Prevent sending reminders to yourself
-    if (fromUserId.toString() === toUserObjectId.toString()) {
+    if (toUserId === auth.user.id) {
       return NextResponse.json(
         { error: "Cannot send payment reminder to yourself" },
         { status: 400 }
       );
     }
 
-    // Create the payment reminder
-    const reminder = await PaymentReminder.create({
-      fromUserId,
-      toUserId: toUserObjectId,
-      amount,
-      currency: currency || "INR",
-      message: message?.trim(),
-      status: "sent",
-      sentAt: new Date(),
-    });
+    const supabase = requireSupabaseAdmin();
+    const { data: toUser, error: toUserError } = await supabase
+      .from("users")
+      .select("id,name,email,profile_picture")
+      .eq("id", toUserId)
+      .maybeSingle();
 
-    // Populate the reminder for response
-    await reminder.populate("fromUserId", "name email profilePicture");
-    await reminder.populate("toUserId", "name email profilePicture");
+    if (toUserError) {
+      throw toUserError;
+    }
+    if (!toUser) {
+      return NextResponse.json({ error: "Recipient not found" }, { status: 404 });
+    }
 
-    // Send email notification (optional, can be disabled via settings)
+    const reminderId = newAppId();
+    const nowIso = new Date().toISOString();
+    const { data: reminder, error: reminderError } = await supabase
+      .from("payment_reminders")
+      .insert({
+        id: reminderId,
+        from_user_id: auth.user.id,
+        to_user_id: toUserId,
+        amount,
+        currency,
+        message,
+        status: "sent",
+        sent_at: nowIso,
+      })
+      .select("*")
+      .single();
+
+    if (reminderError || !reminder) {
+      throw reminderError || new Error("Failed to create reminder");
+    }
+
+    const { data: fromUser } = await supabase
+      .from("users")
+      .select("id,name,email,profile_picture")
+      .eq("id", auth.user.id)
+      .maybeSingle();
+
     try {
       await sendPaymentReminder({
-        to: (reminder.toUserId as any).email,
-        fromUserName: (reminder.fromUserId as any).name,
-        toUserName: (reminder.toUserId as any).name,
-        amount: reminder.amount,
-        currency: reminder.currency,
-        message: reminder.message,
+        to: toUser.email,
+        fromUserName: fromUser?.name || "User",
+        toUserName: toUser.name,
+        amount,
+        currency,
+        message: message || undefined,
       });
     } catch (emailError) {
       console.error("Failed to send payment reminder email:", emailError);
-      // Don't fail the request if email fails
     }
 
     return NextResponse.json({
       reminder: {
-        id: reminder._id,
-        fromUser: {
-          id: (reminder.fromUserId as any)._id,
-          name: (reminder.fromUserId as any).name,
-          email: (reminder.fromUserId as any).email,
-          profilePicture: (reminder.fromUserId as any).profilePicture,
-        },
+        id: reminder.id,
+        fromUser: fromUser
+          ? {
+              id: fromUser.id,
+              name: fromUser.name,
+              email: fromUser.email,
+              profilePicture: fromUser.profile_picture || null,
+            }
+          : null,
         toUser: {
-          id: (reminder.toUserId as any)._id,
-          name: (reminder.toUserId as any).name,
-          email: (reminder.toUserId as any).email,
-          profilePicture: (reminder.toUserId as any).profilePicture,
+          id: toUser.id,
+          name: toUser.name,
+          email: toUser.email,
+          profilePicture: toUser.profile_picture || null,
         },
-        amount: reminder.amount,
+        amount: Number(reminder.amount || 0),
         currency: reminder.currency,
         message: reminder.message,
         status: reminder.status,
-        sentAt: reminder.sentAt,
-        createdAt: reminder.createdAt,
+        sentAt: reminder.sent_at,
+        createdAt: reminder.created_at,
       },
-      message: "Payment reminder sent successfully"
+      message: "Payment reminder sent successfully",
     });
   } catch (error: any) {
     console.error("Create payment reminder error:", error);

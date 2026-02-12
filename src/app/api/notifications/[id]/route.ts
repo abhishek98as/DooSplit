@@ -1,33 +1,46 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import dbConnect from "@/lib/db";
-import Notification from "@/models/Notification";
-import { authOptions } from "@/lib/auth";
-import mongoose from "mongoose";
-import { mirrorDeleteToSupabase, mirrorUpsertToSupabase } from "@/lib/data";
+import { requireUser } from "@/lib/auth/require-user";
+import { requireSupabaseAdmin } from "@/lib/supabase/app";
 
-// PUT /api/notifications/[id] - Mark single notification as read
+export const dynamic = "force-dynamic";
+
+function mapNotificationRow(row: any) {
+  return {
+    _id: row.id,
+    id: row.id,
+    userId: row.user_id,
+    type: row.type,
+    message: row.message,
+    data: row.data || {},
+    isRead: !!row.is_read,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id } = await params;
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const auth = await requireUser(request);
+    if (auth.response || !auth.user) {
+      return auth.response as NextResponse;
     }
 
-    await dbConnect();
+    const supabase = requireSupabaseAdmin();
+    const { data: notification, error } = await supabase
+      .from("notifications")
+      .update({ is_read: true })
+      .eq("id", id)
+      .eq("user_id", auth.user.id)
+      .select("*")
+      .maybeSingle();
 
-    const userId = new mongoose.Types.ObjectId(session.user.id);
-
-    const notification = await Notification.findOneAndUpdate(
-      { _id: id, userId },
-      { isRead: true },
-      { new: true }
-    );
-
+    if (error) {
+      throw error;
+    }
     if (!notification) {
       return NextResponse.json(
         { error: "Notification not found" },
@@ -35,21 +48,10 @@ export async function PUT(
       );
     }
 
-    await mirrorUpsertToSupabase("notifications", notification._id.toString(), {
-      id: notification._id.toString(),
-      user_id: notification.userId.toString(),
-      type: notification.type,
-      message: notification.message,
-      data: notification.data || {},
-      is_read: true,
-      created_at: notification.createdAt,
-      updated_at: notification.updatedAt,
-    });
-
     return NextResponse.json(
       {
         message: "Notification marked as read",
-        notification,
+        notification: mapNotificationRow(notification),
       },
       { status: 200 }
     );
@@ -62,40 +64,37 @@ export async function PUT(
   }
 }
 
-// DELETE /api/notifications/[id] - Delete notification
 export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id } = await params;
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const auth = await requireUser(request);
+    if (auth.response || !auth.user) {
+      return auth.response as NextResponse;
     }
 
-    await dbConnect();
+    const supabase = requireSupabaseAdmin();
+    const { data: deleted, error } = await supabase
+      .from("notifications")
+      .delete()
+      .eq("id", id)
+      .eq("user_id", auth.user.id)
+      .select("id")
+      .maybeSingle();
 
-    const userId = new mongoose.Types.ObjectId(session.user.id);
-
-    const result = await Notification.findOneAndDelete({
-      _id: id,
-      userId,
-    });
-
-    if (!result) {
+    if (error) {
+      throw error;
+    }
+    if (!deleted?.id) {
       return NextResponse.json(
         { error: "Notification not found" },
         { status: 404 }
       );
     }
 
-    await mirrorDeleteToSupabase("notifications", id);
-
-    return NextResponse.json(
-      { message: "Notification deleted" },
-      { status: 200 }
-    );
+    return NextResponse.json({ message: "Notification deleted" }, { status: 200 });
   } catch (error: any) {
     console.error("Delete notification error:", error);
     return NextResponse.json(
@@ -104,3 +103,4 @@ export async function DELETE(
     );
   }
 }
+

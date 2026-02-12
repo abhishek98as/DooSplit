@@ -1,0 +1,534 @@
+{
+  "runId": "parity-1",
+  "sampleSize": 20,
+  "startedAt": "2026-02-11T18:17:32.547Z",
+  "collections": [
+    {
+      "collection": "users",
+      "table": "users",
+      "mongoCount": 10,
+      "supabaseCount": 10,
+      "countDelta": 0,
+      "sampleChecked": 10,
+      "sampleDiffCount": 10,
+      "sampleDiffs": [
+        {
+          "id": "698c94dbc7db57b3d904fd74",
+          "type": "payload_mismatch",
+          "mongoHash": "6aad46a043d81d9dead76037017e42ced1c413bb",
+          "supabaseHash": "64de21594b8f9db4ae29efce2c8c6d69e4af124a"
+        },
+        {
+          "id": "6986dc0c679a40d0b2578c66",
+          "type": "payload_mismatch",
+          "mongoHash": "47ed1407bff63ca88a19f7023a2730b39f0b4a4a",
+          "supabaseHash": "9c9bdce11d18bf42b8d5631b4fe18932dc8c0658"
+        },
+        {
+          "id": "69885ae49fa4b0afeaffd7d1",
+          "type": "payload_mismatch",
+          "mongoHash": "302bf750495ac189fb34ade42bc16fecd5bc7554",
+          "supabaseHash": "6f1788ae0a136f461f11386ca5270879e4d36ea8"
+        },
+        {
+          "id": "698857a409813d671a57dea3",
+          "type": "payload_mismatch",
+          "mongoHash": "03dd3fd4e7359df88e95194782a87f518551ac7f",
+          "supabaseHash": "2eb2a0b517198e6c6ad8395a6b5be7f85583e78b"
+        },
+        {
+          "id": "69886666b17e29794cec9057",
+          "type": "payload_mismatch",
+          "mongoHash": "b0e19fcbd45c33a216ee1f3f8ed20d5c1b07fe4a",
+          "supabaseHash": "fb277380dc0ec91e41f7d810872a7b7d8b616d89"
+        },
+        {
+          "id": "6988b65b841c133cd097776b",
+          "type": "payload_mismatch",
+          "mongoHash": "8b6777ddbc30ebc4bc926f390418bd48d0a1c867",
+          "supabaseHash": "352e5dca9574e41cb5ca9d0ab90ab6a1ee9639ba"
+        },
+        {
+          "id": "698c94869bbb9e7940beb3de",
+          "type": "payload_mismatch",
+          "mongoHash": "e8cc3d12afbff63a1a12510c6fe20500f8e951f4",
+          "supabaseHash": "eeee3f306111f5c3638a8652025d9d498f59acc6"
+        },
+        {
+          "id": "698c7dc05273d826cc5c7469",
+          "type": "payload_mismatch",
+          "mongoHash": "02e6529573fc6733fe77d75d3e9a4fa9bbac8962",
+          "supabaseHash": "60e755a06b19b3683717cb4369ba03a387df1fef"
+        },
+        {
+          "id": "698858a19fc006738445f642",
+          "type": "payload_mismatch",
+          "mongoHash": "2f20089a7b6ae85079d98f6046623e092c6f2d8e",
+          "supabaseHash": "22881899964b7248fcfe40101120ce4a0888ed03"
+        },
+        {
+          "id": "698c946124f88ee93cc342ca",
+          "type": "payload_mismatch",
+          "mongoHash": "35f94c815837d7ec48faeea70f0c953ad433bb69",
+          "supabaseHash": "e2e1778f79d751816f50adefd21d351b4b5a6221"
+        }
+      ]
+    },
+    {
+      "collection": "friends",
+      "table": "friendships",
+      "mongoCount": 18,
+      "supabaseCount": 18,
+      "countDelta": 0,
+      "sampleChecked": 18,
+      "sampleDiffCount": 18,
+      "sampleDiffs": [
+        {
+          "id": "698c94879bbb9e7940beb3e6",
+          "type": "payload_mismatch",
+          "mongoHash": "881d95437c4a277403762068a4715929bd6933b0",
+          "supabaseHash": "fdb02d8334b9c6223c8a833bc8054b25a4531f58"
+        },
+        {
+          "id": "698858a39fc006738445f647",
+          "type": "payload_mismatch",
+          "mongoHash": "607e5588ec0418d503ee0d15caab56229122216b",
+          "supabaseHash": "7c89f8a541c762f6270bb2d3255d886eddfad55b"
+        },
+        {
+          "id": "698c94879bbb9e7940beb3e5",
+          "type": "payload_mismatch",
+          "mongoHash": "4158709562c9a7f22d834d53c1dbc1d9bc8e390a",
+          "supabaseHash": "eb0b732c7bccf4bc18bbeaeb5712d4d8c7107925"
+        },
+        {
+          "id": "698857a709813d671a57dea8",
+          "type": "payload_mismatch",
+          "mongoHash": "71f35a6003d0ddf3ecf990e36af5b5f1af98b473",
+          "supabaseHash": "d7937bc853ce72f195407042adba1aafb6218dd5"
+        },
+        {
+          "id": "6988b65c841c133cd0977771",
+          "type": "payload_mismatch",
+          "mongoHash": "5816934c71410ac2257926829b1e2391f4f2e8a7",
+          "supabaseHash": "13dbb130e9ec1e410f371cdd4d1edd032af4a10a"
+        },
+        {
+          "id": "698c7dc15273d826cc5c746f",
+          "type": "payload_mismatch",
+          "mongoHash": "a797953ad7f12f47fea200da765d3706e2731ab0",
+          "supabaseHash": "75308b8648c51dfbfad3c8de6c1d01605cb16314"
+        },
+        {
+          "id": "698857a709813d671a57dea7",
+          "type": "payload_mismatch",
+          "mongoHash": "c3486aa71124878be4d7d3eff6dd3940f85944b8",
+          "supabaseHash": "c0aa8235db10dbbfa61efc955c0d27cf2b90ed29"
+        },
+        {
+          "id": "69886669b17e29794cec905d",
+          "type": "payload_mismatch",
+          "mongoHash": "f6e4ba8e4b8a89d13cf933d7ecf97331f0d12621",
+          "supabaseHash": "1464c55c1fcce347400f863b21a734e221c6a22e"
+        },
+        {
+          "id": "69885ae79fa4b0afeaffd7d6",
+          "type": "payload_mismatch",
+          "mongoHash": "37b81fda6c93607de49fd505abdc5fa383d4e7ec",
+          "supabaseHash": "0c588cefb68661765cb0762ef2a024c42724036d"
+        },
+        {
+          "id": "698c94dec7db57b3d904fd79",
+          "type": "payload_mismatch",
+          "mongoHash": "c4bbcab83d70e16a5f76523bd54492a30321af23",
+          "supabaseHash": "48c63c0f95920b264fd5a41510e45004f3864225"
+        },
+        {
+          "id": "69886669b17e29794cec905c",
+          "type": "payload_mismatch",
+          "mongoHash": "c8526f1306514a19a8a999646806828c58c60ab5",
+          "supabaseHash": "2bc1ce99bc25d5d5bf9f0f5d0f618d8c6d73fe0f"
+        },
+        {
+          "id": "698c946124f88ee93cc342d2",
+          "type": "payload_mismatch",
+          "mongoHash": "2e06f3eeebc9faf2252e96bc1709869ab3197313",
+          "supabaseHash": "b9edaaa1ffbd4515a0fbe24a87a4d6b1f453e0c9"
+        },
+        {
+          "id": "698c94dec7db57b3d904fd7a",
+          "type": "payload_mismatch",
+          "mongoHash": "1efd63506ffc6c48559abcaf0212f4c951418b47",
+          "supabaseHash": "96881aefb1d67e859d21a7b945aefc2cfd2ffbed"
+        },
+        {
+          "id": "69885ae79fa4b0afeaffd7d5",
+          "type": "payload_mismatch",
+          "mongoHash": "4a889287fce1490b71a87b5e5483657577602b9f",
+          "supabaseHash": "f9ca900beaaa06b8c3a5685f505f8bb9da9f5af5"
+        },
+        {
+          "id": "698858a39fc006738445f646",
+          "type": "payload_mismatch",
+          "mongoHash": "637bdb44a2d5da8e88ada5a3250cf762b57b740a",
+          "supabaseHash": "0f1ce86cbb4c61e1aa4563601271219714c081f0"
+        },
+        {
+          "id": "698c7dc15273d826cc5c7470",
+          "type": "payload_mismatch",
+          "mongoHash": "78266a6a2cc0d85df51123ba758fa59c94b32e93",
+          "supabaseHash": "6e8c7c8f07f1e7a4ed932204e1b3fc6cb03acba2"
+        },
+        {
+          "id": "6988b65c841c133cd0977770",
+          "type": "payload_mismatch",
+          "mongoHash": "27460af03d62bfda7ecc13439327b4daf35ff011",
+          "supabaseHash": "95dde92b86c9d8c09f2d3f016207db4eaf66fc1c"
+        },
+        {
+          "id": "698c946124f88ee93cc342d1",
+          "type": "payload_mismatch",
+          "mongoHash": "e0a6bdf442da7ed166ade848799f6b98662f1b80",
+          "supabaseHash": "61e307082325e121e670e71fb207f194b55c5e4d"
+        }
+      ]
+    },
+    {
+      "collection": "groups",
+      "table": "groups",
+      "mongoCount": 2,
+      "supabaseCount": 2,
+      "countDelta": 0,
+      "sampleChecked": 2,
+      "sampleDiffCount": 2,
+      "sampleDiffs": [
+        {
+          "id": "698893373a69bae14c9d9a10",
+          "type": "payload_mismatch",
+          "mongoHash": "20706681a551a16cf26d586c54d922842bd8385c",
+          "supabaseHash": "e55956001561143cfd55bdaa9c06efbf5576a367"
+        },
+        {
+          "id": "6986e341a83d99afbd885df4",
+          "type": "payload_mismatch",
+          "mongoHash": "1eecdd1b1740538402db1f850e679292fd93bade",
+          "supabaseHash": "5281d3897af78886fd5e95ff11e4d39fdcd4aa22"
+        }
+      ]
+    },
+    {
+      "collection": "groupmembers",
+      "table": "group_members",
+      "mongoCount": 3,
+      "supabaseCount": 3,
+      "countDelta": 0,
+      "sampleChecked": 3,
+      "sampleDiffCount": 3,
+      "sampleDiffs": [
+        {
+          "id": "698893373a69bae14c9d9a14",
+          "type": "payload_mismatch",
+          "mongoHash": "f1cfdbff62b88156a23c2930ff9b5f641f4715d9",
+          "supabaseHash": "01b0a16c5b726488fc96ab7005fa29f1015714da"
+        },
+        {
+          "id": "6986e341a83d99afbd885df6",
+          "type": "payload_mismatch",
+          "mongoHash": "11965a5c6ca24a87eef747b5be9d529b7a20eeff",
+          "supabaseHash": "1fb7bb5f3b54c67a0a3f4caa53d52e5a5dc116e2"
+        },
+        {
+          "id": "698893373a69bae14c9d9a12",
+          "type": "payload_mismatch",
+          "mongoHash": "31bc5b3c21007d87274bebcc9fa57bf5ec6aed81",
+          "supabaseHash": "54232daecab626bcb469a43b7c226c228e1e96e3"
+        }
+      ]
+    },
+    {
+      "collection": "expenses",
+      "table": "expenses",
+      "mongoCount": 4,
+      "supabaseCount": 4,
+      "countDelta": 0,
+      "sampleChecked": 4,
+      "sampleDiffCount": 4,
+      "sampleDiffs": [
+        {
+          "id": "698893653a69bae14c9d9a1a",
+          "type": "payload_mismatch",
+          "mongoHash": "942985f94736feb971d408e41b7c3f09b0407759",
+          "supabaseHash": "9b17ba3187384d3b48f4aec745848a7c0e28b015"
+        },
+        {
+          "id": "698865efb17e29794cec8fd0",
+          "type": "payload_mismatch",
+          "mongoHash": "ba90e7e245cbf4e29ff3b8061093b121076ab284",
+          "supabaseHash": "de79ea507e786557c8ddaf710ede94fd8a04a8e1"
+        },
+        {
+          "id": "69887b03d54fb71ba56fec96",
+          "type": "payload_mismatch",
+          "mongoHash": "a3c970583abf761189b4bad9210f2f9f6c7cff62",
+          "supabaseHash": "73dd6b27e45526eae408779e44fdf49d5a961b0b"
+        },
+        {
+          "id": "698893893a69bae14c9d9a3a",
+          "type": "payload_mismatch",
+          "mongoHash": "392a8c8d2e984328647b80c06d786c4cfdce9cd3",
+          "supabaseHash": "edea1928f31e8a5dea6ea6a3cbcce532ece86860"
+        }
+      ]
+    },
+    {
+      "collection": "expenseparticipants",
+      "table": "expense_participants",
+      "mongoCount": 10,
+      "supabaseCount": 10,
+      "countDelta": 0,
+      "sampleChecked": 10,
+      "sampleDiffCount": 10,
+      "sampleDiffs": [
+        {
+          "id": "698865efb17e29794cec8fd5",
+          "type": "payload_mismatch",
+          "mongoHash": "9350035f307cd503bd364cd6d111af10801bc27d",
+          "supabaseHash": "f381c27db7bc2b69cf7e67732784c50e1c139232"
+        },
+        {
+          "id": "698865efb17e29794cec8fd2",
+          "type": "payload_mismatch",
+          "mongoHash": "e1c3b437d1b2b8dc902f2a3629cb617c86c00471",
+          "supabaseHash": "985e1b639085ea855f295ee7c8a9da0c48d56250"
+        },
+        {
+          "id": "698893893a69bae14c9d9a3d",
+          "type": "payload_mismatch",
+          "mongoHash": "9291d39dfe47c7fede5d1fbf8c178de122fdab8d",
+          "supabaseHash": "c57e019d84b5e8a3c7f6c6e62456157333cd8881"
+        },
+        {
+          "id": "698893653a69bae14c9d9a1c",
+          "type": "payload_mismatch",
+          "mongoHash": "d14180ebb26f59eb54d249ed419d2e210837eda5",
+          "supabaseHash": "470a874c070347053318f073fb0bc8adbb8c0e46"
+        },
+        {
+          "id": "69887b03d54fb71ba56fec99",
+          "type": "payload_mismatch",
+          "mongoHash": "5a5e8cc30b70d98a8caa8be85ebb554488ad6d5e",
+          "supabaseHash": "3a9ddc9a85b715491d42f07b545d1ade75a2dd68"
+        },
+        {
+          "id": "698893653a69bae14c9d9a1d",
+          "type": "payload_mismatch",
+          "mongoHash": "a8f137076299bbae6983893750fa4ce7d4941541",
+          "supabaseHash": "62b4bc05c18d738107dd088fd807e2c218057cce"
+        },
+        {
+          "id": "69887b03d54fb71ba56fec98",
+          "type": "payload_mismatch",
+          "mongoHash": "c4fb27f8fc4cec8a6981cbb18364a7eabf8d1068",
+          "supabaseHash": "10cc0e1a3569d9f649616fc1e38df780e2635d79"
+        },
+        {
+          "id": "698893893a69bae14c9d9a3c",
+          "type": "payload_mismatch",
+          "mongoHash": "5c610933ea88576390105f3bed3abcb7e8bc5cf8",
+          "supabaseHash": "9ba1c639cc6e0a11d384ab6ac4ad37c98ec95cf3"
+        },
+        {
+          "id": "698865efb17e29794cec8fd4",
+          "type": "payload_mismatch",
+          "mongoHash": "278a40d35674b02097617dc0c440402643df6b86",
+          "supabaseHash": "c705871e6ce717c3c97a451a48b8c2d723bd7f0e"
+        },
+        {
+          "id": "698865efb17e29794cec8fd3",
+          "type": "payload_mismatch",
+          "mongoHash": "a052982c3c59e9767a26388e9e9f10d3171bc4e8",
+          "supabaseHash": "d65026a15355e70a9febb3a7b3d8c283a40ef95b"
+        }
+      ]
+    },
+    {
+      "collection": "settlements",
+      "table": "settlements",
+      "mongoCount": 0,
+      "supabaseCount": 0,
+      "countDelta": 0,
+      "sampleChecked": 0,
+      "sampleDiffCount": 0,
+      "sampleDiffs": []
+    },
+    {
+      "collection": "notifications",
+      "table": "notifications",
+      "mongoCount": 12,
+      "supabaseCount": 12,
+      "countDelta": 0,
+      "sampleChecked": 12,
+      "sampleDiffCount": 12,
+      "sampleDiffs": [
+        {
+          "id": "698865f0b17e29794cec8fdd",
+          "type": "payload_mismatch",
+          "mongoHash": "5b66e82542f6c1591c26609032b64dfcc74ac455",
+          "supabaseHash": "2f9749a043a5cf56bee0e8603e848d2160156f45"
+        },
+        {
+          "id": "69887b05d54fb71ba56fecab",
+          "type": "payload_mismatch",
+          "mongoHash": "b2c7789c449b0d12dd8b19d07ba35d46f7e081c2",
+          "supabaseHash": "e144729fee55acb4edba2acdfe6801bcaf4d80bb"
+        },
+        {
+          "id": "698865f0b17e29794cec8fde",
+          "type": "payload_mismatch",
+          "mongoHash": "fb5468e666dad4f258ac91f1085d3c2412e69426",
+          "supabaseHash": "4869bb72219adeb15b43b05928a33e52429b018b"
+        },
+        {
+          "id": "698893673a69bae14c9d9a33",
+          "type": "payload_mismatch",
+          "mongoHash": "55f2a8d3ecb5ca3d3fb0e67a1ffc4bcc6255fa33",
+          "supabaseHash": "dd7109e8fb63dcda24270feee729b4cd993352cc"
+        },
+        {
+          "id": "698893663a69bae14c9d9a26",
+          "type": "payload_mismatch",
+          "mongoHash": "f72a1c7ad1612ab1ccd4fc3724030585eaeb206b",
+          "supabaseHash": "9ff0cb8cf10df7ad60144143fc6ba5c24fe9732e"
+        },
+        {
+          "id": "69887b7cc8305790b83ea748",
+          "type": "payload_mismatch",
+          "mongoHash": "b9e67953b1d88568d36987fca7415003d359b157",
+          "supabaseHash": "8e689a86f727ffdfa46bc0a0e830b61d81c555f2"
+        },
+        {
+          "id": "69887b7cc8305790b83ea746",
+          "type": "payload_mismatch",
+          "mongoHash": "05b9ef25da744814fe0109b505ee78a07b16a940",
+          "supabaseHash": "814899ff58535f5dd028e738144f684fd238889c"
+        },
+        {
+          "id": "698865f0b17e29794cec8fdc",
+          "type": "payload_mismatch",
+          "mongoHash": "0b3b47838bfd8c711753a364ca4b798f772e77eb",
+          "supabaseHash": "3d8a34badac9a8e6fc7105bbbc43a699b9f7474b"
+        },
+        {
+          "id": "69887b7cc8305790b83ea747",
+          "type": "payload_mismatch",
+          "mongoHash": "3a38a607232bfda0fea9ceaaccfc442b70706445",
+          "supabaseHash": "b2381aacd45e52c21fa1314855b1c36ff8fb05de"
+        },
+        {
+          "id": "698882cd69c3f57cd52f5f7c",
+          "type": "payload_mismatch",
+          "mongoHash": "721b9b8001749e21d456dff5700ebeab66df82ac",
+          "supabaseHash": "3381394c9f06021eaea969d331b084ae4f9027e2"
+        },
+        {
+          "id": "698893893a69bae14c9d9a44",
+          "type": "payload_mismatch",
+          "mongoHash": "b71cedd396ae430d9d95018a08956214b0bbb8ad",
+          "supabaseHash": "d5f39b87ce88bbc7cdaebcfbcfab630b8ddd3af7"
+        },
+        {
+          "id": "69887b04d54fb71ba56feca0",
+          "type": "payload_mismatch",
+          "mongoHash": "e9454fffbbf5a1099995dc0c7d6edbc9b6acc519",
+          "supabaseHash": "f6b48173045f7799c6183f594fe9e04bc7bcc4e7"
+        }
+      ]
+    },
+    {
+      "collection": "invitations",
+      "table": "invitations",
+      "mongoCount": 5,
+      "supabaseCount": 5,
+      "countDelta": 0,
+      "sampleChecked": 5,
+      "sampleDiffCount": 5,
+      "sampleDiffs": [
+        {
+          "id": "698c94acc7db57b3d904fd70",
+          "type": "payload_mismatch",
+          "mongoHash": "31a7d5bcb2a244bc2357dd3f6e8d742d33ab35ed",
+          "supabaseHash": "7fda8ca190e2c3b47e9a3d1469a3ac4106eca098"
+        },
+        {
+          "id": "6988567c09813d671a57de95",
+          "type": "payload_mismatch",
+          "mongoHash": "6738734904f96aa4ecdaf02230504dc26dff7ffc",
+          "supabaseHash": "b6f8b46afb22383946d6126c5e77ecda52046c11"
+        },
+        {
+          "id": "69885a9c9fc006738445f738",
+          "type": "payload_mismatch",
+          "mongoHash": "1396d4de21ca2ac672e6903acd1cf4c936a9103b",
+          "supabaseHash": "99efcb08f24699b667b5fb8789b4855e1ef7382c"
+        },
+        {
+          "id": "698858589fc006738445f618",
+          "type": "payload_mismatch",
+          "mongoHash": "ef570126dbadf99b6b5e5c86b7dc9b162f6b29a6",
+          "supabaseHash": "ddd6af4baddb7b125a48fcd9fce7ed21bae86203"
+        },
+        {
+          "id": "6988570409813d671a57de9b",
+          "type": "payload_mismatch",
+          "mongoHash": "50440eb53a855c91ac1e07faf733301be8b56869",
+          "supabaseHash": "87f1855055e16d4fce36e8f70356363a23e862fe"
+        }
+      ]
+    },
+    {
+      "collection": "paymentreminders",
+      "table": "payment_reminders",
+      "mongoCount": 0,
+      "supabaseCount": 0,
+      "countDelta": 0,
+      "sampleChecked": 0,
+      "sampleDiffCount": 0,
+      "sampleDiffs": []
+    }
+  ],
+  "referentialIntegrity": [
+    {
+      "table": "friendships.user_id",
+      "orphanCount": 0
+    },
+    {
+      "table": "friendships.friend_id",
+      "orphanCount": 0
+    },
+    {
+      "table": "group_members.group_id",
+      "orphanCount": 0
+    },
+    {
+      "table": "group_members.user_id",
+      "orphanCount": 0
+    },
+    {
+      "table": "expense_participants.expense_id",
+      "orphanCount": 0
+    },
+    {
+      "table": "expense_participants.user_id",
+      "orphanCount": 0
+    },
+    {
+      "table": "settlements.from_user_id",
+      "orphanCount": 0
+    },
+    {
+      "table": "settlements.to_user_id",
+      "orphanCount": 0
+    }
+  ],
+  "finishedAt": "2026-02-11T18:17:35.883Z"
+}

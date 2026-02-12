@@ -1,13 +1,29 @@
-import dbConnect from "@/lib/db";
-import Notification from "@/models/Notification";
-import mongoose from "mongoose";
-import { mirrorUpsertToSupabase } from "@/lib/data";
+import crypto from "crypto";
+import { getSupabaseAdminClient } from "@/lib/supabase/admin";
+
+type IdLike = string | { toString(): string };
 
 export interface CreateNotificationParams {
-  userId: mongoose.Types.ObjectId | string;
+  userId: IdLike;
   type: string;
   message: string;
   data?: Record<string, any>;
+}
+
+function newId(): string {
+  return crypto.randomBytes(12).toString("hex");
+}
+
+function requireSupabase() {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) {
+    throw new Error("Supabase service client is not configured");
+  }
+  return supabase;
+}
+
+function toId(value: IdLike): string {
+  return typeof value === "string" ? value : value.toString();
 }
 
 /**
@@ -15,28 +31,25 @@ export interface CreateNotificationParams {
  */
 export async function createNotification(params: CreateNotificationParams) {
   try {
-    await dbConnect();
-    
-    const notification = await Notification.create({
-      userId: params.userId,
+    const supabase = requireSupabase();
+    const payload = {
+      id: newId(),
+      user_id: toId(params.userId),
       type: params.type,
       message: params.message,
       data: params.data || {},
-      isRead: false,
-    });
+      is_read: false,
+    };
+    const { data, error } = await supabase
+      .from("notifications")
+      .insert(payload)
+      .select("*")
+      .single();
+    if (error) {
+      throw error;
+    }
 
-    await mirrorUpsertToSupabase("notifications", notification._id.toString(), {
-      id: notification._id.toString(),
-      user_id: notification.userId.toString(),
-      type: notification.type,
-      message: notification.message,
-      data: notification.data || {},
-      is_read: !!notification.isRead,
-      created_at: notification.createdAt,
-      updated_at: notification.updatedAt,
-    });
-
-    return notification;
+    return data;
   } catch (error) {
     console.error("Error creating notification:", error);
     throw error;
@@ -48,32 +61,29 @@ export async function createNotification(params: CreateNotificationParams) {
  */
 export async function createNotifications(notifications: CreateNotificationParams[]) {
   try {
-    await dbConnect();
-    
-    const created = await Notification.insertMany(
-      notifications.map((n) => ({
-        userId: n.userId,
-        type: n.type,
-        message: n.message,
-        data: n.data || {},
-        isRead: false,
-      }))
-    );
-
-    for (const notification of created) {
-      await mirrorUpsertToSupabase("notifications", notification._id.toString(), {
-        id: notification._id.toString(),
-        user_id: notification.userId.toString(),
-        type: notification.type,
-        message: notification.message,
-        data: notification.data || {},
-        is_read: !!notification.isRead,
-        created_at: notification.createdAt,
-        updated_at: notification.updatedAt,
-      });
+    if (notifications.length === 0) {
+      return [];
     }
 
-    return created;
+    const supabase = requireSupabase();
+    const rows = notifications.map((n) => ({
+      id: newId(),
+      user_id: toId(n.userId),
+      type: n.type,
+      message: n.message,
+      data: n.data || {},
+      is_read: false,
+    }));
+
+    const { data, error } = await supabase
+      .from("notifications")
+      .insert(rows)
+      .select("*");
+    if (error) {
+      throw error;
+    }
+
+    return data || [];
   } catch (error) {
     console.error("Error creating notifications:", error);
     throw error;
@@ -84,12 +94,12 @@ export async function createNotifications(notifications: CreateNotificationParam
  * Notify participants about a new expense
  */
 export async function notifyExpenseCreated(
-  expenseId: mongoose.Types.ObjectId | string,
+  expenseId: IdLike,
   expenseDescription: string,
   amount: number,
   currency: string,
-  createdBy: { id: mongoose.Types.ObjectId | string; name: string },
-  participantIds: (mongoose.Types.ObjectId | string)[],
+  createdBy: { id: IdLike; name: string },
+  participantIds: IdLike[],
   groupName?: string
 ) {
   const notifications = participantIds
@@ -101,7 +111,7 @@ export async function notifyExpenseCreated(
         ? `${createdBy.name} added "${expenseDescription}" (${currency} ${amount.toFixed(2)}) in ${groupName}`
         : `${createdBy.name} added "${expenseDescription}" (${currency} ${amount.toFixed(2)})`,
       data: {
-        expenseId: expenseId.toString(),
+        expenseId: toId(expenseId),
         amount,
         currency,
         description: expenseDescription,
@@ -119,10 +129,10 @@ export async function notifyExpenseCreated(
  * Notify participants about an updated expense
  */
 export async function notifyExpenseUpdated(
-  expenseId: mongoose.Types.ObjectId | string,
+  expenseId: IdLike,
   expenseDescription: string,
-  updatedBy: { id: mongoose.Types.ObjectId | string; name: string },
-  participantIds: (mongoose.Types.ObjectId | string)[]
+  updatedBy: { id: IdLike; name: string },
+  participantIds: IdLike[]
 ) {
   const notifications = participantIds
     .filter((id) => id.toString() !== updatedBy.id.toString())
@@ -131,7 +141,7 @@ export async function notifyExpenseUpdated(
       type: "expense_updated",
       message: `${updatedBy.name} updated "${expenseDescription}"`,
       data: {
-        expenseId: expenseId.toString(),
+        expenseId: toId(expenseId),
         description: expenseDescription,
         updatedByName: updatedBy.name,
       },
@@ -147,8 +157,8 @@ export async function notifyExpenseUpdated(
  */
 export async function notifyExpenseDeleted(
   expenseDescription: string,
-  deletedBy: { id: mongoose.Types.ObjectId | string; name: string },
-  participantIds: (mongoose.Types.ObjectId | string)[]
+  deletedBy: { id: IdLike; name: string },
+  participantIds: IdLike[]
 ) {
   const notifications = participantIds
     .filter((id) => id.toString() !== deletedBy.id.toString())
@@ -171,22 +181,18 @@ export async function notifyExpenseDeleted(
  * Notify about a settlement
  */
 export async function notifySettlement(
-  settlementId: mongoose.Types.ObjectId | string,
-  fromUser: { id: mongoose.Types.ObjectId | string; name: string },
-  toUser: { id: mongoose.Types.ObjectId | string; name: string },
+  settlementId: IdLike,
+  fromUser: { id: IdLike; name: string },
+  toUser: { id: IdLike; name: string },
   amount: number,
   currency: string,
-  currentUserId: mongoose.Types.ObjectId | string
+  currentUserId: IdLike
 ) {
   // Notify the other party (not the current user)
   const recipientId =
     currentUserId.toString() === fromUser.id.toString()
       ? toUser.id
       : fromUser.id;
-  const recipientName =
-    currentUserId.toString() === fromUser.id.toString()
-      ? toUser.name
-      : fromUser.name;
 
   await createNotification({
     userId: recipientId,
@@ -197,10 +203,10 @@ export async function notifySettlement(
         : toUser.name
     } recorded a payment of ${currency} ${amount.toFixed(2)}`,
     data: {
-      settlementId: settlementId.toString(),
-      fromUserId: fromUser.id.toString(),
+      settlementId: toId(settlementId),
+      fromUserId: toId(fromUser.id),
       fromUserName: fromUser.name,
-      toUserId: toUser.id.toString(),
+      toUserId: toId(toUser.id),
       toUserName: toUser.name,
       amount,
       currency,
@@ -212,15 +218,15 @@ export async function notifySettlement(
  * Notify about a friend request
  */
 export async function notifyFriendRequest(
-  fromUser: { id: mongoose.Types.ObjectId | string; name: string },
-  toUserId: mongoose.Types.ObjectId | string
+  fromUser: { id: IdLike; name: string },
+  toUserId: IdLike
 ) {
   await createNotification({
     userId: toUserId,
     type: "friend_request",
     message: `${fromUser.name} sent you a friend request`,
     data: {
-      fromUserId: fromUser.id.toString(),
+      fromUserId: toId(fromUser.id),
       fromUserName: fromUser.name,
     },
   });
@@ -230,15 +236,15 @@ export async function notifyFriendRequest(
  * Notify about a friend request acceptance
  */
 export async function notifyFriendAccepted(
-  acceptedBy: { id: mongoose.Types.ObjectId | string; name: string },
-  requesterId: mongoose.Types.ObjectId | string
+  acceptedBy: { id: IdLike; name: string },
+  requesterId: IdLike
 ) {
   await createNotification({
     userId: requesterId,
     type: "friend_accepted",
     message: `${acceptedBy.name} accepted your friend request`,
     data: {
-      friendId: acceptedBy.id.toString(),
+      friendId: toId(acceptedBy.id),
       friendName: acceptedBy.name,
     },
   });
@@ -248,17 +254,17 @@ export async function notifyFriendAccepted(
  * Notify about a group invitation
  */
 export async function notifyGroupInvitation(
-  groupId: mongoose.Types.ObjectId | string,
+  groupId: IdLike,
   groupName: string,
-  invitedBy: { id: mongoose.Types.ObjectId | string; name: string },
-  invitedUserId: mongoose.Types.ObjectId | string
+  invitedBy: { id: IdLike; name: string },
+  invitedUserId: IdLike
 ) {
   await createNotification({
     userId: invitedUserId,
     type: "group_invitation",
     message: `${invitedBy.name} invited you to join "${groupName}"`,
     data: {
-      groupId: groupId.toString(),
+      groupId: toId(groupId),
       groupName,
       invitedByName: invitedBy.name,
     },

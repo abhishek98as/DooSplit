@@ -1,55 +1,47 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import dbConnect from "@/lib/db";
-import Invitation from "@/models/Invitation";
-import { authOptions } from "@/lib/auth";
 import { sendInviteEmail } from "@/lib/email";
-import User from "@/models/User";
+import { requireUser } from "@/lib/auth/require-user";
+import { requireSupabaseAdmin } from "@/lib/supabase/app";
 
-// PUT /api/invitations/[id] - Resend invitation
+export const dynamic = "force-dynamic";
+
 export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id } = await params;
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const auth = await requireUser(request);
+    if (auth.response || !auth.user) {
+      return auth.response as NextResponse;
     }
 
     const body = await request.json();
-    const { action } = body;
-
+    const { action } = body || {};
     if (action !== "resend") {
-      return NextResponse.json(
-        { error: "Invalid action" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Invalid action" }, { status: 400 });
     }
 
-    await dbConnect();
+    const supabase = requireSupabaseAdmin();
+    const { data: invitation, error: invitationError } = await supabase
+      .from("invitations")
+      .select("*")
+      .eq("id", id)
+      .eq("invited_by", auth.user.id)
+      .maybeSingle();
 
-    // Find invitation
-    const invitation = await Invitation.findOne({
-      _id: id,
-      invitedBy: session.user.id,
-    });
-
+    if (invitationError) {
+      throw invitationError;
+    }
     if (!invitation) {
-      return NextResponse.json(
-        { error: "Invitation not found" },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: "Invitation not found" }, { status: 404 });
     }
-
     if (invitation.status === "accepted") {
       return NextResponse.json(
         { error: "This invitation has already been accepted" },
         { status: 400 }
       );
     }
-
     if (invitation.status === "cancelled") {
       return NextResponse.json(
         { error: "This invitation has been cancelled" },
@@ -57,43 +49,48 @@ export async function PUT(
       );
     }
 
-    // Check if user already exists
-    const existingUser = await User.findOne({ email: invitation.email });
-    if (existingUser) {
-      invitation.status = "accepted";
-      await invitation.save();
+    const { data: existingUser } = await supabase
+      .from("users")
+      .select("id")
+      .eq("email", invitation.email)
+      .maybeSingle();
+    if (existingUser?.id) {
+      await supabase
+        .from("invitations")
+        .update({ status: "accepted" })
+        .eq("id", invitation.id);
       return NextResponse.json(
         { error: "This user has already registered" },
         { status: 400 }
       );
     }
 
-    // Extend expiration date
-    const newExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days from now
-    invitation.expiresAt = newExpiresAt;
-    await invitation.save();
+    const newExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    const { error: updateError } = await supabase
+      .from("invitations")
+      .update({ expires_at: newExpiresAt })
+      .eq("id", invitation.id);
 
-    // Get inviter info
-    const inviter = await User.findById(session.user.id);
-    if (!inviter) {
-      return NextResponse.json(
-        { error: "User not found" },
-        { status: 404 }
-      );
+    if (updateError) {
+      throw updateError;
     }
 
-    // Build invite link
+    const { data: inviter } = await supabase
+      .from("users")
+      .select("name")
+      .eq("id", auth.user.id)
+      .maybeSingle();
+
     const appUrl =
       process.env.NEXT_PUBLIC_APP_URL ||
       process.env.NEXTAUTH_URL ||
       "http://localhost:3000";
     const inviteLink = `${appUrl}/invite/${invitation.token}`;
 
-    // Resend email
     try {
       await sendInviteEmail({
         to: invitation.email,
-        inviterName: inviter.name || "A friend",
+        inviterName: inviter?.name || "A friend",
         inviteLink,
       });
 
@@ -101,10 +98,10 @@ export async function PUT(
         {
           message: "Invitation resent successfully!",
           invitation: {
-            id: invitation._id,
+            id: invitation.id,
             email: invitation.email,
             status: invitation.status,
-            expiresAt: invitation.expiresAt,
+            expiresAt: newExpiresAt,
           },
           emailSent: true,
         },
@@ -116,10 +113,10 @@ export async function PUT(
         {
           message: "Invitation updated but email could not be sent",
           invitation: {
-            id: invitation._id,
+            id: invitation.id,
             email: invitation.email,
             status: invitation.status,
-            expiresAt: invitation.expiresAt,
+            expiresAt: newExpiresAt,
           },
           emailSent: false,
         },
@@ -135,33 +132,31 @@ export async function PUT(
   }
 }
 
-// DELETE /api/invitations/[id] - Cancel invitation
 export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id } = await params;
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const auth = await requireUser(request);
+    if (auth.response || !auth.user) {
+      return auth.response as NextResponse;
     }
 
-    await dbConnect();
+    const supabase = requireSupabaseAdmin();
+    const { data: invitation, error } = await supabase
+      .from("invitations")
+      .select("*")
+      .eq("id", id)
+      .eq("invited_by", auth.user.id)
+      .maybeSingle();
 
-    // Find invitation
-    const invitation = await Invitation.findOne({
-      _id: id,
-      invitedBy: session.user.id,
-    });
-
+    if (error) {
+      throw error;
+    }
     if (!invitation) {
-      return NextResponse.json(
-        { error: "Invitation not found" },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: "Invitation not found" }, { status: 404 });
     }
-
     if (invitation.status === "accepted") {
       return NextResponse.json(
         { error: "Cannot cancel an accepted invitation" },
@@ -169,17 +164,22 @@ export async function DELETE(
       );
     }
 
-    // Mark as cancelled instead of deleting
-    invitation.status = "cancelled";
-    await invitation.save();
+    const { error: cancelError } = await supabase
+      .from("invitations")
+      .update({ status: "cancelled" })
+      .eq("id", invitation.id);
+
+    if (cancelError) {
+      throw cancelError;
+    }
 
     return NextResponse.json(
       {
         message: "Invitation cancelled successfully",
         invitation: {
-          id: invitation._id,
+          id: invitation.id,
           email: invitation.email,
-          status: invitation.status,
+          status: "cancelled",
         },
       },
       { status: 200 }
@@ -192,3 +192,4 @@ export async function DELETE(
     );
   }
 }
+

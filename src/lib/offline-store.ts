@@ -12,6 +12,7 @@ import getIndexedDB, {
   GroupRecord,
   SyncQueueItem
 } from './indexeddb';
+import { authFetch } from "@/lib/auth/client-session";
 
 // Types for API responses
 export interface ExpenseApiResponse {
@@ -102,7 +103,7 @@ class OfflineStore {
     const timeout = setTimeout(() => controller.abort(), 8000);
 
     try {
-      const response = await fetch(url, {
+      const response = await authFetch(url, {
         ...options,
         headers: {
           "Content-Type": "application/json",

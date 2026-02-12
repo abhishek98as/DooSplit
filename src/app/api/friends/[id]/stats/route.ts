@@ -1,17 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
-import dbConnect from "@/lib/db";
-import Expense from "@/models/Expense";
-import ExpenseParticipant from "@/models/ExpenseParticipant";
-import mongoose from "mongoose";
 import {
   CACHE_TTL,
   buildUserScopedCacheKey,
   getOrSetCacheJson,
 } from "@/lib/cache";
+import { requireUser } from "@/lib/auth/require-user";
+import { requireSupabaseAdmin } from "@/lib/supabase/app";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
+
+function round2(value: number): number {
+  return Number(value.toFixed(2));
+}
 
 export async function GET(
   request: NextRequest,
@@ -19,112 +19,141 @@ export async function GET(
 ) {
   const { id } = await params;
   try {
-    const session = await getServerSession(authOptions);
-
-    if (!session?.user?.id) {
-      return NextResponse.json(
-        { error: "Unauthorized" },
-        { status: 401 }
-      );
+    const auth = await requireUser(request);
+    if (auth.response || !auth.user) {
+      return auth.response as NextResponse;
     }
+    const userId = auth.user.id;
+    const friendId = id;
+    const supabase = requireSupabaseAdmin();
 
-    await dbConnect();
-
-    const userId = new mongoose.Types.ObjectId(session.user.id);
-    const friendId = new mongoose.Types.ObjectId(id);
-
-    // Verify friendship exists
-    const Friend = (await import("@/models/Friend")).default;
-    const friendship = await Friend.findOne({
-      $or: [
-        { userId: session.user.id, friendId: id },
-        { userId: id, friendId: session.user.id }
-      ],
-      status: "accepted"
-    }).lean();
-
+    const { data: friendship, error: friendshipError } = await supabase
+      .from("friendships")
+      .select("id")
+      .or(
+        `and(user_id.eq.${userId},friend_id.eq.${friendId},status.eq.accepted),and(user_id.eq.${friendId},friend_id.eq.${userId},status.eq.accepted)`
+      )
+      .limit(1)
+      .maybeSingle();
+    if (friendshipError) {
+      throw friendshipError;
+    }
     if (!friendship) {
-      return NextResponse.json(
-        { error: "Friend not found" },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: "Friend not found" }, { status: 404 });
     }
 
     const cacheKey = buildUserScopedCacheKey(
       "friend-details",
-      session.user.id,
-      `stats:${id}`
+      userId,
+      `stats:${friendId}`
     );
 
     const payload = await getOrSetCacheJson(cacheKey, CACHE_TTL.friends, async () => {
-      // Get expense statistics
-      const expenseParticipants = await ExpenseParticipant.find({
-        userId: { $in: [userId, friendId] }
-      }).lean();
-
-      const expenseIds = [...new Set(expenseParticipants.map(ep => ep.expenseId.toString()))];
-
-      // Get all expenses with this friend
-      const expenses = await Expense.find({
-        _id: { $in: expenseIds },
-        isDeleted: false
-      }).sort({ date: 1 }).lean();
-
-      // Calculate statistics
-      const categoryStats: { [key: string]: number } = {};
-      const monthlyStats: { [key: string]: number } = {};
-      let totalExpenses = 0;
-      let totalSettlements = 0;
-
-      for (const expense of expenses) {
-        const participants = expenseParticipants.filter(ep => ep.expenseId.toString() === expense._id.toString());
-        const userParticipant = participants.find(p => p.userId.toString() === session.user.id);
-        const friendParticipant = participants.find(p => p.userId.toString() === friendId.toString());
-
-        if (userParticipant && friendParticipant) {
-          const userShare = userParticipant.owedAmount;
-          categoryStats[expense.category] = (categoryStats[expense.category] || 0) + userShare;
-          totalExpenses += userShare;
-          const monthKey = new Date(expense.date).toISOString().substring(0, 7);
-          monthlyStats[monthKey] = (monthlyStats[monthKey] || 0) + userShare;
-        }
+      const { data: pairParticipants, error: pairError } = await supabase
+        .from("expense_participants")
+        .select("expense_id,user_id,owed_amount")
+        .in("user_id", [userId, friendId]);
+      if (pairError) {
+        throw pairError;
       }
 
-      // Get settlements
-      const Settlement = (await import("@/models/Settlement")).default;
-      const settlements = await Settlement.find({
-        $or: [
-          { fromUserId: userId, toUserId: friendId },
-          { fromUserId: friendId, toUserId: userId }
-        ]
-      }).lean();
+      const participantsByExpense = new Map<string, any[]>();
+      for (const participant of pairParticipants || []) {
+        const expenseId = String(participant.expense_id);
+        const list = participantsByExpense.get(expenseId) || [];
+        list.push(participant);
+        participantsByExpense.set(expenseId, list);
+      }
 
-      settlements.forEach((settlement: any) => {
-        const isFromUser = settlement.fromUserId.toString() === session.user.id;
-        totalSettlements += isFromUser ? settlement.amount : -settlement.amount;
-      });
+      const pairExpenseIds = Array.from(participantsByExpense.entries())
+        .filter(([, participants]) => {
+          const users = new Set(participants.map((p) => String(p.user_id)));
+          return users.has(userId) && users.has(friendId);
+        })
+        .map(([expenseId]) => expenseId);
 
-      const categoryChartData = Object.entries(categoryStats).map(([category, amount]) => ({
+      let expenses: any[] = [];
+      if (pairExpenseIds.length > 0) {
+        const { data, error } = await supabase
+          .from("expenses")
+          .select("id,category,date,is_deleted")
+          .in("id", pairExpenseIds)
+          .eq("is_deleted", false)
+          .order("date", { ascending: true });
+        if (error) {
+          throw error;
+        }
+        expenses = data || [];
+      }
+
+      const categoryStats: Record<string, number> = {};
+      const monthlyStats: Record<string, number> = {};
+      let totalExpenses = 0;
+
+      for (const expense of expenses) {
+        const participants = participantsByExpense.get(String(expense.id)) || [];
+        const userParticipant = participants.find(
+          (participant: any) => String(participant.user_id) === userId
+        );
+        const friendParticipant = participants.find(
+          (participant: any) => String(participant.user_id) === friendId
+        );
+
+        if (!userParticipant || !friendParticipant) {
+          continue;
+        }
+
+        const userShare = Number(userParticipant.owed_amount || 0);
+        const category = String(expense.category || "other");
+        categoryStats[category] = (categoryStats[category] || 0) + userShare;
+        totalExpenses += userShare;
+
+        const monthKey = new Date(expense.date).toISOString().substring(0, 7);
+        monthlyStats[monthKey] = (monthlyStats[monthKey] || 0) + userShare;
+      }
+
+      const { data: settlements, error: settlementsError } = await supabase
+        .from("settlements")
+        .select("from_user_id,to_user_id,amount")
+        .or(
+          `and(from_user_id.eq.${userId},to_user_id.eq.${friendId}),and(from_user_id.eq.${friendId},to_user_id.eq.${userId})`
+        );
+      if (settlementsError) {
+        throw settlementsError;
+      }
+
+      let totalSettlements = 0;
+      for (const settlement of settlements || []) {
+        const isFromUser = String(settlement.from_user_id) === userId;
+        totalSettlements += isFromUser
+          ? Number(settlement.amount || 0)
+          : -Number(settlement.amount || 0);
+      }
+
+      const categoryBreakdown = Object.entries(categoryStats).map(([category, amount]) => ({
         category: category.charAt(0).toUpperCase() + category.slice(1),
-        amount: Math.round(amount * 100) / 100,
-        percentage: totalExpenses > 0 ? Math.round((amount / totalExpenses) * 100) : 0
+        amount: round2(amount),
+        percentage: totalExpenses > 0 ? Math.round((amount / totalExpenses) * 100) : 0,
       }));
 
-      const monthlyChartData = Object.entries(monthlyStats)
+      const monthlyTrend = Object.entries(monthlyStats)
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([month, amount]) => ({
-          month: new Date(month + '-01').toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
-          amount: Math.round(amount * 100) / 100
+          month: new Date(`${month}-01`).toLocaleDateString("en-US", {
+            month: "short",
+            year: "numeric",
+          }),
+          amount: round2(amount),
         }));
 
       return {
-        totalExpenses: Math.round(totalExpenses * 100) / 100,
-        totalSettlements: Math.round(totalSettlements * 100) / 100,
-        netBalance: Math.round((totalExpenses - totalSettlements) * 100) / 100,
-        categoryBreakdown: categoryChartData,
-        monthlyTrend: monthlyChartData,
+        totalExpenses: round2(totalExpenses),
+        totalSettlements: round2(totalSettlements),
+        netBalance: round2(totalExpenses - totalSettlements),
+        categoryBreakdown,
+        monthlyTrend,
         expenseCount: expenses.length,
-        settlementCount: settlements.length
+        settlementCount: (settlements || []).length,
       };
     });
 

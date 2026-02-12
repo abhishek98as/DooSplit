@@ -1,42 +1,35 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import dbConnect from "@/lib/db";
-import Settlement from "@/models/Settlement";
-import { authOptions } from "@/lib/auth";
-import { notifySettlement } from "@/lib/notificationService";
-import mongoose from "mongoose";
 import {
   CACHE_TTL,
   buildUserScopedCacheKey,
   getOrSetCacheJsonWithMeta,
-  invalidateUsersCache
+  invalidateUsersCache,
 } from "@/lib/cache";
-import {
-  mirrorUpsertToSupabase,
-  readWithMode,
-} from "@/lib/data";
-import { mongoReadRepository, supabaseReadRepository } from "@/lib/data/read-routing";
+import { supabaseReadRepository } from "@/lib/data/supabase-adapter";
+import { requireUser } from "@/lib/auth/require-user";
+import { newAppId, requireSupabaseAdmin } from "@/lib/supabase/app";
+import { notifySettlement } from "@/lib/notificationService";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
-// GET /api/settlements - List settlements
 export async function GET(request: NextRequest) {
   try {
     const routeStart = Date.now();
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const auth = await requireUser(request);
+    if (auth.response || !auth.user) {
+      return auth.response as NextResponse;
     }
+    const userId = auth.user.id;
 
     const searchParams = request.nextUrl.searchParams;
-    const page = parseInt(searchParams.get("page") || "1");
-    const limit = parseInt(searchParams.get("limit") || "20");
+    const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
+    const limit = Math.min(100, Math.max(1, parseInt(searchParams.get("limit") || "20", 10)));
     const groupId = searchParams.get("groupId");
     const friendId = searchParams.get("friendId");
 
     const cacheKey = buildUserScopedCacheKey(
       "settlements",
-      session.user.id,
+      userId,
       request.nextUrl.search
     );
 
@@ -44,26 +37,12 @@ export async function GET(request: NextRequest) {
       cacheKey,
       CACHE_TTL.settlements,
       async () =>
-        readWithMode({
-          routeName: "/api/settlements",
-          userId: session.user.id,
-          requestKey: request.nextUrl.search,
-          mongoRead: () =>
-            mongoReadRepository.getSettlements({
-              userId: session.user.id,
-              page,
-              limit,
-              groupId,
-              friendId,
-            }),
-          supabaseRead: () =>
-            supabaseReadRepository.getSettlements({
-              userId: session.user.id,
-              page,
-              limit,
-              groupId,
-              friendId,
-            }),
+        supabaseReadRepository.getSettlements({
+          userId,
+          page,
+          limit,
+          groupId,
+          friendId,
         })
     );
 
@@ -83,130 +62,135 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// POST /api/settlements - Create settlement
 export async function POST(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const auth = await requireUser(request);
+    if (auth.response || !auth.user) {
+      return auth.response as NextResponse;
     }
+    const currentUserId = auth.user.id;
 
     const body = await request.json();
-    const {
-      fromUserId,
-      toUserId,
-      amount,
-      currency,
-      method,
-      note,
-      screenshot,
-      date,
-      groupId,
-    } = body;
+    const fromUserId = String(body?.fromUserId || "");
+    const toUserId = String(body?.toUserId || "");
+    const amount = Number(body?.amount || 0);
+    const currency = String(body?.currency || "INR");
+    const method = String(body?.method || "Cash");
+    const note = body?.note ? String(body.note) : "";
+    const screenshot = body?.screenshot ? String(body.screenshot) : null;
+    const groupId = body?.groupId ? String(body.groupId) : null;
+    const settlementDate = body?.date ? new Date(body.date) : new Date();
 
-    // Validation
-    if (!fromUserId || !toUserId || !amount) {
+    if (!fromUserId || !toUserId || !Number.isFinite(amount)) {
       return NextResponse.json(
         { error: "Missing required fields" },
         { status: 400 }
       );
     }
-
     if (amount <= 0) {
       return NextResponse.json(
         { error: "Amount must be greater than 0" },
         { status: 400 }
       );
     }
-
     if (fromUserId === toUserId) {
       return NextResponse.json(
         { error: "Cannot settle with yourself" },
         { status: 400 }
       );
     }
-
-    await dbConnect();
-
-    const userId = new mongoose.Types.ObjectId(session.user.id);
-
-    // User must be either sender or receiver
-    if (
-      fromUserId !== userId.toString() &&
-      toUserId !== userId.toString()
-    ) {
+    if (fromUserId !== currentUserId && toUserId !== currentUserId) {
       return NextResponse.json(
         { error: "You must be part of the settlement" },
         { status: 403 }
       );
     }
 
-    // Create settlement with version tracking
-    const settlement = await Settlement.create({
-      fromUserId: new mongoose.Types.ObjectId(fromUserId),
-      toUserId: new mongoose.Types.ObjectId(toUserId),
-      amount,
-      currency: currency || "INR",
-      method: method || "Cash",
-      note: note || "",
-      screenshot: screenshot || null,
-      date: date || new Date(),
-      groupId: groupId ? new mongoose.Types.ObjectId(groupId) : undefined,
-      version: 1,
-      lastModified: new Date(),
-      modifiedBy: new mongoose.Types.ObjectId(session.user.id),
-    });
+    const supabase = requireSupabaseAdmin();
 
-    const populatedSettlement = await Settlement.findById(settlement._id)
-      .populate("fromUserId", "name email profilePicture")
-      .populate("toUserId", "name email profilePicture")
-      .populate("groupId", "name image");
+    const { data: userRows, error: userFetchError } = await supabase
+      .from("users")
+      .select("id,name,email,profile_picture")
+      .in("id", [fromUserId, toUserId]);
+    if (userFetchError) {
+      throw userFetchError;
+    }
 
-    await mirrorUpsertToSupabase("settlements", settlement._id.toString(), {
-      id: settlement._id.toString(),
-      from_user_id: fromUserId,
-      to_user_id: toUserId,
-      amount: Number(amount),
-      currency: currency || "INR",
-      method: String(method || "upi").toLowerCase(),
-      note: note || null,
-      screenshot: screenshot || null,
-      date: date || new Date(),
-      group_id: groupId || null,
-      version: settlement.version || 1,
-      last_modified: settlement.lastModified || new Date(),
-      modified_by: session.user.id,
-      created_at: settlement.createdAt,
-      updated_at: settlement.updatedAt,
-    });
+    const usersMap = new Map((userRows || []).map((row: any) => [String(row.id), row]));
+    if (!usersMap.get(fromUserId) || !usersMap.get(toUserId)) {
+      return NextResponse.json(
+        { error: "Invalid settlement users" },
+        { status: 400 }
+      );
+    }
 
-    // Send notification to the other party
+    let groupPayload: { _id: string; name: string; image: string | null } | null = null;
+    if (groupId) {
+      const { data: groupRow, error: groupError } = await supabase
+        .from("groups")
+        .select("id,name,image")
+        .eq("id", groupId)
+        .eq("is_active", true)
+        .maybeSingle();
+      if (groupError) {
+        throw groupError;
+      }
+      if (groupRow) {
+        groupPayload = {
+          _id: groupRow.id,
+          name: groupRow.name,
+          image: groupRow.image || null,
+        };
+      }
+    }
+
+    const nowIso = new Date().toISOString();
+    const settlementId = newAppId();
+    const { data: row, error: insertError } = await supabase
+      .from("settlements")
+      .insert({
+        id: settlementId,
+        from_user_id: fromUserId,
+        to_user_id: toUserId,
+        amount,
+        currency,
+        method,
+        note,
+        screenshot,
+        date: settlementDate.toISOString(),
+        group_id: groupId,
+        version: 1,
+        last_modified: nowIso,
+        modified_by: currentUserId,
+      })
+      .select("*")
+      .single();
+
+    if (insertError || !row) {
+      throw insertError || new Error("Failed to record settlement");
+    }
+
+    const fromUser = usersMap.get(fromUserId);
+    const toUser = usersMap.get(toUserId);
+
     try {
       await notifySettlement(
-        settlement._id,
-        {
-          id: populatedSettlement!.fromUserId._id,
-          name: (populatedSettlement!.fromUserId as any).name,
-        },
-        {
-          id: populatedSettlement!.toUserId._id,
-          name: (populatedSettlement!.toUserId as any).name,
-        },
-        amount,
-        currency || "INR",
-        userId
+        row.id,
+        { id: fromUserId, name: fromUser?.name || "Someone" },
+        { id: toUserId, name: toUser?.name || "Someone" },
+        Number(row.amount),
+        row.currency || currency,
+        currentUserId
       );
     } catch (notifError) {
       console.error("Failed to send notifications:", notifError);
     }
 
-    // Create version vector and ETag
     const versionVector = {
-      version: settlement.version,
-      lastModified: settlement.lastModified,
-      modifiedBy: settlement.modifiedBy,
+      version: row.version || 1,
+      lastModified: row.last_modified || row.updated_at,
+      modifiedBy: row.modified_by || currentUserId,
     };
-    const etag = `"${settlement._id}-${settlement.version}"`;
 
     await invalidateUsersCache(
       [fromUserId, toUserId],
@@ -227,16 +211,41 @@ export async function POST(request: NextRequest) {
       {
         message: "Settlement recorded successfully",
         settlement: {
-          ...populatedSettlement!.toJSON(),
+          _id: row.id,
+          fromUserId: fromUser
+            ? {
+                _id: fromUser.id,
+                name: fromUser.name,
+                email: fromUser.email,
+                profilePicture: fromUser.profile_picture || null,
+              }
+            : null,
+          toUserId: toUser
+            ? {
+                _id: toUser.id,
+                name: toUser.name,
+                email: toUser.email,
+                profilePicture: toUser.profile_picture || null,
+              }
+            : null,
+          amount: Number(row.amount),
+          currency: row.currency,
+          method: row.method,
+          note: row.note,
+          screenshot: row.screenshot,
+          date: row.date,
+          groupId: groupPayload,
+          createdAt: row.created_at,
+          updatedAt: row.updated_at,
           _version: versionVector,
         },
       },
       {
         status: 201,
         headers: {
-          'ETag': etag,
-          'X-Version-Vector': JSON.stringify(versionVector),
-        }
+          ETag: `"${row.id}-${versionVector.version}"`,
+          "X-Version-Vector": JSON.stringify(versionVector),
+        },
       }
     );
   } catch (error: any) {

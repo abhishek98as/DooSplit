@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import dbConnect from "@/lib/db";
-import User from "@/models/User";
+import { requireSupabaseAdmin } from "@/lib/supabase/app";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
   try {
@@ -16,44 +15,53 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    await dbConnect();
+    const supabase = requireSupabaseAdmin();
+    const { data: user, error } = await supabase
+      .from("users")
+      .select("id,reset_password_expires")
+      .eq("reset_password_token", token)
+      .eq("email_verified", false)
+      .eq("auth_provider", "email")
+      .gt("reset_password_expires", new Date().toISOString())
+      .maybeSingle();
 
-    // Find user with matching verification token that hasn't expired
-    const user = await User.findOne({
-      resetPasswordToken: token,
-      resetPasswordExpires: { $gt: new Date() },
-      emailVerified: false,
-      authProvider: "email", // Only for email/password accounts
-    });
+    if (error) {
+      throw error;
+    }
 
     if (!user) {
-      // Token might be expired or invalid
-      const expiredUser = await User.findOne({
-        resetPasswordToken: token,
-        emailVerified: false,
-        authProvider: "email",
-      });
+      const { data: expired } = await supabase
+        .from("users")
+        .select("id")
+        .eq("reset_password_token", token)
+        .eq("email_verified", false)
+        .eq("auth_provider", "email")
+        .maybeSingle();
 
-      if (expiredUser) {
-        // Token exists but expired
+      if (expired) {
         return NextResponse.redirect(
           new URL("/auth/verify-email?error=expired", request.url)
         );
-      } else {
-        // Invalid token
-        return NextResponse.redirect(
-          new URL("/auth/verify-email?error=invalid", request.url)
-        );
       }
+
+      return NextResponse.redirect(
+        new URL("/auth/verify-email?error=invalid", request.url)
+      );
     }
 
-    // Mark user as verified and clear the token
-    user.emailVerified = true;
-    user.resetPasswordToken = undefined;
-    user.resetPasswordExpires = undefined;
-    await user.save();
+    const { error: updateError } = await supabase
+      .from("users")
+      .update({
+        email_verified: true,
+        reset_password_token: null,
+        reset_password_expires: null,
+      })
+      .eq("id", user.id);
 
-    // Redirect to success page
+    if (updateError) {
+      throw updateError;
+    }
+
     return NextResponse.redirect(
       new URL("/auth/verify-email?success=true", request.url)
     );
@@ -64,3 +72,4 @@ export async function GET(request: NextRequest) {
     );
   }
 }
+

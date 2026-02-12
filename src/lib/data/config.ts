@@ -1,36 +1,22 @@
-export type DataBackendMode = "mongo" | "shadow" | "supabase";
-export type DataWriteMode = "single" | "dual";
-
-function normalizeBackendMode(value: string | undefined): DataBackendMode {
-  if (value === "shadow" || value === "supabase") {
-    return value;
-  }
-  return "mongo";
-}
-
-function normalizeWriteMode(value: string | undefined): DataWriteMode {
-  if (value === "dual") {
-    return "dual";
-  }
-  return "single";
-}
+export type DataBackendMode = "supabase";
+export type DataWriteMode = "single";
 
 export function getDataBackendMode(): DataBackendMode {
-  return normalizeBackendMode(process.env.DATA_BACKEND_MODE);
+  return "supabase";
 }
 
 export function getDataWriteMode(): DataWriteMode {
-  return normalizeWriteMode(process.env.DATA_WRITE_MODE);
+  return "single";
 }
 
 export function isSupabaseReadMode(): boolean {
-  return getDataBackendMode() === "supabase";
+  return true;
 }
 
 export function isShadowReadMode(): boolean {
-  return getDataBackendMode() === "shadow";
+  return false;
 }
 
 export function isDualWriteMode(): boolean {
-  return getDataWriteMode() === "dual";
+  return false;
 }

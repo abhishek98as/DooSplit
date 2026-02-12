@@ -1,71 +1,69 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import dbConnect from "@/lib/db";
-import User from "@/models/User";
-import Friend from "@/models/Friend";
-import { authOptions } from "@/lib/auth";
-import mongoose from "mongoose";
+import { requireUser } from "@/lib/auth/require-user";
+import { requireSupabaseAdmin } from "@/lib/supabase/app";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
+
+function escapeLike(value: string): string {
+  return value.replace(/[%_]/g, "");
+}
 
 export async function GET(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const auth = await requireUser(request);
+    if (auth.response || !auth.user) {
+      return auth.response as NextResponse;
     }
 
     const searchParams = request.nextUrl.searchParams;
-    const query = searchParams.get("q") || searchParams.get("query");
+    const query = (searchParams.get("q") || searchParams.get("query") || "").trim();
 
-    if (!query || query.trim().length < 2) {
+    if (!query || query.length < 2) {
       return NextResponse.json(
         { error: "Search query must be at least 2 characters" },
         { status: 400 }
       );
     }
 
-    await dbConnect();
+    const supabase = requireSupabaseAdmin();
+    const safe = escapeLike(query);
+    const { data: users, error } = await supabase
+      .from("users")
+      .select("id,name,email,profile_picture")
+      .neq("id", auth.user.id)
+      .eq("is_dummy", false)
+      .eq("is_active", true)
+      .or(`name.ilike.%${safe}%,email.ilike.%${safe}%`)
+      .limit(10);
 
-    const userId = new mongoose.Types.ObjectId(session.user.id);
+    if (error) {
+      throw error;
+    }
 
-    // Search users by name or email (case-insensitive), exclude dummy users
-    const users = await User.find({
-      $and: [
-        { _id: { $ne: userId } }, // Exclude current user
-        { isDummy: { $ne: true } }, // Exclude dummy users
-        {
-          $or: [
-            { name: { $regex: query, $options: "i" } },
-            { email: { $regex: query, $options: "i" } },
-          ],
-        },
-      ],
-      isActive: true,
-    })
-      .select("name email profilePicture")
-      .limit(10)
-      .lean();
+    const userIds = (users || []).map((u: any) => String(u.id));
+    let friendshipMap = new Map<string, string>();
+    if (userIds.length > 0) {
+      const { data: friendships, error: friendshipError } = await supabase
+        .from("friendships")
+        .select("friend_id,status")
+        .eq("user_id", auth.user.id)
+        .in("friend_id", userIds);
 
-    // Batch friendship lookup (fixes N+1 — single query instead of 1 per user)
-    const userIds = users.map((u: any) => u._id);
-    const friendships = await Friend.find({
-      userId,
-      friendId: { $in: userIds },
-    })
-      .select("friendId status")
-      .lean();
+      if (friendshipError) {
+        throw friendshipError;
+      }
 
-    const friendshipMap = new Map(
-      friendships.map((f: any) => [f.friendId.toString(), f.status])
-    );
+      friendshipMap = new Map(
+        (friendships || []).map((f: any) => [String(f.friend_id), String(f.status)])
+      );
+    }
 
-    const usersWithStatus = users.map((user: any) => ({
-      id: user._id,
+    const usersWithStatus = (users || []).map((user: any) => ({
+      id: user.id,
       name: user.name,
       email: user.email,
-      profilePicture: user.profilePicture,
-      friendshipStatus: friendshipMap.get(user._id.toString()) || "none",
+      profilePicture: user.profile_picture || null,
+      friendshipStatus: friendshipMap.get(String(user.id)) || "none",
     }));
 
     return NextResponse.json({ users: usersWithStatus }, { status: 200 });

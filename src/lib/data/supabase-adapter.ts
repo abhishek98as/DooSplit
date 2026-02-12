@@ -203,7 +203,13 @@ async function getExpenses(input: ExpensesReadInput): Promise<ExpensesPayload> {
     .eq("is_deleted", false);
 
   if (input.category) query = query.eq("category", input.category);
-  if (input.groupId) query = query.eq("group_id", input.groupId);
+  if (input.groupId) {
+    if (input.groupId === "non-group") {
+      query = query.is("group_id", null);
+    } else {
+      query = query.eq("group_id", input.groupId);
+    }
+  }
   if (input.startDate) query = query.gte("date", input.startDate);
   if (input.endDate) query = query.lte("date", input.endDate);
 

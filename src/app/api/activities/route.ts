@@ -1,13 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
 import {
   CACHE_TTL,
   buildUserScopedCacheKey,
   getOrSetCacheJsonWithMeta,
 } from "@/lib/cache";
-import { readWithMode } from "@/lib/data";
-import { mongoReadRepository, supabaseReadRepository } from "@/lib/data/read-routing";
+import { supabaseReadRepository } from "@/lib/data/supabase-adapter";
+import { requireUser } from "@/lib/auth/require-user";
 
 export const dynamic = "force-dynamic";
 
@@ -15,10 +13,11 @@ export const dynamic = "force-dynamic";
 export async function GET(request: NextRequest) {
   try {
     const routeStart = Date.now();
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const auth = await requireUser(request);
+    if (auth.response || !auth.user) {
+      return auth.response as NextResponse;
     }
+    const userId = auth.user.id;
 
     const searchParams = request.nextUrl.searchParams;
     const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
@@ -26,7 +25,7 @@ export async function GET(request: NextRequest) {
 
     const cacheKey = buildUserScopedCacheKey(
       "activities",
-      session.user.id,
+      userId,
       request.nextUrl.search
     );
 
@@ -34,22 +33,10 @@ export async function GET(request: NextRequest) {
       cacheKey,
       CACHE_TTL.activities,
       async () =>
-        readWithMode({
-          routeName: "/api/activities",
-          userId: session.user.id,
-          requestKey: request.nextUrl.search,
-          mongoRead: () =>
-            mongoReadRepository.getActivities({
-              userId: session.user.id,
-              page,
-              limit,
-            }),
-          supabaseRead: () =>
-            supabaseReadRepository.getActivities({
-              userId: session.user.id,
-              page,
-              limit,
-            }),
+        supabaseReadRepository.getActivities({
+          userId,
+          page,
+          limit,
         })
     );
 

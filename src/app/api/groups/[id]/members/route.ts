@@ -1,27 +1,67 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import dbConnect from "@/lib/db";
-import GroupMember from "@/models/GroupMember";
-import User from "@/models/User";
-import { authOptions } from "@/lib/auth";
-import mongoose from "mongoose";
 import { invalidateUsersCache } from "@/lib/cache";
+import { requireUser } from "@/lib/auth/require-user";
+import { newAppId, requireSupabaseAdmin } from "@/lib/supabase/app";
 
-// POST /api/groups/[id]/members - Add member to group
+function mapMembers(members: any[], usersMap: Map<string, any>) {
+  return members.map((member: any) => {
+    const user = usersMap.get(String(member.user_id));
+    return {
+      _id: member.id,
+      groupId: member.group_id,
+      userId: user
+        ? {
+            _id: user.id,
+            name: user.name,
+            email: user.email,
+            profilePicture: user.profile_picture || null,
+          }
+        : null,
+      role: member.role,
+      joinedAt: member.joined_at,
+      createdAt: member.created_at,
+      updatedAt: member.updated_at,
+    };
+  });
+}
+
+async function loadGroupMembers(groupId: string) {
+  const supabase = requireSupabaseAdmin();
+  const { data: members, error } = await supabase
+    .from("group_members")
+    .select("*")
+    .eq("group_id", groupId);
+  if (error) {
+    throw error;
+  }
+  const userIds = Array.from(
+    new Set((members || []).map((member: any) => String(member.user_id)))
+  );
+  const { data: users, error: usersError } = await supabase
+    .from("users")
+    .select("id,name,email,profile_picture")
+    .in("id", userIds.length > 0 ? userIds : ["__none__"]);
+  if (usersError) {
+    throw usersError;
+  }
+  const usersMap = new Map((users || []).map((user: any) => [String(user.id), user]));
+  return mapMembers(members || [], usersMap);
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id } = await params;
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const auth = await requireUser(request);
+    if (auth.response || !auth.user) {
+      return auth.response as NextResponse;
     }
+    const currentUserId = auth.user.id;
 
     const body = await request.json();
-    const { userId: newMemberId } = body;
-
+    const newMemberId = String(body?.userId || "");
     if (!newMemberId) {
       return NextResponse.json(
         { error: "User ID is required" },
@@ -29,16 +69,16 @@ export async function POST(
       );
     }
 
-    await dbConnect();
-
-    const userId = new mongoose.Types.ObjectId(session.user.id);
-
-    // Check if requester is admin
-    const membership = await GroupMember.findOne({
-      groupId: id,
-      userId,
-    });
-
+    const supabase = requireSupabaseAdmin();
+    const { data: membership, error: membershipError } = await supabase
+      .from("group_members")
+      .select("role")
+      .eq("group_id", id)
+      .eq("user_id", currentUserId)
+      .maybeSingle();
+    if (membershipError) {
+      throw membershipError;
+    }
     if (!membership || membership.role !== "admin") {
       return NextResponse.json(
         { error: "Only group admins can add members" },
@@ -46,45 +86,56 @@ export async function POST(
       );
     }
 
-    // Check if user exists
-    const userExists = await User.findById(newMemberId);
+    const { data: userExists, error: userError } = await supabase
+      .from("users")
+      .select("id")
+      .eq("id", newMemberId)
+      .maybeSingle();
+    if (userError) {
+      throw userError;
+    }
     if (!userExists) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
-    // Check if already a member
-    const existingMember = await GroupMember.findOne({
-      groupId: id,
-      userId: newMemberId,
-    });
-
-    if (existingMember) {
+    const { data: existingMember, error: existingError } = await supabase
+      .from("group_members")
+      .select("id")
+      .eq("group_id", id)
+      .eq("user_id", newMemberId)
+      .maybeSingle();
+    if (existingError) {
+      throw existingError;
+    }
+    if (existingMember?.id) {
       return NextResponse.json(
         { error: "User is already a member" },
         { status: 400 }
       );
     }
 
-    // Add member
-    await GroupMember.create({
-      groupId: id,
-      userId: new mongoose.Types.ObjectId(newMemberId),
+    const nowIso = new Date().toISOString();
+    const { error: insertError } = await supabase.from("group_members").insert({
+      id: newAppId(),
+      group_id: id,
+      user_id: newMemberId,
       role: "member",
+      joined_at: nowIso,
+      created_at: nowIso,
+      updated_at: nowIso,
     });
+    if (insertError) {
+      throw insertError;
+    }
 
-    const members = await GroupMember.find({ groupId: id }).populate(
-      "userId",
-      "name email profilePicture"
-    );
-
+    const members = await loadGroupMembers(id);
     const affectedUserIds = Array.from(
-      new Set(
-        [
-          session.user.id,
-          ...members.map((member: any) => member.userId?._id?.toString?.() || member.userId?.toString?.()),
-        ].filter(Boolean)
-      )
-    ) as string[];
+      new Set([
+        currentUserId,
+        newMemberId,
+        ...members.map((member: any) => String(member.userId?._id)).filter(Boolean),
+      ])
+    );
 
     await invalidateUsersCache(affectedUserIds, [
       "groups",
@@ -112,21 +163,27 @@ export async function POST(
   }
 }
 
-// DELETE /api/groups/[id]/members - Remove member from group
 export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id } = await params;
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const auth = await requireUser(request);
+    if (auth.response || !auth.user) {
+      return auth.response as NextResponse;
     }
+    const currentUserId = auth.user.id;
 
-    const searchParams = request.nextUrl.searchParams;
-    const memberIdToRemove = searchParams.get("userId");
-
+    const searchUserId = request.nextUrl.searchParams.get("userId");
+    let bodyUserId: string | null = null;
+    try {
+      const body = await request.json();
+      bodyUserId = body?.userId ? String(body.userId) : null;
+    } catch {
+      bodyUserId = null;
+    }
+    const memberIdToRemove = searchUserId || bodyUserId;
     if (!memberIdToRemove) {
       return NextResponse.json(
         { error: "User ID is required" },
@@ -134,23 +191,22 @@ export async function DELETE(
       );
     }
 
-    await dbConnect();
-
-    const userId = new mongoose.Types.ObjectId(session.user.id);
-
-    // Check if requester is admin or removing themselves
-    const membership = await GroupMember.findOne({
-      groupId: id,
-      userId,
-    });
-
-    const isSelfRemoval = memberIdToRemove === userId.toString();
-    const isAdmin = membership?.role === "admin";
-
+    const supabase = requireSupabaseAdmin();
+    const { data: membership, error: membershipError } = await supabase
+      .from("group_members")
+      .select("role")
+      .eq("group_id", id)
+      .eq("user_id", currentUserId)
+      .maybeSingle();
+    if (membershipError) {
+      throw membershipError;
+    }
     if (!membership) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
+    const isSelfRemoval = memberIdToRemove === currentUserId;
+    const isAdmin = membership.role === "admin";
     if (!isSelfRemoval && !isAdmin) {
       return NextResponse.json(
         { error: "Only admins can remove other members" },
@@ -158,14 +214,16 @@ export async function DELETE(
       );
     }
 
-    // Check if user is the only admin
     if (isAdmin && isSelfRemoval) {
-      const adminCount = await GroupMember.countDocuments({
-        groupId: id,
-        role: "admin",
-      });
-
-      if (adminCount === 1) {
+      const { count: adminCount, error: adminCountError } = await supabase
+        .from("group_members")
+        .select("id", { count: "exact", head: true })
+        .eq("group_id", id)
+        .eq("role", "admin");
+      if (adminCountError) {
+        throw adminCountError;
+      }
+      if ((adminCount || 0) <= 1) {
         return NextResponse.json(
           {
             error:
@@ -176,25 +234,23 @@ export async function DELETE(
       }
     }
 
-    await GroupMember.findOneAndDelete({
-      groupId: id,
-      userId: memberIdToRemove,
-    });
+    const { error: deleteError } = await supabase
+      .from("group_members")
+      .delete()
+      .eq("group_id", id)
+      .eq("user_id", memberIdToRemove);
+    if (deleteError) {
+      throw deleteError;
+    }
 
-    const members = await GroupMember.find({ groupId: id }).populate(
-      "userId",
-      "name email profilePicture"
-    );
-
+    const members = await loadGroupMembers(id);
     const affectedUserIds = Array.from(
-      new Set(
-        [
-          session.user.id,
-          memberIdToRemove,
-          ...members.map((member: any) => member.userId?._id?.toString?.() || member.userId?.toString?.()),
-        ].filter(Boolean)
-      )
-    ) as string[];
+      new Set([
+        currentUserId,
+        memberIdToRemove,
+        ...members.map((member: any) => String(member.userId?._id)).filter(Boolean),
+      ])
+    );
 
     await invalidateUsersCache(affectedUserIds, [
       "groups",

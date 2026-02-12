@@ -1,17 +1,17 @@
-import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
+import { NextRequest, NextResponse } from "next/server";
 import jwt from "jsonwebtoken";
-import { authOptions } from "@/lib/auth";
+import { requireUser } from "@/lib/auth/require-user";
 
 export const dynamic = "force-dynamic";
 
 const TTL_SECONDS = 5 * 60;
 
-export async function GET() {
-  const session = await getServerSession(authOptions);
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+export async function GET(request: NextRequest) {
+  const auth = await requireUser(request);
+  if (auth.response || !auth.user) {
+    return auth.response as NextResponse;
   }
+  const user = auth.user;
 
   const secret = process.env.SUPABASE_JWT_SECRET;
   if (!secret) {
@@ -26,16 +26,16 @@ export async function GET() {
     aud: "authenticated",
     exp: now + TTL_SECONDS,
     iat: now,
-    sub: session.user.id,
-    user_id: session.user.id,
-    email: session.user.email || undefined,
+    sub: user.id,
+    user_id: user.id,
+    email: user.email || undefined,
     role: "authenticated",
     app_metadata: {
-      provider: "nextauth",
+      provider: user.source,
     },
     user_metadata: {
-      id: session.user.id,
-      name: session.user.name || undefined,
+      id: user.id,
+      name: user.name || undefined,
     },
   };
 
