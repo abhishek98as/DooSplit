@@ -74,20 +74,34 @@ async function fetchGroupsByIds(ids: string[]): Promise<Map<string, any>> {
 async function getFriends(input: FriendsReadInput): Promise<FriendsPayload> {
   const supabase = requireSupabase();
 
+  // Get friendships and user data in a single optimized query
   const { data: friendships, error } = await supabase
     .from("friendships")
     .select("id,friend_id,created_at")
     .eq("user_id", input.userId)
-    .eq("status", "accepted");
+    .eq("status", "accepted")
+    .order("created_at", { ascending: false });
   if (error) throw error;
 
-  const friendIds = (friendships || []).map((row: any) => row.friend_id);
-  const users = await fetchUsersByIds(friendIds);
+  if (!friendships || friendships.length === 0) {
+    return { friends: [] };
+  }
+
+  const friendIds = friendships.map((row: any) => row.friend_id);
+  
+  // Fetch all friend users in a single query
+  const { data: usersData, error: usersError } = await supabase
+    .from("users")
+    .select("id,name,email,profile_picture,is_dummy")
+    .in("id", friendIds);
+  if (usersError) throw usersError;
+
+  const usersMap = new Map((usersData || []).map((row: any) => [row.id, row]));
 
   return {
-    friends: (friendships || []).map((row: any) => ({
+    friends: friendships.map((row: any) => ({
       id: row.id,
-      friend: mapUser(users.get(row.friend_id)),
+      friend: mapUser(usersMap.get(row.friend_id)),
       balance: 0,
       friendshipDate: row.created_at,
     })),
@@ -97,6 +111,7 @@ async function getFriends(input: FriendsReadInput): Promise<FriendsPayload> {
 async function getGroups(input: GroupsReadInput): Promise<GroupsPayload> {
   const supabase = requireSupabase();
 
+  // Step 1: Get user's group memberships (with role)
   const { data: membershipRows, error: membershipError } = await supabase
     .from("group_members")
     .select("group_id,role")
@@ -108,36 +123,55 @@ async function getGroups(input: GroupsReadInput): Promise<GroupsPayload> {
     return { groups: [] };
   }
 
-  const { data: groups, error: groupsError } = await supabase
-    .from("groups")
-    .select("*")
-    .in("id", groupIds)
-    .eq("is_active", true)
-    .order("created_at", { ascending: false });
-  if (groupsError) throw groupsError;
+  // Step 2: Batch fetch groups and all related data in parallel
+  const [groupsResult, memberRowsResult] = await Promise.all([
+    // Get active groups for this user
+    supabase
+      .from("groups")
+      .select("*")
+      .in("id", groupIds)
+      .eq("is_active", true)
+      .order("created_at", { ascending: false }),
+    // Get all members for these groups
+    supabase
+      .from("group_members")
+      .select("*")
+      .in("group_id", groupIds)
+  ]);
 
-  const filteredGroupIds = (groups || []).map((row: any) => row.id);
-  if (filteredGroupIds.length === 0) {
+  if (groupsResult.error) throw groupsResult.error;
+  if (memberRowsResult.error) throw memberRowsResult.error;
+
+  const groups = groupsResult.data || [];
+  const memberRows = memberRowsResult.data || [];
+
+  if (groups.length === 0) {
     return { groups: [] };
   }
 
-  const { data: memberRows, error: memberRowsError } = await supabase
-    .from("group_members")
-    .select("*")
-    .in("group_id", filteredGroupIds);
-  if (memberRowsError) throw memberRowsError;
+  // Step 3: Fetch all users (members + creators) in a single query
+  const allUserIds = Array.from(new Set([
+    ...memberRows.map((row: any) => row.user_id),
+    ...groups.map((row: any) => row.created_by)
+  ]));
 
-  const users = await fetchUsersByIds((memberRows || []).map((row: any) => row.user_id));
-  const creatorUsers = await fetchUsersByIds((groups || []).map((row: any) => row.created_by));
+  const { data: usersData, error: usersError } = await supabase
+    .from("users")
+    .select("id,name,email,profile_picture")
+    .in("id", allUserIds);
+  if (usersError) throw usersError;
 
+  const usersMap = new Map((usersData || []).map((row: any) => [row.id, row]));
+
+  // Create lookup maps for O(1) access
   const membersByGroup = new Map<string, any[]>();
-  for (const member of memberRows || []) {
+  for (const member of memberRows) {
     const key = member.group_id;
     const list = membersByGroup.get(key) || [];
     list.push({
       _id: member.id,
       groupId: member.group_id,
-      userId: mapUser(users.get(member.user_id)),
+      userId: mapUser(usersMap.get(member.user_id)),
       role: member.role,
       joinedAt: member.joined_at,
       createdAt: member.created_at,
@@ -147,11 +181,11 @@ async function getGroups(input: GroupsReadInput): Promise<GroupsPayload> {
   }
 
   const roleByGroup = new Map(
-    (membershipRows || []).map((row: any) => [row.group_id, row.role])
+    membershipRows.map((row: any) => [row.group_id, row.role])
   );
 
   return {
-    groups: (groups || []).map((group: any) => {
+    groups: groups.map((group: any) => {
       const members = membersByGroup.get(group.id) || [];
       return {
         _id: group.id,
@@ -160,7 +194,7 @@ async function getGroups(input: GroupsReadInput): Promise<GroupsPayload> {
         image: group.image,
         type: group.type,
         currency: group.currency,
-        createdBy: mapUser(creatorUsers.get(group.created_by)),
+        createdBy: mapUser(usersMap.get(group.created_by)),
         isActive: group.is_active,
         createdAt: group.created_at,
         updatedAt: group.updated_at,
@@ -175,6 +209,7 @@ async function getGroups(input: GroupsReadInput): Promise<GroupsPayload> {
 async function getExpenses(input: ExpensesReadInput): Promise<ExpensesPayload> {
   const supabase = requireSupabase();
 
+  // Step 1: Get expense IDs for this user (optimized with index)
   const { data: participationRows, error: participationError } = await supabase
     .from("expense_participants")
     .select("expense_id")
@@ -196,6 +231,7 @@ async function getExpenses(input: ExpensesReadInput): Promise<ExpensesPayload> {
     };
   }
 
+  // Step 2: Get filtered expenses with count (optimized with composite index)
   let query = supabase
     .from("expenses")
     .select("*", { count: "exact" })
@@ -220,27 +256,57 @@ async function getExpenses(input: ExpensesReadInput): Promise<ExpensesPayload> {
     .range(skip, skip + input.limit - 1);
   if (error) throw error;
 
-  const idsOnPage = (expenses || []).map((row: any) => row.id);
-  const { data: participantRows, error: participantsError } = await supabase
-    .from("expense_participants")
-    .select("*")
-    .in("expense_id", idsOnPage.length ? idsOnPage : ["__none__"]);
-  if (participantsError) throw participantsError;
+  if (!expenses || expenses.length === 0) {
+    return {
+      expenses: [],
+      pagination: {
+        page: input.page,
+        limit: input.limit,
+        total: count || 0,
+        totalPages: Math.ceil((count || 0) / input.limit),
+      },
+    };
+  }
 
-  const users = await fetchUsersByIds([
-    ...(expenses || []).map((row: any) => row.created_by),
-    ...(participantRows || []).map((row: any) => row.user_id),
+  // Step 3: Batch fetch all required related data in parallel
+  const expenseIdsOnPage = expenses.map((row: any) => row.id);
+  const creatorIds = expenses.map((row: any) => row.created_by);
+  const groupIds = expenses.map((row: any) => row.group_id).filter(Boolean);
+
+  const [participantRows, users, groups] = await Promise.all([
+    // Get participants for all expenses on this page
+    supabase
+      .from("expense_participants")
+      .select("*")
+      .in("expense_id", expenseIdsOnPage),
+    // Get all users (creators + participants) in one query
+    supabase
+      .from("users")
+      .select("id,name,email,profile_picture")
+      .in("id", Array.from(new Set([...creatorIds, ...participationRows.map((p: any) => p.user_id)]))),
+    // Get all groups in one query
+    groupIds.length > 0
+      ? supabase.from("groups").select("id,name,image").in("id", groupIds)
+      : Promise.resolve({ data: [] })
   ]);
-  const groups = await fetchGroupsByIds((expenses || []).map((row: any) => row.group_id));
 
+  if (participantRows.error) throw participantRows.error;
+  if (users.error) throw users.error;
+  if (groups.error) throw groups.error;
+
+  // Create lookup maps for O(1) access
+  const usersMap = new Map((users.data || []).map((row: any) => [row.id, row]));
+  const groupsMap = new Map((groups.data || []).map((row: any) => [row.id, row]));
+
+  // Group participants by expense for O(1) lookup
   const participantsByExpense = new Map<string, any[]>();
-  for (const participant of participantRows || []) {
+  for (const participant of participantRows.data || []) {
     const key = participant.expense_id;
     const list = participantsByExpense.get(key) || [];
     list.push({
       _id: participant.id,
       expenseId: participant.expense_id,
-      userId: mapUser(users.get(participant.user_id)),
+      userId: mapUser(usersMap.get(participant.user_id)),
       paidAmount: Number(participant.paid_amount || 0),
       owedAmount: Number(participant.owed_amount || 0),
       isSettled: !!participant.is_settled,
@@ -250,15 +316,15 @@ async function getExpenses(input: ExpensesReadInput): Promise<ExpensesPayload> {
     participantsByExpense.set(key, list);
   }
 
-  const mapped = (expenses || []).map((expense: any) => ({
+  const mapped = expenses.map((expense: any) => ({
     _id: expense.id,
     amount: Number(expense.amount),
     description: expense.description,
     category: expense.category,
     date: expense.date,
     currency: expense.currency,
-    createdBy: mapUser(users.get(expense.created_by)),
-    groupId: mapGroup(groups.get(expense.group_id)),
+    createdBy: mapUser(usersMap.get(expense.created_by)),
+    groupId: mapGroup(groupsMap.get(expense.group_id)),
     images: Array.isArray(expense.images) ? expense.images : [],
     notes: expense.notes,
     isDeleted: !!expense.is_deleted,
@@ -285,12 +351,14 @@ async function getExpenses(input: ExpensesReadInput): Promise<ExpensesPayload> {
   };
 }
 
+
 async function getDashboardActivity(
   input: DashboardActivityReadInput
 ): Promise<DashboardActivityPayload> {
   const supabase = requireSupabase();
   const activities: any[] = [];
 
+  // Step 1: Get expense IDs for this user
   const { data: links, error: linksError } = await supabase
     .from("expense_participants")
     .select("expense_id")
@@ -298,21 +366,73 @@ async function getDashboardActivity(
   if (linksError) throw linksError;
   const expenseIds = Array.from(new Set((links || []).map((row: any) => row.expense_id)));
 
-  const { data: expenses, error: expensesError } = await supabase
-    .from("expenses")
-    .select("*")
-    .in("id", expenseIds.length ? expenseIds : ["__none__"])
-    .eq("is_deleted", false)
-    .order("created_at", { ascending: false })
-    .limit(12);
-  if (expensesError) throw expensesError;
+  // Step 2: Batch fetch all activity data in parallel
+  const [expensesResult, settlementsResult, friendshipsResult] = await Promise.all([
+    // Get recent expenses
+    supabase
+      .from("expenses")
+      .select("*")
+      .in("id", expenseIds.length ? expenseIds : ["__none__"])
+      .eq("is_deleted", false)
+      .order("created_at", { ascending: false })
+      .limit(12),
+    // Get recent settlements
+    supabase
+      .from("settlements")
+      .select("*")
+      .or(`from_user_id.eq.${input.userId},to_user_id.eq.${input.userId}`)
+      .order("created_at", { ascending: false })
+      .limit(8),
+    // Get recent friendships
+    supabase
+      .from("friendships")
+      .select("id,friend_id,created_at")
+      .eq("user_id", input.userId)
+      .eq("status", "accepted")
+      .order("created_at", { ascending: false })
+      .limit(3)
+  ]);
 
-  const expenseUsers = await fetchUsersByIds((expenses || []).map((row: any) => row.created_by));
-  const expenseGroups = await fetchGroupsByIds((expenses || []).map((row: any) => row.group_id));
+  if (expensesResult.error) throw expensesResult.error;
+  if (settlementsResult.error) throw settlementsResult.error;
+  if (friendshipsResult.error) throw friendshipsResult.error;
 
-  for (const expense of expenses || []) {
-    const creator = mapUser(expenseUsers.get(expense.created_by));
-    const group = mapGroup(expenseGroups.get(expense.group_id));
+  const expenses = expensesResult.data || [];
+  const settlements = settlementsResult.data || [];
+  const friendships = friendshipsResult.data || [];
+
+  // Step 3: Fetch all users and groups in a single batch
+  const allUserIds = Array.from(new Set([
+    ...expenses.map((row: any) => row.created_by),
+    ...settlements.map((row: any) => row.from_user_id),
+    ...settlements.map((row: any) => row.to_user_id),
+    ...friendships.map((row: any) => row.friend_id)
+  ]));
+
+  const allGroupIds = expenses
+    .map((row: any) => row.group_id)
+    .filter(Boolean);
+
+  const [usersResult, groupsResult] = await Promise.all([
+    supabase
+      .from("users")
+      .select("id,name,email,profile_picture")
+      .in("id", allUserIds),
+    allGroupIds.length > 0
+      ? supabase.from("groups").select("id,name,image").in("id", allGroupIds)
+      : Promise.resolve({ data: [] })
+  ]);
+
+  if (usersResult.error) throw usersResult.error;
+  if (groupsResult.error) throw groupsResult.error;
+
+  const usersMap = new Map((usersResult.data || []).map((row: any) => [row.id, row]));
+  const groupsMap = new Map((groupsResult.data || []).map((row: any) => [row.id, row]));
+
+  // Process expenses
+  for (const expense of expenses) {
+    const creator = mapUser(usersMap.get(expense.created_by));
+    const group = mapGroup(groupsMap.get(expense.group_id));
     activities.push({
       id: expense.id,
       type: "expense_added",
@@ -339,22 +459,10 @@ async function getDashboardActivity(
     });
   }
 
-  const { data: settlements, error: settlementsError } = await supabase
-    .from("settlements")
-    .select("*")
-    .or(`from_user_id.eq.${input.userId},to_user_id.eq.${input.userId}`)
-    .order("created_at", { ascending: false })
-    .limit(8);
-  if (settlementsError) throw settlementsError;
-
-  const settlementUsers = await fetchUsersByIds([
-    ...(settlements || []).map((row: any) => row.from_user_id),
-    ...(settlements || []).map((row: any) => row.to_user_id),
-  ]);
-
-  for (const settlement of settlements || []) {
-    const fromUser = mapUser(settlementUsers.get(settlement.from_user_id));
-    const toUser = mapUser(settlementUsers.get(settlement.to_user_id));
+  // Process settlements
+  for (const settlement of settlements) {
+    const fromUser = mapUser(usersMap.get(settlement.from_user_id));
+    const toUser = mapUser(usersMap.get(settlement.to_user_id));
     const isFromUser = settlement.from_user_id === input.userId;
     const otherUser = isFromUser ? toUser : fromUser;
     const action = isFromUser ? "paid" : "received payment from";
@@ -376,18 +484,9 @@ async function getDashboardActivity(
     });
   }
 
-  const { data: friendships, error: friendshipError } = await supabase
-    .from("friendships")
-    .select("id,friend_id,created_at")
-    .eq("user_id", input.userId)
-    .eq("status", "accepted")
-    .order("created_at", { ascending: false })
-    .limit(3);
-  if (friendshipError) throw friendshipError;
-
-  const friendUsers = await fetchUsersByIds((friendships || []).map((row: any) => row.friend_id));
-  for (const friendship of friendships || []) {
-    const friend = mapUser(friendUsers.get(friendship.friend_id));
+  // Process friendships
+  for (const friendship of friendships) {
+    const friend = mapUser(usersMap.get(friendship.friend_id));
     activities.push({
       id: friendship.id,
       type: "friend_added",
@@ -574,6 +673,7 @@ async function getActivities(input: ActivitiesReadInput): Promise<ActivitiesPayl
 async function getSettlements(input: SettlementsReadInput): Promise<SettlementsPayload> {
   const supabase = requireSupabase();
 
+  // Build optimized query with filters
   let baseQuery = supabase.from("settlements").select("*", { count: "exact" });
   if (input.friendId) {
     baseQuery = baseQuery.or(
@@ -594,23 +694,55 @@ async function getSettlements(input: SettlementsReadInput): Promise<SettlementsP
     .range(skip, skip + input.limit - 1);
   if (error) throw error;
 
-  const users = await fetchUsersByIds([
-    ...(settlements || []).map((row: any) => row.from_user_id),
-    ...(settlements || []).map((row: any) => row.to_user_id),
-  ]);
-  const groups = await fetchGroupsByIds((settlements || []).map((row: any) => row.group_id));
+  if (!settlements || settlements.length === 0) {
+    return {
+      settlements: [],
+      pagination: {
+        page: input.page,
+        limit: input.limit,
+        total: count || 0,
+        totalPages: Math.ceil((count || 0) / input.limit),
+      },
+    };
+  }
 
-  const mapped = (settlements || []).map((settlement: any) => ({
+  // Batch fetch all users and groups in parallel
+  const allUserIds = Array.from(new Set([
+    ...settlements.map((row: any) => row.from_user_id),
+    ...settlements.map((row: any) => row.to_user_id)
+  ]));
+
+  const allGroupIds = settlements
+    .map((row: any) => row.group_id)
+    .filter(Boolean);
+
+  const [usersResult, groupsResult] = await Promise.all([
+    supabase
+      .from("users")
+      .select("id,name,email,profile_picture")
+      .in("id", allUserIds),
+    allGroupIds.length > 0
+      ? supabase.from("groups").select("id,name,image").in("id", allGroupIds)
+      : Promise.resolve({ data: [] })
+  ]);
+
+  if (usersResult.error) throw usersResult.error;
+  if (groupsResult.error) throw groupsResult.error;
+
+  const usersMap = new Map((usersResult.data || []).map((row: any) => [row.id, row]));
+  const groupsMap = new Map((groupsResult.data || []).map((row: any) => [row.id, row]));
+
+  const mapped = settlements.map((settlement: any) => ({
     _id: settlement.id,
-    fromUserId: mapUser(users.get(settlement.from_user_id)),
-    toUserId: mapUser(users.get(settlement.to_user_id)),
+    fromUserId: mapUser(usersMap.get(settlement.from_user_id)),
+    toUserId: mapUser(usersMap.get(settlement.to_user_id)),
     amount: Number(settlement.amount),
     currency: settlement.currency,
     method: settlement.method,
     note: settlement.note,
     screenshot: settlement.screenshot,
     date: settlement.date,
-    groupId: mapGroup(groups.get(settlement.group_id)),
+    groupId: mapGroup(groupsMap.get(settlement.group_id)),
     version: settlement.version || 1,
     lastModified: settlement.last_modified || settlement.updated_at,
     modifiedBy: settlement.modified_by,

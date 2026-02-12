@@ -4,15 +4,15 @@ import { getRedisClient } from "@/lib/redis";
 const CACHE_PREFIX = process.env.CACHE_PREFIX || "doosplit:v1";
 
 export const CACHE_TTL = {
-  expenses: 180,
-  friends: 180,
-  groups: 180,
-  activities: 120,
-  dashboardActivity: 120,
-  settlements: 180,
-  settlement: 120,
-  analytics: 180,
-  userBalance: 120,
+  expenses: 300,        // 5 minutes (was 180s) - moderately dynamic
+  friends: 600,         // 10 minutes (was 180s) - rarely changes
+  groups: 600,          // 10 minutes (was 180s) - rarely changes
+  activities: 180,      // 3 minutes (was 120s) - more dynamic
+  dashboardActivity: 180, // 3 minutes (was 120s) - more dynamic
+  settlements: 300,     // 5 minutes (was 180s) - moderately dynamic
+  settlement: 180,      // 3 minutes (was 120s) - single record
+  analytics: 600,       // 10 minutes (was 180s) - rarely changes
+  userBalance: 180,     // 3 minutes (was 120s) - moderately dynamic
 };
 
 export type CacheStatus = "HIT" | "MISS";

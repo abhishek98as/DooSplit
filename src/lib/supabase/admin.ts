@@ -25,6 +25,16 @@ export function getSupabaseAdminClient(): SupabaseClient | null {
           persistSession: false,
           autoRefreshToken: false,
         },
+        db: {
+          schema: 'public',
+        },
+        global: {
+          headers: {
+            'x-application-name': 'doosplit-api',
+          },
+        },
+        // Use connection pooler for better performance
+        // Supabase handles connection pooling via PgBouncer automatically
       }
     );
   }
