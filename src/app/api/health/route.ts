@@ -4,6 +4,7 @@ import { getRedisClient } from "@/lib/redis";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 30;
 
 export async function GET() {
   const checks: Record<string, any> = {
@@ -29,19 +30,18 @@ export async function GET() {
 
   try {
     const startTime = Date.now();
-    const redis = await getRedisClient();
-    if (redis?.isOpen) {
-      await redis.ping();
-      checks.redis = {
-        status: "connected",
-        pingMs: Date.now() - startTime,
-      };
-    } else {
-      checks.redis = {
-        status: "disabled",
-        message: "Redis not configured - running without Redis cache",
-      };
-    }
+    const redisPromise = (async () => {
+      const redis = await getRedisClient();
+      if (redis?.isOpen) {
+        await redis.ping();
+        return { status: "connected", pingMs: Date.now() - startTime };
+      }
+      return { status: "disabled", message: "Redis not configured" };
+    })();
+    const timeout = new Promise<{ status: string; message: string }>((resolve) =>
+      setTimeout(() => resolve({ status: "timeout", message: "Redis connection timed out (8s)" }), 8000)
+    );
+    checks.redis = await Promise.race([redisPromise, timeout]);
   } catch (error: any) {
     checks.redis = {
       status: "error",
