@@ -53,6 +53,7 @@ class OfflineStore {
   private syncInProgress: boolean = false;
   private inFlightRequests = new Map<string, Promise<any>>();
   private revalidateInFlight = new Set<string>();
+  private readonly requestTimeoutMs = 12000;
 
   constructor() {
     // Only add listeners on client side
@@ -100,7 +101,7 @@ class OfflineStore {
     options: RequestInit = {}
   ): Promise<T> {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
+    const timeout = setTimeout(() => controller.abort(), this.requestTimeoutMs);
 
     try {
       const response = await authFetch(url, {
@@ -117,6 +118,11 @@ class OfflineStore {
       }
 
       return await response.json();
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        throw new Error(`Request timeout after ${this.requestTimeoutMs}ms for ${url}`);
+      }
+      throw error;
     } finally {
       clearTimeout(timeout);
     }

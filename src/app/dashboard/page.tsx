@@ -80,7 +80,7 @@ interface SectionLoadingState {
   activities: boolean;
 }
 
-const REQUEST_TIMEOUT_MS = 8000;
+const REQUEST_TIMEOUT_MS = 15000;
 const GROUP_BALANCE_CONCURRENCY = 3;
 
 const INITIAL_SECTION_LOADING: SectionLoadingState = {
@@ -149,6 +149,11 @@ export default function DashboardPage() {
           throw new Error(`HTTP ${response.status} for ${url}`);
         }
         return (await response.json()) as T;
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          throw new Error(`Request timeout after ${timeoutMs}ms for ${url}`);
+        }
+        throw error;
       } finally {
         clearTimeout(timeoutId);
       }

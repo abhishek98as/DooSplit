@@ -36,6 +36,27 @@ const NO_CACHE_ROUTES = [
   '/api/test-services'
 ];
 
+function isSupportedProtocol(url) {
+  return url.protocol === 'http:' || url.protocol === 'https:';
+}
+
+function isSameOriginRequest(url) {
+  return url.origin === self.location.origin;
+}
+
+function shouldCacheApiRoute(pathname) {
+  return API_ROUTES.some((route) => pathname === route || pathname.startsWith(`${route}/`));
+}
+
+function shouldHandleRequest(request) {
+  try {
+    const url = new URL(request.url);
+    return isSupportedProtocol(url) && isSameOriginRequest(url);
+  } catch {
+    return false;
+  }
+}
+
 // Install Service Worker
 self.addEventListener('install', (event) => {
   console.log('Service Worker: Install event');
@@ -85,10 +106,14 @@ self.addEventListener('activate', (event) => {
 // Fetch Interception for Caching Strategy
 self.addEventListener('fetch', (event) => {
   const { request } = event;
-  const url = new URL(request.url);
 
   // Skip non-GET requests
   if (request.method !== 'GET') return;
+
+  // Skip unsupported schemes and cross-origin requests
+  if (!shouldHandleRequest(request)) return;
+
+  const url = new URL(request.url);
 
   // Handle different types of requests
   if (url.pathname.startsWith('/api/')) {
@@ -112,16 +137,20 @@ async function handleApiRequest(request) {
   }
 
   try {
-    // Try network first
+    // Always return the real network response so server errors are not masked
     const networkResponse = await fetch(request.clone());
 
-    if (networkResponse.ok) {
+    if (networkResponse.ok && shouldCacheApiRoute(url.pathname)) {
       // Cache successful responses
-      const cache = await caches.open(API_CACHE);
-      cache.put(request, networkResponse.clone());
-
-      return networkResponse;
+      try {
+        const cache = await caches.open(API_CACHE);
+        await cache.put(request, networkResponse.clone());
+      } catch (cacheError) {
+        console.warn('Service Worker: API cache write skipped', cacheError);
+      }
     }
+
+    return networkResponse;
   } catch (error) {
     console.log('Service Worker: Network failed, trying cache');
   }
@@ -152,8 +181,12 @@ async function handleStaticRequest(request) {
   try {
     const networkResponse = await fetch(request);
     if (networkResponse.ok) {
-      const cache = await caches.open(STATIC_CACHE);
-      cache.put(request, networkResponse.clone());
+      try {
+        const cache = await caches.open(STATIC_CACHE);
+        await cache.put(request, networkResponse.clone());
+      } catch (cacheError) {
+        console.warn('Service Worker: Static cache write skipped', cacheError);
+      }
     }
     return networkResponse;
   } catch (error) {
@@ -174,8 +207,12 @@ async function handleImageRequest(request) {
       // Check image size (max 2MB for caching)
       const contentLength = networkResponse.headers.get('content-length');
       if (!contentLength || parseInt(contentLength) < 2 * 1024 * 1024) {
-        const cache = await caches.open(IMAGE_CACHE);
-        cache.put(request, networkResponse.clone());
+        try {
+          const cache = await caches.open(IMAGE_CACHE);
+          await cache.put(request, networkResponse.clone());
+        } catch (cacheError) {
+          console.warn('Service Worker: Image cache write skipped', cacheError);
+        }
       }
     }
     return networkResponse;
@@ -187,15 +224,32 @@ async function handleImageRequest(request) {
 // Handle other requests (Stale-While-Revalidate)
 async function handleDefaultRequest(request) {
   const cachedResponse = await caches.match(request);
-  const fetchPromise = fetch(request).then(async (networkResponse) => {
-    if (networkResponse.ok) {
-      const cache = await caches.open(STATIC_CACHE);
-      cache.put(request, networkResponse.clone());
-    }
-    return networkResponse;
-  });
+  const fetchPromise = fetch(request)
+    .then(async (networkResponse) => {
+      if (networkResponse.ok) {
+        try {
+          const cache = await caches.open(STATIC_CACHE);
+          await cache.put(request, networkResponse.clone());
+        } catch (cacheError) {
+          console.warn('Service Worker: Default cache write skipped', cacheError);
+        }
+      }
+      return networkResponse;
+    })
+    .catch(() => {
+      if (cachedResponse) {
+        return cachedResponse;
+      }
+      return new Response('Offline', { status: 503 });
+    });
 
-  return cachedResponse || fetchPromise;
+  if (cachedResponse) {
+    // Revalidate in background while returning stale content immediately
+    void fetchPromise;
+    return cachedResponse;
+  }
+
+  return fetchPromise;
 }
 
 // Handle Push Notifications
@@ -356,7 +410,15 @@ self.addEventListener('offline', () => {
 
 // Message handler for communication with main thread
 self.addEventListener('message', (event) => {
-  const { type, data } = event.data;
+  const payload = event.data;
+  if (!payload || typeof payload !== 'object') {
+    return;
+  }
+
+  const { type } = payload;
+  if (typeof type !== 'string') {
+    return;
+  }
 
   switch (type) {
     case 'SKIP_WAITING':
@@ -369,14 +431,18 @@ self.addEventListener('message', (event) => {
         caches.keys(),
         navigator.storage?.estimate?.() || { quota: 0, usage: 0 }
       ]).then(([cacheNames, storage]) => {
-        event.ports[0].postMessage({
-          cacheNames,
-          storageEstimate: storage
-        });
+        const port = event.ports && event.ports[0];
+        if (port) {
+          port.postMessage({
+            cacheNames,
+            storageEstimate: storage
+          });
+        }
       });
       break;
 
     default:
-      console.log('Service Worker: Unknown message type', type);
+      // Ignore unknown message types from browser internals/extensions.
+      break;
   }
 });
