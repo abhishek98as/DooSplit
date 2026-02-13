@@ -10,6 +10,7 @@ import { requireUser } from "@/lib/auth/require-user";
 import { newAppId, requireSupabaseAdmin } from "@/lib/supabase/app";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 30;
 
 export async function GET(request: NextRequest) {
   try {
@@ -214,4 +215,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-

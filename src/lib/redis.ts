@@ -11,6 +11,8 @@ type RedisConnection = {
 
 // Retry connecting after 60 seconds of being disabled
 const RETRY_AFTER_MS = 60_000;
+const REDIS_CONNECT_TIMEOUT_MS = 2_000;
+const REDIS_KEEPALIVE_MS = 5_000;
 
 declare global {
   // eslint-disable-next-line no-var
@@ -29,9 +31,20 @@ if (!global.__redisConnection) {
 }
 
 function buildRedisConfig() {
+  if (process.env.REDIS_DISABLED === "true") {
+    return null;
+  }
+
   const url = process.env.REDIS_URL;
   if (url) {
-    return { url };
+    return {
+      url,
+      socket: {
+        connectTimeout: REDIS_CONNECT_TIMEOUT_MS,
+        keepAlive: REDIS_KEEPALIVE_MS,
+        reconnectStrategy: () => false,
+      },
+    };
   }
 
   const host = process.env.REDIS_HOST;
@@ -48,8 +61,9 @@ function buildRedisConfig() {
       host,
       port,
       tls: process.env.REDIS_TLS === "true",
-      connectTimeout: 5000,
-      keepAlive: 5000,
+      connectTimeout: REDIS_CONNECT_TIMEOUT_MS,
+      keepAlive: REDIS_KEEPALIVE_MS,
+      reconnectStrategy: () => false,
     },
   };
 }
@@ -89,7 +103,15 @@ export async function getRedisClient(): Promise<RedisClient | null> {
 
   globalConnection.connectPromise = (async () => {
     try {
-      await client.connect();
+      await Promise.race([
+        client.connect(),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error(`Redis connect timeout after ${REDIS_CONNECT_TIMEOUT_MS}ms`)),
+            REDIS_CONNECT_TIMEOUT_MS
+          )
+        ),
+      ]);
       globalConnection.client = client;
       return client;
     } catch (error: any) {

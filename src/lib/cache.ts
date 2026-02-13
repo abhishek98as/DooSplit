@@ -133,6 +133,14 @@ export async function getOrSetCacheJsonWithMeta<T>(
   ttlSeconds: number,
   loader: () => Promise<T>
 ): Promise<CacheResult<T>> {
+  const memoryCached = memoryGet<T>(key);
+  if (memoryCached !== null) {
+    return {
+      data: memoryCached,
+      cacheStatus: "HIT",
+    };
+  }
+
   const redis = await getRedisClient();
 
   if (redis) {
@@ -147,14 +155,6 @@ export async function getOrSetCacheJsonWithMeta<T>(
     } catch (error: any) {
       console.warn("Redis read failed, falling back to DB:", error.message);
     }
-  }
-
-  const memoryCached = memoryGet<T>(key);
-  if (memoryCached !== null) {
-    return {
-      data: memoryCached,
-      cacheStatus: "HIT",
-    };
   }
 
   const fresh = await loader();

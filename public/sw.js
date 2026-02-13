@@ -1,8 +1,8 @@
 // Enhanced Service Worker for DooSplit PWA
-const CACHE_NAME = 'doosplit-v2';
-const STATIC_CACHE = 'doosplit-static-v2';
-const API_CACHE = 'doosplit-api-v2';
-const IMAGE_CACHE = 'doosplit-images-v2';
+const CACHE_NAME = 'doosplit-v3';
+const STATIC_CACHE = 'doosplit-static-v3';
+const API_CACHE = 'doosplit-api-v3';
+const IMAGE_CACHE = 'doosplit-images-v3';
 
 // Cache strategies
 const CACHE_STRATEGIES = {
@@ -15,7 +15,6 @@ const CACHE_STRATEGIES = {
 // Static assets to cache immediately
 const STATIC_ASSETS = [
   '/',
-  '/dashboard',
   '/manifest.json',
   '/logo.webp',
   '/favicon.ico'

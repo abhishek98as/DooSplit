@@ -80,7 +80,7 @@ async function getFriends(input: FriendsReadInput): Promise<FriendsPayload> {
     .select("id,friend_id,created_at")
     .eq("user_id", input.userId)
     .eq("status", "accepted")
-    .order("created_at", { ascending: false });
+    .limit(2000);
   if (error) throw error;
 
   if (!friendships || friendships.length === 0) {
@@ -98,14 +98,20 @@ async function getFriends(input: FriendsReadInput): Promise<FriendsPayload> {
 
   const usersMap = new Map((usersData || []).map((row: any) => [row.id, row]));
 
-  return {
-    friends: friendships.map((row: any) => ({
-      id: row.id,
-      friend: mapUser(usersMap.get(row.friend_id)),
-      balance: 0,
-      friendshipDate: row.created_at,
-    })),
-  };
+  const friends = friendships.map((row: any) => ({
+    id: row.id,
+    friend: mapUser(usersMap.get(row.friend_id)),
+    balance: 0,
+    friendshipDate: row.created_at,
+  }));
+
+  friends.sort((a: any, b: any) => {
+    const left = new Date(a.friendshipDate || 0).getTime();
+    const right = new Date(b.friendshipDate || 0).getTime();
+    return right - left;
+  });
+
+  return { friends };
 }
 
 async function getGroups(input: GroupsReadInput): Promise<GroupsPayload> {
@@ -130,8 +136,7 @@ async function getGroups(input: GroupsReadInput): Promise<GroupsPayload> {
       .from("groups")
       .select("*")
       .in("id", groupIds)
-      .eq("is_active", true)
-      .order("created_at", { ascending: false }),
+      .eq("is_active", true),
     // Get all members for these groups
     supabase
       .from("group_members")
@@ -184,26 +189,32 @@ async function getGroups(input: GroupsReadInput): Promise<GroupsPayload> {
     membershipRows.map((row: any) => [row.group_id, row.role])
   );
 
-  return {
-    groups: groups.map((group: any) => {
-      const members = membersByGroup.get(group.id) || [];
-      return {
-        _id: group.id,
-        name: group.name,
-        description: group.description,
-        image: group.image,
-        type: group.type,
-        currency: group.currency,
-        createdBy: mapUser(usersMap.get(group.created_by)),
-        isActive: group.is_active,
-        createdAt: group.created_at,
-        updatedAt: group.updated_at,
-        memberCount: members.length,
-        members,
-        userRole: roleByGroup.get(group.id) || "member",
-      };
-    }),
-  };
+  const hydratedGroups = groups.map((group: any) => {
+    const members = membersByGroup.get(group.id) || [];
+    return {
+      _id: group.id,
+      name: group.name,
+      description: group.description,
+      image: group.image,
+      type: group.type,
+      currency: group.currency,
+      createdBy: mapUser(usersMap.get(group.created_by)),
+      isActive: group.is_active,
+      createdAt: group.created_at,
+      updatedAt: group.updated_at,
+      memberCount: members.length,
+      members,
+      userRole: roleByGroup.get(group.id) || "member",
+    };
+  });
+
+  hydratedGroups.sort((a: any, b: any) => {
+    const left = new Date(a.createdAt || 0).getTime();
+    const right = new Date(b.createdAt || 0).getTime();
+    return right - left;
+  });
+
+  return { groups: hydratedGroups };
 }
 
 async function getExpenses(input: ExpensesReadInput): Promise<ExpensesPayload> {
