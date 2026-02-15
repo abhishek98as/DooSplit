@@ -1,8 +1,8 @@
 // Enhanced Service Worker for DooSplit PWA
-const CACHE_NAME = 'doosplit-v3';
-const STATIC_CACHE = 'doosplit-static-v3';
-const API_CACHE = 'doosplit-api-v3';
-const IMAGE_CACHE = 'doosplit-images-v3';
+const CACHE_NAME = 'doosplit-v4';
+const STATIC_CACHE = 'doosplit-static-v4';
+const API_CACHE = 'doosplit-api-v4';
+const IMAGE_CACHE = 'doosplit-images-v4';
 
 // Cache strategies
 const CACHE_STRATEGIES = {
@@ -14,7 +14,6 @@ const CACHE_STRATEGIES = {
 
 // Static assets to cache immediately
 const STATIC_ASSETS = [
-  '/',
   '/manifest.json',
   '/logo.webp',
   '/favicon.ico'
@@ -113,6 +112,13 @@ self.addEventListener('fetch', (event) => {
   if (!shouldHandleRequest(request)) return;
 
   const url = new URL(request.url);
+
+  // Always fetch HTML navigations from network to avoid stale route shells
+  // across deployments.
+  if (request.mode === 'navigate') {
+    event.respondWith(handleNavigationRequest(request));
+    return;
+  }
 
   // Let the browser handle Next.js build assets so deploys don't serve stale chunks.
   if (url.pathname.startsWith('/_next/')) {
@@ -228,9 +234,10 @@ async function handleImageRequest(request) {
 // Handle other requests (Stale-While-Revalidate)
 async function handleDefaultRequest(request) {
   const cachedResponse = await caches.match(request);
+  const acceptsHtml = request.headers.get('accept')?.includes('text/html');
   const fetchPromise = fetch(request)
     .then(async (networkResponse) => {
-      if (networkResponse.ok) {
+      if (networkResponse.ok && !acceptsHtml) {
         try {
           const cache = await caches.open(STATIC_CACHE);
           await cache.put(request, networkResponse.clone());
@@ -459,3 +466,19 @@ self.addEventListener('message', (event) => {
       break;
   }
 });
+
+// Handle route document requests (Network-First)
+async function handleNavigationRequest(request) {
+  try {
+    return await fetch(request);
+  } catch (error) {
+    const cachedResponse = await caches.match(request);
+    if (cachedResponse) {
+      return cachedResponse;
+    }
+    return new Response('Offline', {
+      status: 503,
+      headers: { 'Content-Type': 'text/plain' }
+    });
+  }
+}
