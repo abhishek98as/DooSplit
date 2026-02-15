@@ -11,9 +11,9 @@ let initialized = false;
 let fetchPatched = false;
 let appStartupTrace: any = null;
 
-function readFlag(name: string): boolean {
-  return String(process.env[name] || "").trim() === "true";
-}
+const ENABLE_PERFORMANCE_MONITORING =
+  String(process.env.NEXT_PUBLIC_ENABLE_PERFORMANCE_MONITORING || "").trim() ===
+  "true";
 
 function hasCoreFirebaseClientConfig(): boolean {
   const options = app.options;
@@ -29,7 +29,7 @@ function canEnablePerformance(): boolean {
     return false;
   }
 
-  return readFlag("NEXT_PUBLIC_ENABLE_PERFORMANCE_MONITORING");
+  return ENABLE_PERFORMANCE_MONITORING;
 }
 
 function safeTraceName(input: string): string {

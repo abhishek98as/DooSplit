@@ -2,14 +2,11 @@ import { getAnalytics, isSupported } from "firebase/analytics";
 import { app } from "./firebase";
 
 let analytics: any = null;
-
-function readFlag(name: string): boolean {
-  return String(process.env[name] || "").trim() === "true";
-}
-
-function readMeasurementId(): string {
-  return String(process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID || "").trim();
-}
+const ENABLE_ANALYTICS =
+  String(process.env.NEXT_PUBLIC_ENABLE_ANALYTICS || "").trim() === "true";
+const FIREBASE_MEASUREMENT_ID = String(
+  process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID || ""
+).trim();
 
 function hasCoreFirebaseClientConfig(): boolean {
   const options = app.options;
@@ -23,13 +20,10 @@ function hasCoreFirebaseClientConfig(): boolean {
 // Initialize Firebase Analytics
 export const initializeAnalytics = async () => {
   try {
-    const enableAnalytics = readFlag("NEXT_PUBLIC_ENABLE_ANALYTICS");
-    const measurementId = readMeasurementId();
-
     if (
       typeof window !== "undefined" &&
-      enableAnalytics &&
-      measurementId &&
+      ENABLE_ANALYTICS &&
+      FIREBASE_MEASUREMENT_ID &&
       hasCoreFirebaseClientConfig()
     ) {
       const analyticsSupported = await isSupported();

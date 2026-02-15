@@ -45,17 +45,34 @@ function normalizeEnvValue(value: string | undefined): string | undefined {
   return normalized || undefined;
 }
 
-function readPublicEnv(name: string): string | undefined {
-  return normalizeEnvValue(process.env[name]);
-}
+const FIREBASE_API_KEY = normalizeEnvValue(process.env.NEXT_PUBLIC_FIREBASE_API_KEY);
+const FIREBASE_AUTH_DOMAIN = normalizeEnvValue(
+  process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
+);
+const FIREBASE_PROJECT_ID = normalizeEnvValue(
+  process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID
+);
+const FIREBASE_DATABASE_ID = normalizeEnvValue(
+  process.env.NEXT_PUBLIC_FIREBASE_DATABASE_ID
+);
+const FIREBASE_STORAGE_BUCKET = normalizeEnvValue(
+  process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET
+);
+const FIREBASE_MESSAGING_SENDER_ID = normalizeEnvValue(
+  process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
+);
+const FIREBASE_APP_ID = normalizeEnvValue(process.env.NEXT_PUBLIC_FIREBASE_APP_ID);
+const FIREBASE_MEASUREMENT_ID = normalizeEnvValue(
+  process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID
+);
 
 function resolveProjectId(): string | undefined {
-  const explicit = readPublicEnv("NEXT_PUBLIC_FIREBASE_PROJECT_ID");
+  const explicit = FIREBASE_PROJECT_ID;
   if (explicit) {
     return explicit;
   }
 
-  const authDomain = readPublicEnv("NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN");
+  const authDomain = FIREBASE_AUTH_DOMAIN;
   if (!authDomain) {
     return undefined;
   }
@@ -65,7 +82,7 @@ function resolveProjectId(): string | undefined {
 }
 
 function resolveStorageBucket(projectId?: string): string | undefined {
-  const explicit = readPublicEnv("NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET");
+  const explicit = FIREBASE_STORAGE_BUCKET;
   if (explicit) {
     return explicit.replace(/^gs:\/\//, "");
   }
@@ -80,13 +97,13 @@ function resolveStorageBucket(projectId?: string): string | undefined {
 const resolvedProjectId = resolveProjectId();
 
 const firebaseConfig = {
-  apiKey: readPublicEnv("NEXT_PUBLIC_FIREBASE_API_KEY"),
-  authDomain: readPublicEnv("NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN"),
+  apiKey: FIREBASE_API_KEY,
+  authDomain: FIREBASE_AUTH_DOMAIN,
   projectId: resolvedProjectId,
   storageBucket: resolveStorageBucket(resolvedProjectId),
-  messagingSenderId: readPublicEnv("NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID"),
-  appId: readPublicEnv("NEXT_PUBLIC_FIREBASE_APP_ID"),
-  measurementId: readPublicEnv("NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID"),
+  messagingSenderId: FIREBASE_MESSAGING_SENDER_ID,
+  appId: FIREBASE_APP_ID,
+  measurementId: FIREBASE_MEASUREMENT_ID,
 };
 
 // Initialize Firebase (singleton)
@@ -95,7 +112,7 @@ const auth = getAuth(app);
 const googleProvider = new GoogleAuthProvider();
 
 const firestoreDatabaseId =
-  readPublicEnv("NEXT_PUBLIC_FIREBASE_DATABASE_ID") ||
+  FIREBASE_DATABASE_ID ||
   resolvedProjectId ||
   "(default)";
 
