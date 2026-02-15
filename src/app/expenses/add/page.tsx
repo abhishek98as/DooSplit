@@ -22,7 +22,7 @@ import {
   Check,
   Plus
 } from "lucide-react";
-import { ImageType } from "@/lib/imagekit-service";
+import { ImageType } from "@/lib/storage/image-types";
 import getOfflineStore from "@/lib/offline-store";
 
 interface Friend {

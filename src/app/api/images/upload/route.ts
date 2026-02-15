@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth/require-user";
-import { ImageType, UploadOptions, VALIDATION } from "@/lib/imagekit-service";
+import { ImageType, UploadOptions, VALIDATION } from "@/lib/storage/image-types";
 import { uploadManagedImage } from "@/lib/storage/image-storage";
 
 export const dynamic = 'force-dynamic';
@@ -74,9 +74,21 @@ export async function POST(request: NextRequest) {
 
   } catch (error: any) {
     console.error("Image upload error:", error);
+    const message = String(error?.message || "Failed to upload image");
+    const normalized = message.toLowerCase();
+    const status =
+      normalized.includes("maximum allowed size") ||
+      normalized.includes("invalid file extension") ||
+      normalized.includes("invalid file type")
+        ? 400
+        : normalized.includes("firebase storage is not configured") ||
+          normalized.includes("firebase admin is not initialized")
+        ? 503
+        : 500;
+
     return NextResponse.json(
-      { error: error.message || "Failed to upload image" },
-      { status: 500 }
+      { error: message },
+      { status }
     );
   }
 }

@@ -7,8 +7,11 @@ Expense sharing app built with Next.js and Firebase.
 - Firebase Auth (client SDK)
 - Firebase Admin (session cookies, server auth checks)
 - Firestore (normalized collections)
-- Firebase Storage (primary image provider)
-- ImageKit (secondary image provider)
+- Firebase Storage (image uploads)
+- Firebase App Check (API abuse protection)
+- Firebase Cloud Messaging (web push notifications)
+- Firebase Performance Monitoring (web traces)
+- Cloud Functions for Firebase (scheduled jobs + webhooks)
 
 ## Firebase Collections
 - `users`
@@ -38,6 +41,10 @@ NEXT_PUBLIC_FIREBASE_DATABASE_ID=(default)
 NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=
 NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=
 NEXT_PUBLIC_FIREBASE_APP_ID=
+NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID=
+NEXT_PUBLIC_FIREBASE_VAPID_KEY=
+NEXT_PUBLIC_FIREBASE_APP_CHECK_SITE_KEY=
+NEXT_PUBLIC_ENABLE_PERFORMANCE_MONITORING=false
 
 FIREBASE_PROJECT_ID=
 FIREBASE_DATABASE_ID=(default)
@@ -48,9 +55,23 @@ FIREBASE_PRIVATE_KEY=
 FIREBASE_STORAGE_BUCKET=
 FIREBASE_SESSION_COOKIE_NAME=firebase-session
 FIREBASE_SESSION_MAX_AGE_SECONDS=1209600
+FIREBASE_APP_CHECK_ENFORCE=false
+WEBHOOK_SECRET=
 
 DATA_BACKEND=firestore
-IMAGE_STORAGE_PROVIDER=firebase
+```
+
+## Phase 1 Firebase Features
+- App Check verification is integrated in server auth guards (`requireUser`, `getServerFirebaseUser`) and client API requests (`X-Firebase-AppCheck`).
+- FCM token sync is integrated with `/api/notifications/subscribe`; push sends run from API routes and Cloud Functions.
+- Web performance tracing covers startup, API latency, and route render traces.
+- Cloud Functions in `functions/` include reminder schedules, nightly balance snapshot jobs, invite cleanup, and payment webhook handling.
+
+## Deploy Cloud Functions
+```bash
+npm --prefix functions install
+npm --prefix functions run build
+firebase deploy --only functions
 ```
 
 ## Auth Flow
@@ -66,8 +87,7 @@ IMAGE_STORAGE_PROVIDER=firebase
   - `friendships` where current `uid` is requester or recipient
 
 ## Storage
-- Default managed image provider: Firebase Storage.
-- Secondary provider: ImageKit.
+- Managed image provider: Firebase Storage.
 - Image API paths are unchanged:
   - `POST /api/images/upload`
   - `GET /api/images/[referenceId]`

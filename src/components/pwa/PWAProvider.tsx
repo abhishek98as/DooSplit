@@ -3,6 +3,11 @@
 import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import getOfflineStore from '@/lib/offline-store';
 import getSyncService, { SyncResult } from '@/lib/sync-service';
+import { useSession } from "@/lib/auth/react-session";
+import {
+  bindForegroundMessagingListener,
+  syncFcmTokenWithServer,
+} from "@/lib/firebase-messaging";
 
 interface PWAContextType {
   // Network status
@@ -35,6 +40,8 @@ interface PWAProviderProps {
 }
 
 export function PWAProvider({ children }: PWAProviderProps) {
+  const { data: session, status } = useSession();
+
   // Network status
   const [isOnline, setIsOnline] = useState(true);
   const [isOffline, setIsOffline] = useState(false);
@@ -72,6 +79,31 @@ export function PWAProvider({ children }: PWAProviderProps) {
       cleanup?.();
     };
   }, []);
+
+  useEffect(() => {
+    void bindForegroundMessagingListener((payload) => {
+      const notification = payload?.notification || {};
+      const title = String(notification.title || payload?.data?.title || "DooSplit");
+      const body = String(notification.body || payload?.data?.body || "");
+
+      if (Notification.permission === "granted" && document.visibilityState !== "visible") {
+        new Notification(title, {
+          body,
+          icon: "/logo.webp",
+        });
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    if (status !== "authenticated" || !session?.user?.id) {
+      return;
+    }
+
+    if (Notification.permission === "granted") {
+      void syncFcmTokenWithServer(session.user.id);
+    }
+  }, [status, session?.user?.id]);
 
   const initializePWA = async () => {
     // Register service worker

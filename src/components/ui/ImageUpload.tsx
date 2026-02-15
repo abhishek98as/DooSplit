@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Upload, X, Image as ImageIcon } from "lucide-react";
 import Image from "next/image";
-import { ImageType } from "@/lib/imagekit-service";
+import { ImageType, VALIDATION } from "@/lib/storage/image-types";
 
 interface ImageUploadProps {
   images: string[]; // Array of image reference IDs
@@ -66,7 +66,7 @@ export default function ImageUpload({
       return localPreviews[imageRef];
     }
 
-    // For ImageKit reference IDs, return the cached URL or a loading placeholder
+    // For storage reference IDs, return the cached URL or a loading placeholder
     return imageUrls[imageRef] || '';
   };
 
@@ -129,9 +129,13 @@ export default function ImageUpload({
           return null;
         }
 
-        // Validate file size (10MB max to match ImageKit service)
-        if (file.size > 10 * 1024 * 1024) {
-          alert(`${file.name} is too large. Maximum size is 10MB`);
+        // Validate file size (max matches backend validation)
+        if (file.size > VALIDATION.MAX_FILE_SIZE) {
+          alert(
+            `${file.name} is too large. Maximum size is ${
+              VALIDATION.MAX_FILE_SIZE / (1024 * 1024)
+            }MB`
+          );
           return null;
         }
 
@@ -165,7 +169,10 @@ export default function ImageUpload({
               }
             }
           } catch (uploadError) {
-            console.warn(`Upload failed for ${file.name}, keeping local preview:`, uploadError);
+            console.warn(
+              `Upload failed for ${file.name}, keeping local preview:`,
+              uploadError
+            );
           }
 
           // Fallback to local base64 image if upload fails.
@@ -212,7 +219,7 @@ export default function ImageUpload({
   const removeImage = async (index: number) => {
     const imageRef = images[index];
 
-    // Delete from ImageKit if it's a reference ID (not base64 and not temporary)
+    // Delete from storage if it's a reference ID (not base64 and not temporary)
     if (
       imageRef &&
       !imageRef.startsWith("data:") &&
@@ -225,7 +232,7 @@ export default function ImageUpload({
         });
 
         if (!response.ok) {
-          console.error('Failed to delete image from ImageKit');
+          console.error('Failed to delete image from storage');
           // Continue with local removal even if API call fails
         }
       } catch (error) {

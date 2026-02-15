@@ -1,6 +1,7 @@
 "use client";
 
 import { auth } from "@/lib/firebase";
+import { getFirebaseAppCheckToken } from "@/lib/firebase-app-check";
 
 export interface ClientSessionInfo {
   accessToken: string | null;
@@ -38,11 +39,18 @@ export async function authFetch(
   input: RequestInfo | URL,
   init: RequestInit = {}
 ): Promise<Response> {
-  const token = await getFirebaseIdToken();
+  const [idToken, appCheckToken] = await Promise.all([
+    getFirebaseIdToken(),
+    getFirebaseAppCheckToken(),
+  ]);
   const headers = new Headers(init.headers || {});
 
-  if (token && !headers.has("Authorization")) {
-    headers.set("Authorization", `Bearer ${token}`);
+  if (idToken && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${idToken}`);
+  }
+
+  if (appCheckToken && !headers.has("X-Firebase-AppCheck")) {
+    headers.set("X-Firebase-AppCheck", appCheckToken);
   }
 
   return fetch(input, {

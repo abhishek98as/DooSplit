@@ -262,18 +262,27 @@ self.addEventListener('push', (event) => {
 
   let data = {};
   if (event.data) {
-    data = event.data.json();
+    try {
+      data = event.data.json();
+    } catch {
+      data = { body: event.data.text() };
+    }
   }
 
+  const notificationPayload = data.notification || data.data || data;
+  const title = notificationPayload.title || data.title || 'DooSplit';
+  const body = notificationPayload.body || data.body || 'You have a new notification';
+  const targetUrl = notificationPayload.url || data.url || '/dashboard';
+
   const options = {
-    body: data.body || 'You have a new notification',
+    body,
     icon: '/logo.webp',
     badge: '/logo.webp',
     vibrate: [100, 50, 100],
     data: {
       dateOfArrival: Date.now(),
-      primaryKey: data.primaryKey || 1,
-      url: data.url || '/dashboard'
+      primaryKey: notificationPayload.primaryKey || 1,
+      url: targetUrl
     },
     actions: [
       {
@@ -290,7 +299,7 @@ self.addEventListener('push', (event) => {
 
   event.waitUntil(
     self.registration.showNotification(
-      data.title || 'DooSplit',
+      title,
       options
     )
   );

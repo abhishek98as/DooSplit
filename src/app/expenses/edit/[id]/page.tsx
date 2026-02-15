@@ -10,6 +10,7 @@ import Button from "@/components/ui/Button";
 import ImageUpload from "@/components/ui/ImageUpload";
 import Modal from "@/components/ui/Modal";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
+import { ImageType } from "@/lib/storage/image-types";
 import { 
   IndianRupee, 
   Receipt, 
@@ -445,7 +446,13 @@ export default function EditExpensePage() {
             </div>
 
             {/* Image Upload */}
-            <ImageUpload images={images} onChange={setImages} maxImages={3} />
+            <ImageUpload
+              images={images}
+              onChange={setImages}
+              maxImages={10}
+              type={ImageType.EXPENSE}
+              entityId={expenseId}
+            />
 
             {/* Notes */}
             <div>

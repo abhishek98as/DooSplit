@@ -1,13 +1,4 @@
 import {
-  deleteImage,
-  getImageByReferenceId,
-  getImagesForEntity,
-  type ImageReference,
-  type UploadOptions,
-  uploadImage,
-  ImageType,
-} from "@/lib/imagekit-service";
-import {
   deleteImageByReferenceIdFromFirebase,
   getImageByReferenceIdFromFirebase,
   getImagesForEntityFromFirebase,
@@ -15,73 +6,50 @@ import {
   isFirebaseStorageConfigured,
   uploadImageToFirebase,
 } from "./firebase-storage";
+import type { ImageReference, UploadOptions } from "./image-types";
+import { ImageType } from "./image-types";
 
-type ManagedImage = ImageReference & { provider: "imagekit" | "firebase" };
-
-function preferredProvider(): "firebase" | "imagekit" {
-  const value = (process.env.IMAGE_STORAGE_PROVIDER || "firebase").toLowerCase();
-  if (value === "imagekit") {
-    return "imagekit";
-  }
-  return "firebase";
-}
+type ManagedImage = ImageReference & { provider: "firebase" };
 
 export async function uploadManagedImage(
   file: Buffer | string | File,
   originalName: string,
   options: UploadOptions
 ): Promise<ManagedImage> {
-  const provider = preferredProvider();
-
-  if (provider === "firebase" && isFirebaseStorageConfigured()) {
-    return uploadImageToFirebase(file, originalName, options);
+  if (!isFirebaseStorageConfigured()) {
+    throw new Error(
+      "Firebase Storage is not configured. Set FIREBASE_STORAGE_BUCKET or NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET."
+    );
   }
 
-  const image = await uploadImage(file, originalName, options);
-  return {
-    ...image,
-    provider: "imagekit",
-  };
+  return uploadImageToFirebase(file, originalName, options);
 }
 
 export async function getManagedImageByReferenceId(
   referenceId: string
 ): Promise<ManagedImage | null> {
-  if (isFirebaseReference(referenceId)) {
-    return getImageByReferenceIdFromFirebase(referenceId);
-  }
-
-  const image = await getImageByReferenceId(referenceId);
-  if (!image) {
+  if (!isFirebaseReference(referenceId)) {
     return null;
   }
-  return {
-    ...image,
-    provider: "imagekit",
-  };
+
+  return getImageByReferenceIdFromFirebase(referenceId);
 }
 
 export async function getManagedImagesForEntity(
   entityId: string,
   type?: ImageType
 ): Promise<ManagedImage[]> {
-  const fromImageKit = await getImagesForEntity(entityId, type);
-  const mappedImageKit = fromImageKit.map((image) => ({
-    ...image,
-    provider: "imagekit" as const,
-  }));
-
   if (!isFirebaseStorageConfigured()) {
-    return mappedImageKit;
+    return [];
   }
 
-  const fromFirebase = await getImagesForEntityFromFirebase(entityId, type);
-  return [...mappedImageKit, ...fromFirebase];
+  return getImagesForEntityFromFirebase(entityId, type);
 }
 
 export async function deleteManagedImage(referenceId: string): Promise<boolean> {
-  if (isFirebaseReference(referenceId)) {
-    return deleteImageByReferenceIdFromFirebase(referenceId);
+  if (!isFirebaseReference(referenceId)) {
+    return false;
   }
-  return deleteImage(referenceId);
+
+  return deleteImageByReferenceIdFromFirebase(referenceId);
 }

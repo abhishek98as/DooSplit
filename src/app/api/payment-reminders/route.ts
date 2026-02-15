@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { sendPaymentReminder } from "@/lib/email";
 import { requireUser } from "@/lib/auth/require-user";
 import { newAppId, requireSupabaseAdmin } from "@/lib/supabase/app";
+import { sendPushNotificationToUsers } from "@/lib/firebase-messaging-admin";
 
 export const dynamic = "force-dynamic";
 
@@ -174,6 +175,25 @@ export async function POST(request: NextRequest) {
       });
     } catch (emailError) {
       console.error("Failed to send payment reminder email:", emailError);
+    }
+
+    try {
+      await sendPushNotificationToUsers([toUserId], {
+        title: "Payment Reminder",
+        body: `${fromUser?.name || "A friend"} reminded you about ${currency} ${amount.toFixed(
+          2
+        )}`,
+        url: "/settlements",
+        data: {
+          type: "payment_reminder",
+          reminderId,
+          fromUserId: auth.user.id,
+          amount,
+          currency,
+        },
+      });
+    } catch (pushError) {
+      console.error("Failed to send payment reminder push:", pushError);
     }
 
     return NextResponse.json({

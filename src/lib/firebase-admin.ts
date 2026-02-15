@@ -6,7 +6,33 @@ let adminAuth: Auth | null = null;
 let initError: string | null = null;
 
 function getProjectId(): string | null {
-  return process.env.FIREBASE_PROJECT_ID || process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || null;
+  const explicit =
+    process.env.FIREBASE_PROJECT_ID?.trim() ||
+    process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID?.trim();
+
+  if (explicit) {
+    return explicit;
+  }
+
+  const authDomain = process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN?.trim();
+  if (!authDomain) {
+    return null;
+  }
+
+  const inferred = authDomain.split(".")[0]?.trim();
+  return inferred || null;
+}
+
+function getStorageBucket(projectId: string): string | undefined {
+  const explicit =
+    process.env.FIREBASE_STORAGE_BUCKET?.trim() ||
+    process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET?.trim();
+
+  if (explicit) {
+    return explicit.replace(/^gs:\/\//, "");
+  }
+
+  return `${projectId}.firebasestorage.app`;
 }
 
 function initFirebaseAdminApp(): App | null {
@@ -17,9 +43,12 @@ function initFirebaseAdminApp(): App | null {
 
   const projectId = getProjectId();
   if (!projectId) {
-    initError = "FIREBASE_PROJECT_ID or NEXT_PUBLIC_FIREBASE_PROJECT_ID is not set";
+    initError =
+      "FIREBASE_PROJECT_ID or NEXT_PUBLIC_FIREBASE_PROJECT_ID is not set";
     return null;
   }
+
+  const storageBucket = getStorageBucket(projectId);
 
   try {
     if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
@@ -27,6 +56,7 @@ function initFirebaseAdminApp(): App | null {
       return initializeApp({
         credential: cert(serviceAccount),
         projectId,
+        storageBucket,
       });
     }
 
@@ -37,10 +67,11 @@ function initFirebaseAdminApp(): App | null {
           clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
           privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, "\n"),
         }),
+        storageBucket,
       });
     }
 
-    return initializeApp({ projectId });
+    return initializeApp({ projectId, storageBucket });
   } catch (error: any) {
     initError = error?.message || "Firebase Admin initialization failed";
     return null;

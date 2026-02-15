@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerFirebaseUser } from "./firebase-session";
+import { validateAppCheckRequest } from "./app-check";
 
 export interface RequireUserResult {
   user: { id: string; email?: string; name?: string } | null;
@@ -7,6 +8,17 @@ export interface RequireUserResult {
 }
 
 export async function requireUser(request: NextRequest): Promise<RequireUserResult> {
+  const appCheck = await validateAppCheckRequest(request);
+  if (!appCheck.ok) {
+    return {
+      user: null,
+      response: NextResponse.json(
+        { error: appCheck.error || "App Check validation failed" },
+        { status: 403 }
+      ),
+    };
+  }
+
   // Try Firebase auth first
   const firebaseUser = await getServerFirebaseUser(request);
   if (firebaseUser?.id) {

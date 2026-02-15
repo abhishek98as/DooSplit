@@ -4,6 +4,7 @@ import { useEffect, useContext, createContext, ReactNode } from "react";
 import { useSession } from "@/lib/auth/react-session";
 import { usePathname } from "next/navigation";
 import { initializeAnalytics, setUserId, logEvent, AnalyticsEvents } from "@/lib/firebase-analytics";
+import { trackScreenRenderPerformance } from "@/lib/firebase-performance";
 
 interface AnalyticsContextType {
   trackEvent: (eventName: string, parameters?: Record<string, any>) => void;
@@ -48,6 +49,7 @@ export function AnalyticsProvider({ children }: AnalyticsProviderProps) {
         page_path: pathname,
         page_title: document.title,
       });
+      void trackScreenRenderPerformance(pathname);
     }
   }, [pathname]);
 

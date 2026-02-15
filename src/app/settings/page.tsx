@@ -2,6 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { useSession, signOut } from "@/lib/auth/react-session";
+import {
+  requestPushPermissionAndSync,
+  syncFcmTokenWithServer,
+  unregisterFcmToken,
+} from "@/lib/firebase-messaging";
 import AppShell from "@/components/layout/AppShell";
 import { useTheme } from "@/contexts/ThemeContext";
 import Card, { CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
@@ -252,6 +257,18 @@ export default function SettingsPage() {
       const newValue = !pushNotificationsEnabled;
       setPushNotificationsEnabled(newValue);
 
+      if (newValue) {
+        const permission = await requestPushPermissionAndSync(session?.user?.id);
+        if (permission !== "granted") {
+          setPushNotificationsEnabled(false);
+          console.warn("Push notification permission not granted");
+          return;
+        }
+        await syncFcmTokenWithServer(session?.user?.id);
+      } else {
+        await unregisterFcmToken();
+      }
+
       const res = await fetch("/api/user/profile", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -261,6 +278,9 @@ export default function SettingsPage() {
       if (!res.ok) {
         // Revert on error
         setPushNotificationsEnabled(!newValue);
+        if (newValue) {
+          await unregisterFcmToken();
+        }
         console.error("Failed to update push notifications setting");
       }
     } catch (error) {

@@ -302,6 +302,7 @@ export async function POST(request: NextRequest) {
         affectedUserIds,
         groupName
       );
+
     } catch (notificationError) {
       console.error("Failed to send expense notifications:", notificationError);
     }

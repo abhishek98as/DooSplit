@@ -1,26 +1,44 @@
 import crypto from "crypto";
 import { getAdminStorage } from "@/lib/firestore/admin";
+import { adminApp } from "@/lib/firebase-admin";
 import {
   type ImageReference,
   type UploadOptions,
   ImageType,
   VALIDATION,
-} from "@/lib/imagekit-service";
+} from "./image-types";
 
 const FIREBASE_REF_PREFIX = "fb_";
 
 function getBucketName(): string {
-  return (
-    process.env.FIREBASE_STORAGE_BUCKET ||
-    process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ||
-    ""
-  );
+  const candidates = [
+    process.env.FIREBASE_STORAGE_BUCKET?.trim(),
+    process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET?.trim(),
+    typeof adminApp?.options?.storageBucket === "string"
+      ? adminApp.options.storageBucket
+      : undefined,
+  ];
+
+  const projectId =
+    process.env.FIREBASE_PROJECT_ID?.trim() ||
+    process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID?.trim();
+  if (projectId) {
+    candidates.push(`${projectId}.firebasestorage.app`);
+    candidates.push(`${projectId}.appspot.com`);
+  }
+
+  const resolved = candidates.find((value) => Boolean(value && value.length > 0));
+  if (!resolved) {
+    return "";
+  }
+
+  return resolved.replace(/^gs:\/\//, "");
 }
 
 function getBucket() {
   const storage = getAdminStorage();
-  const explicit = getBucketName();
-  return explicit ? storage.bucket(explicit) : storage.bucket();
+  const bucketName = getBucketName();
+  return bucketName ? storage.bucket(bucketName) : storage.bucket();
 }
 
 function encodeRef(payload: { bucket: string; path: string }): string {
@@ -99,6 +117,30 @@ function buildPublicUrl(bucket: string, path: string): string {
   return `https://storage.googleapis.com/${bucket}/${encodeURI(path)}`;
 }
 
+function buildFirebaseDownloadUrl(
+  bucket: string,
+  path: string,
+  token?: string
+): string {
+  if (!token) {
+    return buildPublicUrl(bucket, path);
+  }
+
+  return `https://firebasestorage.googleapis.com/v0/b/${bucket}/o/${encodeURIComponent(
+    path
+  )}?alt=media&token=${encodeURIComponent(token)}`;
+}
+
+function extractDownloadToken(metadata: any): string | undefined {
+  const raw = metadata?.metadata?.firebaseStorageDownloadTokens;
+  if (!raw || typeof raw !== "string") {
+    return undefined;
+  }
+
+  const token = raw.split(",").map((item) => item.trim()).find(Boolean);
+  return token || undefined;
+}
+
 export function isFirebaseStorageConfigured(): boolean {
   return Boolean(getBucketName());
 }
@@ -131,12 +173,14 @@ export async function uploadImageToFirebase(
 
   const path = buildPath(options.type, options.entityId, originalName);
   const mimeType = detectMimeType(ext);
+  const downloadToken = crypto.randomUUID();
   const fileRef = bucket.file(path);
 
   await fileRef.save(buffer, {
     metadata: {
       contentType: mimeType,
       metadata: {
+        firebaseStorageDownloadTokens: downloadToken,
         type: options.type,
         entityId: options.entityId,
       },
@@ -151,7 +195,7 @@ export async function uploadImageToFirebase(
   return {
     id: referenceId,
     fileId: path,
-    url: buildPublicUrl(bucketName, path),
+    url: buildFirebaseDownloadUrl(bucketName, path, downloadToken),
     name: originalName,
     type: options.type,
     entityId: options.entityId,
@@ -183,11 +227,12 @@ export async function getImageByReferenceIdFromFirebase(
   const type = (pathParts[1] as ImageType) || ImageType.GENERAL;
   const entityId = pathParts[2] || "";
   const fileName = pathParts[pathParts.length - 1] || "image";
+  const downloadToken = extractDownloadToken(metadata);
 
   return {
     id: referenceId,
     fileId: parsed.path,
-    url: buildPublicUrl(parsed.bucket, parsed.path),
+    url: buildFirebaseDownloadUrl(parsed.bucket, parsed.path, downloadToken),
     name: fileName,
     type,
     entityId,
@@ -232,11 +277,12 @@ export async function getImagesForEntityFromFirebase(
       const pathParts = fullPath.split("/");
       const itemType = (pathParts[1] as ImageType) || ImageType.GENERAL;
       const fileName = pathParts[pathParts.length - 1] || "image";
+      const downloadToken = extractDownloadToken(metadata);
 
       results.push({
         id: referenceId,
         fileId: fullPath,
-        url: buildPublicUrl(bucketName, fullPath),
+        url: buildFirebaseDownloadUrl(bucketName, fullPath, downloadToken),
         name: fileName,
         type: itemType,
         entityId,

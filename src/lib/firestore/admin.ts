@@ -5,10 +5,8 @@ import { adminApp, adminAuth } from "@/lib/firebase-admin";
 
 let firestoreInstance: Firestore | null = null;
 const FIRESTORE_DATABASE_ID =
-  process.env.FIREBASE_DATABASE_ID ||
-  process.env.NEXT_PUBLIC_FIREBASE_DATABASE_ID ||
-  process.env.FIREBASE_PROJECT_ID ||
-  process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ||
+  process.env.FIREBASE_DATABASE_ID?.trim() ||
+  process.env.NEXT_PUBLIC_FIREBASE_DATABASE_ID?.trim() ||
   "(default)";
 
 export function getAdminDb(): Firestore {

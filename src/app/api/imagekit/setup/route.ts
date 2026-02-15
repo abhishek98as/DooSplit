@@ -1,52 +1,63 @@
 import { NextResponse } from "next/server";
-import { initializeFolders, getImageStats } from "@/lib/imagekit-service";
+import { getAdminStorage } from "@/lib/firestore/admin";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
-export async function POST() {
+async function resolveStorageState() {
+  const storage = getAdminStorage();
+  const explicitBucket =
+    process.env.FIREBASE_STORAGE_BUCKET?.trim() ||
+    process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET?.trim();
+  const bucket = explicitBucket ? storage.bucket(explicitBucket) : storage.bucket();
+
+  const [files] = await bucket.getFiles({
+    prefix: "doosplit/",
+    autoPaginate: false,
+    maxResults: 1,
+  });
+
+  return {
+    bucket: bucket.name,
+    reachable: true,
+    hasDooSplitFiles: files.length > 0,
+  };
+}
+
+export async function GET() {
   try {
-    console.log('🚀 Starting ImageKit setup...');
-
-    // Initialize folders
-    await initializeFolders();
-
-    // Get stats to verify setup
-    const stats = await getImageStats();
-
+    const storage = await resolveStorageState();
     return NextResponse.json({
       success: true,
-      message: 'ImageKit setup completed successfully',
-      stats: stats,
+      provider: "firebase",
+      storage,
     });
-
   } catch (error: any) {
-    console.error('❌ ImageKit setup error:', error);
     return NextResponse.json(
       {
         success: false,
-        error: error.message || 'Failed to setup ImageKit',
+        provider: "firebase",
+        error: error?.message || "Failed to get storage diagnostics",
       },
       { status: 500 }
     );
   }
 }
 
-export async function GET() {
+export async function POST() {
   try {
-    // Get current stats
-    const stats = await getImageStats();
-
+    const storage = await resolveStorageState();
     return NextResponse.json({
       success: true,
-      stats: stats,
+      provider: "firebase",
+      message: "Firebase Storage is active for image uploads",
+      storage,
     });
-
   } catch (error: any) {
-    console.error('❌ Error getting ImageKit stats:', error);
     return NextResponse.json(
       {
         success: false,
-        error: error.message || 'Failed to get stats',
+        provider: "firebase",
+        error: error?.message || "Failed to verify Firebase Storage",
       },
       { status: 500 }
     );
