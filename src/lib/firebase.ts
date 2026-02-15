@@ -33,11 +33,16 @@ function normalizeEnvValue(value: string | undefined): string | undefined {
 
   const hasDoubleQuotes = trimmed.startsWith('"') && trimmed.endsWith('"');
   const hasSingleQuotes = trimmed.startsWith("'") && trimmed.endsWith("'");
-  if (hasDoubleQuotes || hasSingleQuotes) {
-    return trimmed.slice(1, -1).trim() || undefined;
-  }
+  const unwrapped =
+    hasDoubleQuotes || hasSingleQuotes ? trimmed.slice(1, -1).trim() : trimmed;
 
-  return trimmed;
+  // Vercel env sync via stdin can accidentally persist a literal trailing "\r\n".
+  const withoutTrailingEscapedNewlines = unwrapped.replace(
+    /(\\r\\n|\\n|\\r)+$/g,
+    ""
+  );
+  const normalized = withoutTrailingEscapedNewlines.trim();
+  return normalized || undefined;
 }
 
 function readPublicEnv(name: string): string | undefined {
