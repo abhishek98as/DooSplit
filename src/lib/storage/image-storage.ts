@@ -8,22 +8,22 @@ import {
   ImageType,
 } from "@/lib/imagekit-service";
 import {
-  deleteImageByReferenceIdFromSupabase,
-  getImageByReferenceIdFromSupabase,
-  getImagesForEntityFromSupabase,
-  isSupabaseReference,
-  isSupabaseStorageConfigured,
-  uploadImageToSupabase,
-} from "./supabase-storage";
+  deleteImageByReferenceIdFromFirebase,
+  getImageByReferenceIdFromFirebase,
+  getImagesForEntityFromFirebase,
+  isFirebaseReference,
+  isFirebaseStorageConfigured,
+  uploadImageToFirebase,
+} from "./firebase-storage";
 
-type ManagedImage = ImageReference & { provider: "imagekit" | "supabase" };
+type ManagedImage = ImageReference & { provider: "imagekit" | "firebase" };
 
-function preferredProvider(): "supabase" | "imagekit" {
-  const value = (process.env.IMAGE_STORAGE_PROVIDER || "supabase").toLowerCase();
+function preferredProvider(): "firebase" | "imagekit" {
+  const value = (process.env.IMAGE_STORAGE_PROVIDER || "firebase").toLowerCase();
   if (value === "imagekit") {
     return "imagekit";
   }
-  return "supabase";
+  return "firebase";
 }
 
 export async function uploadManagedImage(
@@ -33,8 +33,8 @@ export async function uploadManagedImage(
 ): Promise<ManagedImage> {
   const provider = preferredProvider();
 
-  if (provider === "supabase" && isSupabaseStorageConfigured()) {
-    return uploadImageToSupabase(file, originalName, options);
+  if (provider === "firebase" && isFirebaseStorageConfigured()) {
+    return uploadImageToFirebase(file, originalName, options);
   }
 
   const image = await uploadImage(file, originalName, options);
@@ -47,8 +47,8 @@ export async function uploadManagedImage(
 export async function getManagedImageByReferenceId(
   referenceId: string
 ): Promise<ManagedImage | null> {
-  if (isSupabaseReference(referenceId)) {
-    return getImageByReferenceIdFromSupabase(referenceId);
+  if (isFirebaseReference(referenceId)) {
+    return getImageByReferenceIdFromFirebase(referenceId);
   }
 
   const image = await getImageByReferenceId(referenceId);
@@ -71,17 +71,17 @@ export async function getManagedImagesForEntity(
     provider: "imagekit" as const,
   }));
 
-  if (!isSupabaseStorageConfigured()) {
+  if (!isFirebaseStorageConfigured()) {
     return mappedImageKit;
   }
 
-  const fromSupabase = await getImagesForEntityFromSupabase(entityId, type);
-  return [...mappedImageKit, ...fromSupabase];
+  const fromFirebase = await getImagesForEntityFromFirebase(entityId, type);
+  return [...mappedImageKit, ...fromFirebase];
 }
 
 export async function deleteManagedImage(referenceId: string): Promise<boolean> {
-  if (isSupabaseReference(referenceId)) {
-    return deleteImageByReferenceIdFromSupabase(referenceId);
+  if (isFirebaseReference(referenceId)) {
+    return deleteImageByReferenceIdFromFirebase(referenceId);
   }
   return deleteImage(referenceId);
 }

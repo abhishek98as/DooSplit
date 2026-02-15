@@ -42,7 +42,7 @@ function buildRedisConfig() {
       socket: {
         connectTimeout: REDIS_CONNECT_TIMEOUT_MS,
         keepAlive: REDIS_KEEPALIVE_MS,
-        reconnectStrategy: () => false,
+        reconnectStrategy: (_retries: number) => false as const,
       },
     };
   }
@@ -63,7 +63,7 @@ function buildRedisConfig() {
       tls: process.env.REDIS_TLS === "true",
       connectTimeout: REDIS_CONNECT_TIMEOUT_MS,
       keepAlive: REDIS_KEEPALIVE_MS,
-      reconnectStrategy: () => false,
+      reconnectStrategy: (_retries: number) => false as const,
     },
   };
 }

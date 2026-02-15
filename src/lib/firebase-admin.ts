@@ -5,21 +5,23 @@ let adminApp: App | null = null;
 let adminAuth: Auth | null = null;
 let initError: string | null = null;
 
-function getFirebaseAdminApp(): App | null {
-  if (getApps().length > 0) {
-    return getApps()[0];
+function getProjectId(): string | null {
+  return process.env.FIREBASE_PROJECT_ID || process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || null;
+}
+
+function initFirebaseAdminApp(): App | null {
+  const existing = getApps();
+  if (existing.length > 0) {
+    return existing[0];
   }
 
-  const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
-
+  const projectId = getProjectId();
   if (!projectId) {
-    initError = "NEXT_PUBLIC_FIREBASE_PROJECT_ID is not set";
-    console.error("❌ Firebase Admin:", initError);
+    initError = "FIREBASE_PROJECT_ID or NEXT_PUBLIC_FIREBASE_PROJECT_ID is not set";
     return null;
   }
 
   try {
-    // Option 1: Full service account JSON
     if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
       const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
       return initializeApp({
@@ -28,37 +30,30 @@ function getFirebaseAdminApp(): App | null {
       });
     }
 
-    // Option 2: Individual credential fields
     if (process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_CLIENT_EMAIL) {
       return initializeApp({
         credential: cert({
           projectId,
           clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-          // Handle escaped newlines in the private key
           privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, "\n"),
         }),
       });
     }
 
-    // Option 3: Fallback for environments with Application Default Credentials (GCP)
-    console.warn("⚠️ Firebase Admin: No service account credentials found. Google sign-in will not work.");
-    console.warn("   Set FIREBASE_SERVICE_ACCOUNT_KEY or FIREBASE_PRIVATE_KEY + FIREBASE_CLIENT_EMAIL");
     return initializeApp({ projectId });
   } catch (error: any) {
-    initError = error.message;
-    console.error("❌ Firebase Admin initialization failed:", error.message);
+    initError = error?.message || "Firebase Admin initialization failed";
     return null;
   }
 }
 
 try {
-  adminApp = getFirebaseAdminApp();
+  adminApp = initFirebaseAdminApp();
   if (adminApp) {
     adminAuth = getAuth(adminApp);
   }
 } catch (error: any) {
-  initError = error.message;
-  console.error("❌ Firebase Admin auth init failed:", error.message);
+  initError = error?.message || "Firebase Admin auth initialization failed";
 }
 
 export { adminApp, adminAuth, initError };

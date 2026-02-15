@@ -11,6 +11,7 @@ interface ImageUploadProps {
   maxImages?: number;
   type?: ImageType; // Type of images (user_profile, expense, general)
   entityId?: string; // Entity ID (user ID, expense ID, etc.)
+  deferUpload?: boolean;
 }
 
 export default function ImageUpload({
@@ -18,13 +19,16 @@ export default function ImageUpload({
   onChange,
   maxImages = 5,
   type = ImageType.GENERAL,
-  entityId = 'general'
+  entityId = 'general',
+  deferUpload = false,
 }: ImageUploadProps) {
   const [uploading, setUploading] = useState(false);
   const [imageUrls, setImageUrls] = useState<Record<string, string>>({});
   const [localPreviews, setLocalPreviews] = useState<Record<string, string>>({}); // For immediate base64 previews
   const fileInputRef = useRef<HTMLInputElement>(null);
   const previewCacheKey = `image-upload-previews:${type}:${entityId}`;
+  const shouldDeferUpload =
+    deferUpload || (type === ImageType.EXPENSE && entityId === "new-expense");
 
   // Hydrate previews from session cache so thumbnails survive route transitions
   useEffect(() => {
@@ -72,7 +76,13 @@ export default function ImageUpload({
       const newUrls: Record<string, string> = {};
 
       for (const imageRef of images) {
-        if (!imageRef.startsWith('http') && !imageRef.startsWith('data:') && !imageUrls[imageRef]) {
+        if (
+          !imageRef.startsWith("http") &&
+          !imageRef.startsWith("data:") &&
+          !imageRef.startsWith("temp_") &&
+          !imageRef.startsWith("local_") &&
+          !imageUrls[imageRef]
+        ) {
           try {
             const response = await fetch(`/api/images/${imageRef}`);
             if (response.ok) {
@@ -112,7 +122,7 @@ export default function ImageUpload({
       const newLocalPreviews: Record<string, string> = {};
 
       // Process all files in parallel for better UX
-      const uploadPromises = Array.from(files).map(async (file, index) => {
+      const uploadPromises = Array.from(files).map(async (file) => {
         // Validate file type
         if (!file.type.startsWith("image/")) {
           alert(`${file.name} is not an image file`);
@@ -128,47 +138,39 @@ export default function ImageUpload({
         try {
           // Create immediate base64 preview for instant display
           const base64Preview = await fileToBase64(file);
-          const tempId = `temp_${Date.now()}_${index}_${Math.random().toString(36).slice(2, 8)}`;
+          if (shouldDeferUpload) {
+            // Expense creation flow uploads images after expense ID exists.
+            newImages.push(base64Preview);
+            return base64Preview;
+          }
 
-          // Add immediate preview
-          newLocalPreviews[tempId] = base64Preview;
-          newImages.push(tempId);
-
-          // Upload to ImageKit in parallel (don't block on this)
           const formData = new FormData();
-          formData.append('file', file);
-          formData.append('type', type);
-          formData.append('entityId', entityId);
+          formData.append("file", file);
+          formData.append("type", type);
+          formData.append("entityId", entityId);
 
           try {
-            const response = await fetch('/api/images/upload', {
-              method: 'POST',
+            const response = await fetch("/api/images/upload", {
+              method: "POST",
               body: formData,
             });
 
             if (response.ok) {
               const data = await response.json();
-              const finalImageId = data.image.id;
-
-              // Replace temporary ID with final ImageKit reference ID
-              const tempIndex = newImages.indexOf(tempId);
-              if (tempIndex !== -1) {
-                newImages[tempIndex] = finalImageId;
-
-                // Update local previews to use the final ID
+              const finalImageId = String(data?.image?.id || "");
+              if (finalImageId) {
+                newImages.push(finalImageId);
                 newLocalPreviews[finalImageId] = base64Preview;
-                delete newLocalPreviews[tempId];
+                return finalImageId;
               }
-            } else {
-              console.warn(`Failed to upload ${file.name} to ImageKit, keeping local preview`);
-              // Keep the base64 preview even if upload fails
             }
           } catch (uploadError) {
             console.warn(`Upload failed for ${file.name}, keeping local preview:`, uploadError);
-            // Keep the base64 preview even if upload fails
           }
 
-          return tempId; // Return the ID (will be replaced with final ID if upload succeeds)
+          // Fallback to local base64 image if upload fails.
+          newImages.push(base64Preview);
+          return base64Preview;
         } catch (error) {
           console.error(`Error processing ${file.name}:`, error);
           return null;
@@ -179,7 +181,7 @@ export default function ImageUpload({
       await Promise.allSettled(uploadPromises);
 
       // Filter out null values (failed validations)
-      const validImages = newImages.filter(id => id !== null);
+      const validImages = newImages.filter(Boolean);
 
       // Update state with new images and previews (persisted for quick reloads)
       onChange([...images, ...validImages]);
@@ -211,7 +213,12 @@ export default function ImageUpload({
     const imageRef = images[index];
 
     // Delete from ImageKit if it's a reference ID (not base64 and not temporary)
-    if (imageRef && !imageRef.startsWith('data:') && !imageRef.startsWith('temp_')) {
+    if (
+      imageRef &&
+      !imageRef.startsWith("data:") &&
+      !imageRef.startsWith("temp_") &&
+      !imageRef.startsWith("local_")
+    ) {
       try {
         const response = await fetch(`/api/images/${imageRef}`, {
           method: 'DELETE',
@@ -261,7 +268,13 @@ export default function ImageUpload({
           {images.map((image, index) => {
             const imageUrl = getImageUrl(image);
             const hasLocalPreview = localPreviews[image];
-            const isLoading = !imageUrl && !hasLocalPreview && !image.startsWith('data:') && !image.startsWith('http') && !image.startsWith('temp_');
+            const isLoading =
+              !imageUrl &&
+              !hasLocalPreview &&
+              !image.startsWith("data:") &&
+              !image.startsWith("http") &&
+              !image.startsWith("temp_") &&
+              !image.startsWith("local_");
 
             return (
               <div key={`${image}-${index}`} className="relative group aspect-square">
@@ -294,7 +307,7 @@ export default function ImageUpload({
                   <X className="h-4 w-4 text-white" />
                 </button>
                 {/* Show upload status indicator */}
-                {image.startsWith('temp_') && (
+                {image.startsWith("temp_") && (
                   <div className="absolute bottom-2 left-2 px-2 py-1 bg-yellow-500 text-white text-xs rounded-full">
                     Uploading...
                   </div>

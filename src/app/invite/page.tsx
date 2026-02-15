@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { useSession } from "next-auth/react";
+import { useSession } from "@/lib/auth/react-session";
 import { Button, Card, Input } from "@/components/ui";
 import AppShell from "@/components/layout/AppShell";
 import {
@@ -17,6 +17,8 @@ import {
   Link2,
   Loader2,
   AlertCircle,
+  RotateCcw,
+  Trash2,
 } from "lucide-react";
 
 interface Invitation {
@@ -39,13 +41,15 @@ export default function InvitePage() {
   } | null>(null);
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [loadingInvitations, setLoadingInvitations] = useState(true);
+  const [processingInviteId, setProcessingInviteId] = useState<string | null>(
+    null
+  );
+  const [baseUrl, setBaseUrl] = useState(
+    process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"
+  );
+  const [canNativeShare, setCanNativeShare] = useState(false);
 
-  const appUrl =
-    typeof window !== "undefined"
-      ? window.location.origin
-      : process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-
-  const genericLink = `${appUrl}/auth/register?ref=${session?.user?.id || ""}`;
+  const genericLink = `${baseUrl}/auth/register?ref=${session?.user?.id || ""}`;
 
   const fetchInvitations = useCallback(async () => {
     try {
@@ -64,6 +68,15 @@ export default function InvitePage() {
   useEffect(() => {
     fetchInvitations();
   }, [fetchInvitations]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    setBaseUrl(window.location.origin);
+    setCanNativeShare(typeof navigator.share === "function");
+  }, []);
 
   const copyToClipboard = async (text?: string) => {
     try {
@@ -119,7 +132,7 @@ export default function InvitePage() {
         type: "success",
         message: data.emailSent
           ? `Invitation email sent to ${email}!`
-          : `Invitation created! Email couldn't be sent — share the link manually.`,
+          : `Invitation created. Email couldn't be sent; share the link manually.`,
         inviteLink: data.invitation?.inviteLink,
       });
       setEmail("");
@@ -128,6 +141,76 @@ export default function InvitePage() {
       setSendResult({ type: "error", message: "Something went wrong" });
     } finally {
       setSending(false);
+    }
+  };
+
+  const handleReinvite = async (invitationId: string) => {
+    setProcessingInviteId(invitationId);
+    setSendResult(null);
+
+    try {
+      const res = await fetch(`/api/invitations/${invitationId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "resend" }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        setSendResult({
+          type: "error",
+          message: data.error || "Failed to resend invitation",
+        });
+        return;
+      }
+
+      setSendResult({
+        type: "success",
+        message: data.emailSent
+          ? "Invitation resent successfully."
+          : "Invitation refreshed, but email could not be sent.",
+      });
+      await fetchInvitations();
+    } catch {
+      setSendResult({
+        type: "error",
+        message: "Failed to resend invitation",
+      });
+    } finally {
+      setProcessingInviteId(null);
+    }
+  };
+
+  const handleCancelInvite = async (invitationId: string) => {
+    setProcessingInviteId(invitationId);
+    setSendResult(null);
+
+    try {
+      const res = await fetch(`/api/invitations/${invitationId}`, {
+        method: "DELETE",
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        setSendResult({
+          type: "error",
+          message: data.error || "Failed to cancel invitation",
+        });
+        return;
+      }
+
+      setSendResult({
+        type: "success",
+        message: "Invitation cancelled.",
+      });
+      await fetchInvitations();
+    } catch {
+      setSendResult({
+        type: "error",
+        message: "Failed to cancel invitation",
+      });
+    } finally {
+      setProcessingInviteId(null);
     }
   };
 
@@ -290,7 +373,7 @@ export default function InvitePage() {
               <MessageCircle className="h-4 w-4 mr-2" />
               Share via WhatsApp
             </Button>
-            {typeof navigator !== "undefined" && "share" in navigator && (
+            {canNativeShare && (
               <Button
                 onClick={shareViaNativeShare}
                 variant="secondary"
@@ -332,7 +415,7 @@ export default function InvitePage() {
             {invitations.map((inv) => (
               <div
                 key={inv._id}
-                className="flex items-center justify-between py-3"
+                className="flex items-center justify-between gap-4 py-3"
               >
                 <div className="flex items-center gap-3 min-w-0">
                   <div className="h-9 w-9 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
@@ -351,7 +434,36 @@ export default function InvitePage() {
                     </p>
                   </div>
                 </div>
-                {getStatusBadge(inv.status, inv.expiresAt)}
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  {getStatusBadge(inv.status, inv.expiresAt)}
+                  {inv.status === "pending" &&
+                    new Date(inv.expiresAt) > new Date() && (
+                      <>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => handleReinvite(inv._id)}
+                          disabled={processingInviteId === inv._id}
+                          className="!px-2.5 !py-1.5"
+                        >
+                          {processingInviteId === inv._id ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <RotateCcw className="h-3.5 w-3.5" />
+                          )}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => handleCancelInvite(inv._id)}
+                          disabled={processingInviteId === inv._id}
+                          className="!px-2.5 !py-1.5"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </>
+                    )}
+                </div>
               </div>
             ))}
           </div>
@@ -398,3 +510,4 @@ export default function InvitePage() {
     </AppShell>
   );
 }
+

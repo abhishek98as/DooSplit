@@ -7,6 +7,7 @@ import {
 } from "@/lib/cache";
 import { requireUser } from "@/lib/auth/require-user";
 import { requireSupabaseAdmin } from "@/lib/supabase/app";
+import { computeGroupMemberNetBalances } from "@/lib/data/balance-service";
 
 export const dynamic = "force-dynamic";
 
@@ -63,7 +64,7 @@ async function loadGroupPayload(
   if (usersError) {
     throw usersError;
   }
-  const usersMap = new Map((users || []).map((u: any) => [String(u.id), u]));
+  const usersMap = new Map<string, any>((users || []).map((u: any) => [String(u.id), u]));
 
   const payloadMembers = (members || []).map((member: any) => {
     const user = usersMap.get(String(member.user_id));
@@ -84,6 +85,38 @@ async function loadGroupPayload(
       updatedAt: member.updated_at,
     };
   });
+
+  const memberIds: string[] = Array.from(
+    new Set(payloadMembers.map((member: any) => String(member.userId?._id)).filter(Boolean))
+  );
+
+  let balances: Array<{ userId: string; userName: string; balance: number }> = [];
+  try {
+    const balanceMap = await computeGroupMemberNetBalances(groupId, memberIds);
+    balances = memberIds.map((memberId) => {
+      const memberUser = usersMap.get(memberId);
+      const memberName =
+        String(memberUser?.name || "").trim() ||
+        payloadMembers.find((member: any) => String(member.userId?._id) === memberId)?.userId
+          ?.name ||
+        "Unknown";
+      return {
+        userId: memberId,
+        userName: memberName,
+        balance: Number((balanceMap.get(memberId) || 0).toFixed(2)),
+      };
+    });
+  } catch (balanceError) {
+    console.error("Failed to compute group balances:", balanceError);
+    balances = memberIds.map((memberId) => {
+      const memberUser = usersMap.get(memberId);
+      return {
+        userId: memberId,
+        userName: String(memberUser?.name || "Unknown"),
+        balance: 0,
+      };
+    });
+  }
 
   const creator = usersMap.get(String(group.created_by));
   return {
@@ -108,10 +141,9 @@ async function loadGroupPayload(
       members: payloadMembers,
       memberCount: payloadMembers.length,
       userRole: membership.role,
+      balances,
     },
-    memberIds: Array.from(
-      new Set(payloadMembers.map((member: any) => String(member.userId?._id)).filter(Boolean))
-    ),
+    memberIds,
   };
 }
 
@@ -322,3 +354,4 @@ export async function DELETE(
     );
   }
 }
+

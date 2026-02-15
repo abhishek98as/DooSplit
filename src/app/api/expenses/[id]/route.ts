@@ -64,7 +64,9 @@ async function buildExpenseResponse(expenseId: string) {
   if (usersError) {
     throw usersError;
   }
-  const usersMap = new Map((users || []).map((user: any) => [String(user.id), user]));
+  const usersMap = new Map<string, any>(
+    (users || []).map((user: any) => [String(user.id), user] as [string, any])
+  );
 
   let group: { _id: string; name: string; image: string | null } | null = null;
   if (expense.group_id) {

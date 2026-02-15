@@ -1,120 +1,151 @@
 "use client";
 
-import type { RealtimeChannel } from "@supabase/supabase-js";
-import { getSupabaseBrowserClient } from "@/lib/supabase/browser";
+import {
+  collection,
+  onSnapshot,
+  query,
+  where,
+  type DocumentChange,
+} from "firebase/firestore";
+import { auth, db } from "@/lib/firebase";
 
 export interface RealtimeEvent {
   source: "notifications" | "friend-requests";
-  event: string;
+  event: "INSERT" | "UPDATE" | "DELETE";
   payload: any;
 }
 
-async function fetchRealtimeToken(): Promise<string | null> {
-  const response = await fetch("/api/realtime/token", {
-    method: "GET",
-    credentials: "include",
-  });
-  if (!response.ok) {
-    return null;
+function toEventType(changeType: DocumentChange["type"]): "INSERT" | "UPDATE" | "DELETE" {
+  if (changeType === "added") {
+    return "INSERT";
   }
-  const data = await response.json();
-  return data.token || null;
+  if (changeType === "modified") {
+    return "UPDATE";
+  }
+  return "DELETE";
+}
+
+async function waitForAuthReady(timeoutMs = 6000): Promise<void> {
+  if (auth.currentUser) {
+    return;
+  }
+
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(() => {
+      unsubscribe();
+      resolve();
+    }, timeoutMs);
+
+    const unsubscribe = auth.onAuthStateChanged(() => {
+      clearTimeout(timer);
+      unsubscribe();
+      resolve();
+    });
+  });
 }
 
 export async function subscribeToUserRealtime(
   userId: string,
   onEvent: (event: RealtimeEvent) => void
 ): Promise<() => void> {
-  const supabase = getSupabaseBrowserClient();
-  if (!supabase) {
+  await waitForAuthReady();
+  const firebaseUser = auth.currentUser;
+
+  if (!firebaseUser || firebaseUser.uid !== userId) {
     return () => {};
   }
 
-  const token = await fetchRealtimeToken();
-  if (token) {
-    supabase.realtime.setAuth(token);
-  }
+  // Ensure Firestore listeners start only after token is available.
+  await firebaseUser.getIdToken().catch(() => undefined);
 
-  const channels: RealtimeChannel[] = [];
-
-  const notifications = supabase
-    .channel(`user:${userId}:notifications`, {
-      config: {
-        private: true,
-      },
-    })
-    .on(
-      "postgres_changes",
-      {
-        event: "*",
-        schema: "public",
-        table: "notifications",
-        filter: `user_id=eq.${userId}`,
-      },
-      (payload) => {
-        onEvent({
-          source: "notifications",
-          event: payload.eventType,
-          payload,
-        });
+  const unsubscribers: Array<() => void> = [];
+  let permissionWarningShown = false;
+  const handleListenerError = (source: RealtimeEvent["source"]) => (error: any) => {
+    const code = error?.code || "unknown";
+    if (code === "permission-denied") {
+      if (!permissionWarningShown) {
+        permissionWarningShown = true;
+        console.warn(
+          "Realtime listeners are disabled by Firestore rules for this session."
+        );
       }
-    )
-    .subscribe();
-  channels.push(notifications);
+      return;
+    }
+    console.warn(`Realtime listener error (${source}): ${code}`);
+  };
 
-  const friendRequestsIncoming = supabase
-    .channel(`user:${userId}:friend-requests:incoming`, {
-      config: {
-        private: true,
+  const notificationsQuery = query(
+    collection(db, "notifications"),
+    where("user_id", "==", userId)
+  );
+  unsubscribers.push(
+    onSnapshot(
+      notificationsQuery,
+      (snapshot) => {
+        for (const change of snapshot.docChanges()) {
+          onEvent({
+            source: "notifications",
+            event: toEventType(change.type),
+            payload: {
+              id: change.doc.id,
+              ...change.doc.data(),
+            },
+          });
+        }
       },
-    })
-    .on(
-      "postgres_changes",
-      {
-        event: "*",
-        schema: "public",
-        table: "friendships",
-        filter: `friend_id=eq.${userId}`,
-      },
-      (payload) => {
-        onEvent({
-          source: "friend-requests",
-          event: payload.eventType,
-          payload,
-        });
-      }
+      handleListenerError("notifications")
     )
-    .subscribe();
-  channels.push(friendRequestsIncoming);
+  );
 
-  const friendRequestsOutgoing = supabase
-    .channel(`user:${userId}:friend-requests:outgoing`, {
-      config: {
-        private: true,
+  const incomingFriendRequestsQuery = query(
+    collection(db, "friendships"),
+    where("friend_id", "==", userId)
+  );
+  unsubscribers.push(
+    onSnapshot(
+      incomingFriendRequestsQuery,
+      (snapshot) => {
+        for (const change of snapshot.docChanges()) {
+          onEvent({
+            source: "friend-requests",
+            event: toEventType(change.type),
+            payload: {
+              id: change.doc.id,
+              ...change.doc.data(),
+            },
+          });
+        }
       },
-    })
-    .on(
-      "postgres_changes",
-      {
-        event: "*",
-        schema: "public",
-        table: "friendships",
-        filter: `user_id=eq.${userId}`,
-      },
-      (payload) => {
-        onEvent({
-          source: "friend-requests",
-          event: payload.eventType,
-          payload,
-        });
-      }
+      handleListenerError("friend-requests")
     )
-    .subscribe();
-  channels.push(friendRequestsOutgoing);
+  );
+
+  const outgoingFriendRequestsQuery = query(
+    collection(db, "friendships"),
+    where("user_id", "==", userId)
+  );
+  unsubscribers.push(
+    onSnapshot(
+      outgoingFriendRequestsQuery,
+      (snapshot) => {
+        for (const change of snapshot.docChanges()) {
+          onEvent({
+            source: "friend-requests",
+            event: toEventType(change.type),
+            payload: {
+              id: change.doc.id,
+              ...change.doc.data(),
+            },
+          });
+        }
+      },
+      handleListenerError("friend-requests")
+    )
+  );
 
   return () => {
-    for (const channel of channels) {
-      supabase.removeChannel(channel);
+    for (const unsubscribe of unsubscribers) {
+      unsubscribe();
     }
   };
 }

@@ -2,5 +2,15 @@
   "buildCommand": "npm run build",
   "outputDirectory": ".next",
   "framework": "nextjs",
-  "regions": ["bom1"]
+  "regions": ["bom1"],
+  "functions": {
+    "src/app/api/**/*.ts": {
+      "maxDuration": 45
+    }
+  },
+  "env": {
+    "DATA_BACKEND": "firestore",
+    "FIREBASE_DATABASE_ID": "doosplit",
+    "NEXT_PUBLIC_FIREBASE_DATABASE_ID": "doosplit"
+  }
 }

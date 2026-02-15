@@ -115,13 +115,13 @@ export async function GET(
           .from("users")
           .select("id,name,profile_picture")
           .in("id", userIds.length > 0 ? userIds : ["__none__"]);
-        const usersMap = new Map((users || []).map((u: any) => [String(u.id), u]));
+        const usersMap = new Map<string, any>((users || []).map((u: any) => [String(u.id), u]));
 
         const { data: groups } = await supabase
           .from("groups")
           .select("id,name")
           .in("id", groupIds.length > 0 ? groupIds : ["__none__"]);
-        const groupsMap = new Map((groups || []).map((g: any) => [String(g.id), g]));
+        const groupsMap = new Map<string, any>((groups || []).map((g: any) => [String(g.id), g]));
 
         for (const expense of expenses || []) {
           const participants = pairByExpense.get(String(expense.id)) || [];
@@ -190,7 +190,7 @@ export async function GET(
         .from("users")
         .select("id,name,profile_picture")
         .in("id", settlementUserIds.length > 0 ? settlementUserIds : ["__none__"]);
-      const settlementUsersMap = new Map(
+      const settlementUsersMap = new Map<string, any>(
         (settlementUsers || []).map((u: any) => [String(u.id), u])
       );
 
@@ -239,3 +239,4 @@ export async function GET(
     );
   }
 }
+

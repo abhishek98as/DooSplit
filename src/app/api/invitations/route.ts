@@ -6,6 +6,47 @@ import { newAppId, requireSupabaseAdmin } from "@/lib/supabase/app";
 
 export const dynamic = "force-dynamic";
 
+function toIso(value: unknown): string {
+  if (!value) {
+    return "";
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  if (typeof (value as any)?.toDate === "function") {
+    return (value as any).toDate().toISOString();
+  }
+  return "";
+}
+
+function normalizeInvitation(invitation: any) {
+  const id = String(invitation?.id || invitation?._id || "");
+  const createdAt = toIso(invitation?.created_at || invitation?.createdAt);
+  const updatedAt = toIso(invitation?.updated_at || invitation?.updatedAt);
+  const expiresAt = toIso(invitation?.expires_at || invitation?.expiresAt);
+
+  return {
+    _id: id,
+    id,
+    invitedBy: String(invitation?.invited_by || invitation?.invitedBy || ""),
+    invited_by: String(invitation?.invited_by || invitation?.invitedBy || ""),
+    email: String(invitation?.email || ""),
+    token: String(invitation?.token || ""),
+    status: String(invitation?.status || "pending"),
+    createdAt,
+    created_at: createdAt,
+    updatedAt,
+    updated_at: updatedAt,
+    expiresAt,
+    expires_at: expiresAt,
+    acceptedAt: toIso(invitation?.accepted_at || invitation?.acceptedAt),
+    accepted_at: toIso(invitation?.accepted_at || invitation?.acceptedAt),
+  };
+}
+
 export async function GET(request: NextRequest) {
   try {
     const auth = await requireUser(request);
@@ -25,7 +66,10 @@ export async function GET(request: NextRequest) {
       throw error;
     }
 
-    return NextResponse.json({ invitations: invitations || [] }, { status: 200 });
+    return NextResponse.json(
+      { invitations: (invitations || []).map(normalizeInvitation) },
+      { status: 200 }
+    );
   } catch (error: any) {
     console.error("List invitations error:", error);
     return NextResponse.json(
@@ -94,23 +138,102 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { data: existingInvitation } = await supabase
+    const { data: latestInvitation } = await supabase
       .from("invitations")
-      .select("id")
+      .select("*")
       .eq("invited_by", auth.user.id)
       .eq("email", email)
-      .eq("status", "pending")
-      .gt("expires_at", new Date().toISOString())
+      .order("created_at", { ascending: false })
+      .limit(1)
       .maybeSingle();
 
-    if (existingInvitation?.id) {
+    if (latestInvitation?.id) {
+      if (String(latestInvitation.status || "") === "accepted") {
+        return NextResponse.json(
+          { error: "This invitation has already been accepted." },
+          { status: 409 }
+        );
+      }
+
+      const nowIso = new Date().toISOString();
+      const refreshedExpiresAt = new Date(
+        Date.now() + 7 * 24 * 60 * 60 * 1000
+      ).toISOString();
+      const invitationToken = String(
+        latestInvitation.token || crypto.randomBytes(32).toString("hex")
+      );
+
+      const { data: refreshedInvitation, error: refreshError } = await supabase
+        .from("invitations")
+        .update({
+          status: "pending",
+          token: invitationToken,
+          expires_at: refreshedExpiresAt,
+          updated_at: nowIso,
+        })
+        .eq("id", latestInvitation.id)
+        .select("*")
+        .maybeSingle();
+
+      if (refreshError) {
+        throw refreshError;
+      }
+
+      const invitationToSend = refreshedInvitation || {
+        ...latestInvitation,
+        status: "pending",
+        token: invitationToken,
+        expires_at: refreshedExpiresAt,
+        updated_at: nowIso,
+      };
+
+      const appUrl =
+        process.env.NEXT_PUBLIC_APP_URL ||
+        process.env.NEXTAUTH_URL ||
+        "http://localhost:3000";
+      const inviteLink = `${appUrl}/invite/${String(
+        invitationToSend.token || invitationToken
+      )}`;
+
+      try {
+        await sendInviteEmail({
+          to: email,
+          inviterName: inviter.name || "A friend",
+          inviteLink,
+        });
+      } catch (emailError: any) {
+        console.error("Email resend error:", emailError);
+        return NextResponse.json(
+          {
+            message:
+              "Invitation refreshed but email could not be sent. Share the link manually.",
+            invitation: {
+              ...normalizeInvitation(invitationToSend),
+              inviteLink,
+            },
+            emailSent: false,
+            reinvited: true,
+          },
+          { status: 200 }
+        );
+      }
+
       return NextResponse.json(
-        { error: "You already have a pending invitation to this email" },
-        { status: 409 }
+        {
+          message: "Invitation resent successfully!",
+          invitation: {
+            ...normalizeInvitation(invitationToSend),
+            inviteLink,
+          },
+          emailSent: true,
+          reinvited: true,
+        },
+        { status: 200 }
       );
     }
 
     const token = crypto.randomBytes(32).toString("hex");
+    const nowIso = new Date().toISOString();
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
     const invitationId = newAppId();
 
@@ -122,6 +245,8 @@ export async function POST(request: NextRequest) {
         email,
         token,
         status: "pending",
+        created_at: nowIso,
+        updated_at: nowIso,
         expires_at: expiresAt,
       })
       .select("*")
@@ -150,11 +275,8 @@ export async function POST(request: NextRequest) {
           message:
             "Invitation created but email could not be sent. Share the link manually.",
           invitation: {
-            id: invitation.id,
-            email: invitation.email,
-            status: invitation.status,
+            ...normalizeInvitation(invitation),
             inviteLink,
-            expiresAt: invitation.expires_at,
           },
           emailSent: false,
         },
@@ -166,11 +288,8 @@ export async function POST(request: NextRequest) {
       {
         message: "Invitation sent successfully!",
         invitation: {
-          id: invitation.id,
-          email: invitation.email,
-          status: invitation.status,
+          ...normalizeInvitation(invitation),
           inviteLink,
-          expiresAt: invitation.expires_at,
         },
         emailSent: true,
       },
@@ -184,4 +303,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-

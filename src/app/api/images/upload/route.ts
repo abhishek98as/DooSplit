@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
+import { requireUser } from "@/lib/auth/require-user";
 import { ImageType, UploadOptions, VALIDATION } from "@/lib/imagekit-service";
 import { uploadManagedImage } from "@/lib/storage/image-storage";
 
@@ -8,9 +7,9 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const auth = await requireUser(request);
+    if (auth.response || !auth.user) {
+      return auth.response as NextResponse;
     }
 
     const formData = await request.formData();
@@ -58,7 +57,7 @@ export async function POST(request: NextRequest) {
     };
 
     // For user profile images, ensure user can only upload their own
-    if (type === ImageType.USER_PROFILE && entityId !== session.user.id) {
+    if (type === ImageType.USER_PROFILE && entityId !== auth.user.id) {
       return NextResponse.json({ error: "Cannot upload profile image for another user" }, { status: 403 });
     }
 

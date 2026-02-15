@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useSession } from "next-auth/react";
+import { useSession } from "@/lib/auth/react-session";
 import AppShell from "@/components/layout/AppShell";
 import Card, { CardContent } from "@/components/ui/Card";
 import { Clock, Receipt, DollarSign, UserPlus, Filter, Search, Calendar, X } from "lucide-react";
@@ -394,3 +394,4 @@ export default function ActivityPage() {
     </AppShell>
   );
 }
+

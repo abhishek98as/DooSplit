@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useSession } from "next-auth/react";
+import { useSession } from "@/lib/auth/react-session";
 import AppShell from "@/components/layout/AppShell";
 import Card, { CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
@@ -533,3 +533,4 @@ export default function SettlementsPage() {
     </AppShell>
   );
 }
+

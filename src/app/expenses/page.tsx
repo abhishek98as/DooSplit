@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useSession } from "next-auth/react";
+import { useSession } from "@/lib/auth/react-session";
 import { useRouter } from "next/navigation";
 import AppShell from "@/components/layout/AppShell";
 import getOfflineStore from "@/lib/offline-store";
@@ -667,3 +667,4 @@ export default function ExpensesPage() {
     </AppShell>
   );
 }
+

@@ -1,6 +1,6 @@
 "use client";
 
-import { SessionProvider } from "next-auth/react";
+import { SessionProvider } from "@/lib/auth/react-session";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { PWAProvider } from "@/components/pwa/PWAProvider";
 import { AnalyticsProvider } from "@/components/analytics/AnalyticsProvider";
@@ -18,3 +18,4 @@ export function Providers({ children }: { children: React.ReactNode }) {
     </SessionProvider>
   );
 }
+

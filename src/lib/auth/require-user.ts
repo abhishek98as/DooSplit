@@ -1,19 +1,37 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerAppUser, type ServerAppUser } from "./server-session";
+import { getServerFirebaseUser } from "./firebase-session";
 
 export interface RequireUserResult {
-  user: ServerAppUser | null;
+  user: { id: string; email?: string; name?: string } | null;
   response?: NextResponse;
 }
 
 export async function requireUser(request: NextRequest): Promise<RequireUserResult> {
-  const user = await getServerAppUser(request);
-  if (!user?.id) {
-    return {
-      user: null,
-      response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
-    };
+  // Try Firebase auth first
+  const firebaseUser = await getServerFirebaseUser(request);
+  if (firebaseUser?.id) {
+    return { user: firebaseUser };
   }
 
-  return { user };
+  // Fallback to legacy session (for backward compatibility during migration)
+  try {
+    const { getServerAppUser } = await import("./server-session");
+    const legacyUser = await getServerAppUser(request);
+    if (legacyUser?.id) {
+      return {
+        user: {
+          id: legacyUser.id,
+          email: legacyUser.email || undefined,
+          name: legacyUser.name || undefined,
+        }
+      };
+    }
+  } catch (error) {
+    console.warn("Legacy auth fallback failed:", error);
+  }
+
+  return {
+    user: null,
+    response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
+  };
 }

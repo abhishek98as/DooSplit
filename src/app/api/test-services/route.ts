@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import bcrypt from "bcryptjs";
 import { adminAuth, initError as firebaseInitError } from "@/lib/firebase-admin";
-import { requireSupabaseAdmin } from "@/lib/supabase/app";
+import { getAdminDb } from "@/lib/firestore/admin";
+import { getServerAppUser } from "@/lib/auth/server-session";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const results: Record<string, any> = {
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV,
@@ -20,20 +20,17 @@ export async function GET() {
   };
 
   const requiredVars = [
-    "NEXT_PUBLIC_SUPABASE_URL",
-    "SUPABASE_SERVICE_ROLE_KEY",
-    "NEXTAUTH_URL",
-    "NEXTAUTH_SECRET",
+    "NEXT_PUBLIC_FIREBASE_PROJECT_ID",
+    "NEXT_PUBLIC_FIREBASE_API_KEY",
   ];
 
   let envPassed = true;
   for (const variable of requiredVars) {
     const value = process.env[variable];
-    const present = !!value && value.length > 0;
+    const present = Boolean(value && value.length > 0);
     envTest.checks[variable] = {
       present,
       required: true,
-      preview: present ? `${value!.substring(0, 8)}...` : "NOT SET",
     };
     if (!present) {
       envPassed = false;
@@ -45,51 +42,49 @@ export async function GET() {
   }
   results.tests.envVars = envTest;
 
-  const supabaseTest: Record<string, any> = {
-    name: "Supabase Connection",
+  const firebaseAdminTest: Record<string, any> = {
+    name: "Firebase Admin SDK",
+    initialized: Boolean(adminAuth),
+    initError: firebaseInitError,
+  };
+  firebaseAdminTest.passed = Boolean(adminAuth);
+  if (!firebaseAdminTest.passed) {
+    allPassed = false;
+  }
+  results.tests.firebaseAdmin = firebaseAdminTest;
+
+  const firestoreTest: Record<string, any> = {
+    name: "Firestore Connection",
   };
   try {
     const start = Date.now();
-    const supabase = requireSupabaseAdmin();
-    const { count, error } = await supabase
-      .from("users")
-      .select("*", { count: "exact", head: true });
-    if (error) {
-      throw error;
-    }
-    supabaseTest.passed = true;
-    supabaseTest.connectionTimeMs = Date.now() - start;
-    supabaseTest.userCount = count || 0;
+    const db = getAdminDb();
+    const snapshot = await db.collection("users").limit(1).get();
+    firestoreTest.passed = true;
+    firestoreTest.connectionTimeMs = Date.now() - start;
+    firestoreTest.sampleCount = snapshot.size;
   } catch (error: any) {
-    supabaseTest.passed = false;
-    supabaseTest.error = error.message;
+    firestoreTest.passed = false;
+    firestoreTest.error = error.message;
     allPassed = false;
   }
-  results.tests.supabase = supabaseTest;
+  results.tests.firestore = firestoreTest;
 
-  const firebaseTest: Record<string, any> = {
-    name: "Firebase Admin SDK",
-    initialized: !!adminAuth,
-    initError: firebaseInitError,
+  const sessionTest: Record<string, any> = {
+    name: "Session Validation",
   };
-  firebaseTest.passed = !!adminAuth || !process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
-  if (!firebaseTest.passed) {
-    firebaseTest.hint =
-      "Google sign-in requires FIREBASE_CLIENT_EMAIL + FIREBASE_PRIVATE_KEY";
+  try {
+    const user = await getServerAppUser(request);
+    sessionTest.passed = Boolean(user?.id);
+    sessionTest.authenticated = Boolean(user?.id);
+    if (!sessionTest.passed) {
+      sessionTest.note = "No active Firebase session cookie or bearer token";
+    }
+  } catch (error: any) {
+    sessionTest.passed = false;
+    sessionTest.error = error.message;
   }
-  results.tests.firebaseAdmin = firebaseTest;
-
-  const nextAuthTest: Record<string, any> = {
-    name: "NextAuth Configuration",
-    NEXTAUTH_URL: process.env.NEXTAUTH_URL || "NOT SET",
-    hasSecret: !!process.env.NEXTAUTH_SECRET,
-    secretLength: process.env.NEXTAUTH_SECRET?.length || 0,
-  };
-  nextAuthTest.passed = !!process.env.NEXTAUTH_URL && !!process.env.NEXTAUTH_SECRET;
-  if (!nextAuthTest.passed) {
-    allPassed = false;
-  }
-  results.tests.nextAuth = nextAuthTest;
+  results.tests.session = sessionTest;
 
   const testNames = Object.keys(results.tests);
   const passedCount = testNames.filter((name) => results.tests[name].passed).length;
@@ -110,56 +105,35 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const email = String(body?.email || "").toLowerCase().trim();
-    const password = String(body?.password || "");
+    const idToken = String(body?.idToken || "");
 
-    if (!email || !password) {
+    if (!idToken) {
       return NextResponse.json(
-        { error: "Email and password are required" },
+        { ok: false, error: "idToken is required" },
         { status: 400 }
       );
     }
 
-    const supabase = requireSupabaseAdmin();
-    const { data: user, error } = await supabase
-      .from("users")
-      .select("id,email,name,role,is_active,password")
-      .eq("email", email)
-      .maybeSingle();
-
-    if (error) {
-      throw error;
-    }
-    if (!user) {
-      return NextResponse.json({ ok: false, error: "User not found" }, { status: 404 });
-    }
-    if (user.is_active === false) {
+    if (!adminAuth) {
       return NextResponse.json(
-        { ok: false, error: "Account is deactivated" },
-        { status: 403 }
-      );
-    }
-    if (!user.password) {
-      return NextResponse.json(
-        { ok: false, error: "No password set for this account" },
-        { status: 400 }
+        { ok: false, error: "Firebase Admin is not initialized" },
+        { status: 503 }
       );
     }
 
-    const match = await bcrypt.compare(password, String(user.password));
-    return NextResponse.json(
-      {
-        ok: match,
-        user: {
-          id: user.id,
-          email: user.email,
-          name: user.name,
-          role: user.role,
-          isActive: user.is_active,
-        },
+    const decoded = await adminAuth.verifyIdToken(idToken, true);
+    const db = getAdminDb();
+    const userDoc = await db.collection("users").doc(decoded.uid).get();
+
+    return NextResponse.json({
+      ok: true,
+      firebase: {
+        uid: decoded.uid,
+        email: decoded.email || null,
+        emailVerified: Boolean(decoded.email_verified),
       },
-      { status: match ? 200 : 401 }
-    );
+      profile: userDoc.exists ? userDoc.data() : null,
+    });
   } catch (error: any) {
     return NextResponse.json(
       { ok: false, error: error.message || "Service test failed" },
@@ -167,4 +141,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-

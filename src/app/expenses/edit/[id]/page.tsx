@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useSession } from "next-auth/react";
+import { useSession } from "@/lib/auth/react-session";
 import { useRouter, useParams } from "next/navigation";
 import AppShell from "@/components/layout/AppShell";
 import Card from "@/components/ui/Card";

@@ -4,8 +4,8 @@ import {
   buildUserScopedCacheKey,
   getOrSetCacheJsonWithMeta,
 } from "@/lib/cache";
-import { supabaseReadRepository } from "@/lib/data/supabase-adapter";
-import { requireUser } from "@/lib/auth/require-user";
+import { firestoreReadRepository } from "@/lib/data/firestore-adapter";
+import { getServerFirebaseUser } from "@/lib/auth/firebase-session";
 
 export const dynamic = "force-dynamic";
 
@@ -13,11 +13,11 @@ export const dynamic = "force-dynamic";
 export async function GET(request: NextRequest) {
   try {
     const routeStart = Date.now();
-    const auth = await requireUser(request);
-    if (auth.response || !auth.user) {
-      return auth.response as NextResponse;
+    const user = await getServerFirebaseUser(request);
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    const userId = auth.user.id;
+    const userId = user.id;
 
     const searchParams = request.nextUrl.searchParams;
     const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
@@ -33,7 +33,7 @@ export async function GET(request: NextRequest) {
       cacheKey,
       CACHE_TTL.activities,
       async () =>
-        supabaseReadRepository.getActivities({
+        firestoreReadRepository.getActivities({
           userId,
           page,
           limit,
@@ -55,3 +55,4 @@ export async function GET(request: NextRequest) {
     );
   }
 }
+

@@ -20,7 +20,10 @@ export default function ForgotPasswordPage() {
     setIsLoading(true);
 
     try {
-      await sendPasswordResetEmail(auth, email);
+      await sendPasswordResetEmail(auth, email, {
+        url: `${window.location.origin}/auth/reset-password`,
+        handleCodeInApp: true,
+      });
       setMessage(
         "If your email is registered, you will receive a password reset link shortly."
       );

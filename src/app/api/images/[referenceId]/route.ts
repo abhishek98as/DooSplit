@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
+import { requireUser } from "@/lib/auth/require-user";
 import { deleteManagedImage, getManagedImageByReferenceId } from "@/lib/storage/image-storage";
 
 export const dynamic = 'force-dynamic';
@@ -35,9 +34,9 @@ export async function DELETE(
   { params }: { params: Promise<{ referenceId: string }> }
 ) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const auth = await requireUser(request);
+    if (auth.response || !auth.user) {
+      return auth.response as NextResponse;
     }
 
     const { referenceId } = await params;
@@ -49,7 +48,7 @@ export async function DELETE(
     }
 
     // Check if user owns this image (for user profiles and expenses)
-    if (image.type === 'user_profile' && image.entityId !== session.user.id) {
+    if (image.type === 'user_profile' && image.entityId !== auth.user.id) {
       return NextResponse.json({ error: "Cannot delete another user's profile image" }, { status: 403 });
     }
 

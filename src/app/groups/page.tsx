@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useSession } from "next-auth/react";
+import { useSession } from "@/lib/auth/react-session";
 import { useRouter } from "next/navigation";
 import AppShell from "@/components/layout/AppShell";
 import Card, { CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
@@ -10,6 +10,7 @@ import Input from "@/components/ui/Input";
 import Modal from "@/components/ui/Modal";
 import { useAnalytics } from "@/components/analytics/AnalyticsProvider";
 import { AnalyticsEvents } from "@/lib/firebase-analytics";
+import getOfflineStore from "@/lib/offline-store";
 import { Users, Plus, Settings } from "lucide-react";
 
 interface Group {
@@ -53,20 +54,28 @@ export default function GroupsPage() {
     if (status === "unauthenticated") {
       router.push("/auth/login");
     } else if (status === "authenticated") {
-      fetchGroups();
+      fetchGroups(true);
       fetchFriends();
     }
   }, [status]);
 
-  const fetchGroups = async () => {
+  const fetchGroups = async (forceFresh = false) => {
     try {
-      const res = await fetch("/api/groups");
+      const res = await fetch(`/api/groups${forceFresh ? `?refresh=${Date.now()}` : ""}`, {
+        cache: "no-store",
+      });
       if (res.ok) {
         const data = await res.json();
-        setGroups(data.groups || []);
+        setGroups((data.groups || []) as Group[]);
+        return;
       }
+
+      const offlineStore = getOfflineStore();
+      const groupsData = await offlineStore.getGroups();
+      setGroups((groupsData || []) as unknown as Group[]);
     } catch (error) {
       console.error("Failed to fetch groups:", error);
+      setGroups([]);
     } finally {
       setLoading(false);
     }
@@ -74,21 +83,18 @@ export default function GroupsPage() {
 
   const fetchFriends = async () => {
     try {
-      const res = await fetch("/api/friends");
-      if (res.ok) {
-        const data = await res.json();
-        const rawFriends = data.friends || [];
-        // Map API response: { id, friend: { id, name, email }, balance } -> flat structure
-        const mappedFriends = rawFriends.map((item: any) => ({
-          _id: item.friend?.id || item.id || item._id,
-          name: item.friend?.name || item.name || "Unknown",
-          email: item.friend?.email || item.email || "",
-          balance: item.balance || 0,
-        }));
-        setFriends(mappedFriends);
-      }
+      const offlineStore = getOfflineStore();
+      const rawFriends = await offlineStore.getFriends();
+      const mappedFriends = (rawFriends || []).map((item: any) => ({
+        _id: item.friend?.id || item.id || item._id,
+        name: item.friend?.name || item.name || "Unknown",
+        email: item.friend?.email || item.email || "",
+        balance: item.balance || 0,
+      }));
+      setFriends(mappedFriends);
     } catch (error) {
       console.error("Failed to fetch friends:", error);
+      setFriends([]);
     }
   };
 
@@ -104,6 +110,13 @@ export default function GroupsPage() {
       });
 
       if (res.ok) {
+        const data = await res.json();
+        if (data?.group?._id) {
+          setGroups((prev) => {
+            const next = prev.filter((item) => item._id !== data.group._id);
+            return [data.group, ...next];
+          });
+        }
         trackEvent(AnalyticsEvents.GROUP_CREATED, {
           member_count: formData.memberIds.length,
           group_type: formData.type,
@@ -117,7 +130,7 @@ export default function GroupsPage() {
           currency: "INR",
           memberIds: [],
         });
-        fetchGroups();
+        fetchGroups(true);
       }
     } catch (error) {
       console.error("Failed to create group:", error);
@@ -340,3 +353,4 @@ export default function GroupsPage() {
     </AppShell>
   );
 }
+

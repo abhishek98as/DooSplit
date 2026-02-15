@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
+import { requireUser } from "@/lib/auth/require-user";
 import { ConflictResolver } from "@/lib/conflict-resolver";
 
 export const dynamic = 'force-dynamic';
@@ -12,12 +11,12 @@ export async function POST(
 ) {
   try {
     const { id } = await params;
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const auth = await requireUser(request);
+    if (auth.response || !auth.user) {
+      return auth.response as NextResponse;
     }
 
-    const userId = session.user.id;
+    const userId = auth.user.id;
     const body = await request.json();
     const { resolution } = body;
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import { useSession } from "next-auth/react";
+import { useSession } from "@/lib/auth/react-session";
 import { Bell, X, Check, DollarSign, Users, Receipt } from "lucide-react";
 import Link from "next/link";
 import { subscribeToUserRealtime } from "@/lib/realtime/client";
@@ -284,3 +284,4 @@ export default function NotificationDropdown() {
     </div>
   );
 }
+

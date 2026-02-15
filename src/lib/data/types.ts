@@ -53,7 +53,7 @@ export interface ShadowDiffLog {
   userId: string;
   requestKey: string;
   mongoCount?: number;
-  supabaseCount?: number;
+  backendCount?: number;
   details?: string;
 }
 

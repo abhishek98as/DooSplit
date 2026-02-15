@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useSession } from "next-auth/react";
+import { useSession } from "@/lib/auth/react-session";
 import { useRouter } from "next/navigation";
 import AppShell from "@/components/layout/AppShell";
 import Card, { CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
@@ -80,7 +80,7 @@ interface SectionLoadingState {
   activities: boolean;
 }
 
-const REQUEST_TIMEOUT_MS = 15000;
+const REQUEST_TIMEOUT_MS = 25000;
 const GROUP_BALANCE_CONCURRENCY = 3;
 
 const INITIAL_SECTION_LOADING: SectionLoadingState = {
@@ -774,3 +774,4 @@ export default function DashboardPage() {
     </AppShell>
   );
 }
+

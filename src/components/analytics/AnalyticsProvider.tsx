@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useContext, createContext, ReactNode } from "react";
-import { useSession } from "next-auth/react";
+import { useSession } from "@/lib/auth/react-session";
 import { usePathname } from "next/navigation";
 import { initializeAnalytics, setUserId, logEvent, AnalyticsEvents } from "@/lib/firebase-analytics";
 

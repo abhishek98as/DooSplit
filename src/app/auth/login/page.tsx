@@ -1,106 +1,50 @@
 "use client";
 
 import React, { useState } from "react";
-import { signIn } from "next-auth/react";
+import { signIn } from "@/lib/auth/react-session";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button, Input } from "@/components/ui";
 import Image from "next/image";
 import { Mail, Lock, Eye, EyeOff } from "lucide-react";
-import { useAnalytics } from "@/components/analytics/AnalyticsProvider";
-import { AnalyticsEvents } from "@/lib/firebase-analytics";
 
 export default function LoginPage() {
   const router = useRouter();
-  const { trackEvent } = useAnalytics();
   const [formData, setFormData] = useState({
     email: "",
     password: "",
   });
-  const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [needsEmailVerification, setNeedsEmailVerification] = useState(false);
-  const [verificationEmail, setVerificationEmail] = useState("");
-  const [recommendedMethod, setRecommendedMethod] = useState<string | null>(null);
 
   const handleCredentialsLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    setIsLoading(true);
 
     try {
-      // Sign in directly against MongoDB via NextAuth credentials provider
       const result = await signIn("credentials", {
         email: formData.email,
         password: formData.password,
-        rememberMe: rememberMe.toString(),
         redirect: false,
       });
 
       if (result?.error) {
-        trackEvent('login_failed', {
-          method: 'credentials',
-          error: result.error,
-          needs_verification: result.error.includes("verify your email")
-        });
-        // Check for email verification error
-        if (result.error.includes("verify your email")) {
+        if (result.error.toLowerCase().includes("verify your email")) {
           setNeedsEmailVerification(true);
-          setVerificationEmail(formData.email);
-          setError("");
-        } else {
-          // Show actual error from server for better debugging
-          setError(result.error === "CredentialsSignin"
-            ? "Invalid email or password"
-            : result.error);
-          setNeedsEmailVerification(false);
+          return;
         }
-      } else if (!result?.ok) {
-        trackEvent('login_failed', {
-          method: 'credentials',
-          error: 'not_ok'
-        });
-        setError("Login failed. Please try again.");
-        setNeedsEmailVerification(false);
-      } else {
-        trackEvent('login_attempt', {
-          method: 'credentials'
-        });
-        router.push("/dashboard");
-        router.refresh();
+        setError(result.error);
+        return;
       }
-    } catch (err) {
-      setError((err as any).message || "An error occurred. Please try again.");
-    } finally {
-      setIsLoading(false);
-    }
-  };
 
-  const handleResendVerification = async () => {
-    if (!verificationEmail) return;
-
-    setError("");
-    setIsLoading(true);
-
-    try {
-      const res = await fetch("/api/auth/resend-verification", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ email: verificationEmail }),
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        setError(data.error || "Failed to resend verification email");
-      } else {
-        setError("Verification email sent! Please check your inbox.");
-      }
-    } catch (err) {
-      setError("Failed to resend verification email. Please try again.");
+      router.push("/dashboard");
+      router.refresh();
+    } catch (err: any) {
+      setError(err?.message || "An error occurred. Please try again.");
     } finally {
       setIsLoading(false);
     }
@@ -117,42 +61,24 @@ export default function LoginPage() {
       });
 
       if (result?.error) {
-        trackEvent('login_failed', {
-          method: 'google',
-          error: result.error
-        });
-        setError("Google sign-in failed. Please try again.");
-      } else if (!result?.url) {
-        trackEvent('login_failed', {
-          method: 'google',
-          error: 'no_redirect_url'
-        });
-        setError("Google sign-in failed. Please try again.");
-      } else {
-        trackEvent('login_attempt', {
-          method: 'google'
-        });
+        setError(result.error);
+        return;
       }
-    } catch (err) {
+
+      if (result?.url) {
+        router.push(result.url);
+        router.refresh();
+      }
+    } catch {
       setError("An error occurred during Google sign-in.");
     } finally {
       setIsGoogleLoading(false);
     }
   };
 
-  // Check for recommended method from URL params
-  React.useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const method = urlParams.get("method");
-    if (method) {
-      setRecommendedMethod(method);
-    }
-  }, []);
-
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary/10 to-success/10 p-4">
       <div className="w-full max-w-md">
-        {/* Logo/Brand */}
         <div className="text-center mb-8">
           <Image
             src="/logo.webp"
@@ -161,15 +87,10 @@ export default function LoginPage() {
             height={64}
             className="h-16 w-16 rounded-2xl mb-4 inline-block"
           />
-          <h1 className="text-h1 font-bold text-neutral-900">
-            Welcome Back
-          </h1>
-          <p className="text-body text-neutral-500 mt-2">
-            Sign in to DooSplit
-          </p>
+          <h1 className="text-h1 font-bold text-neutral-900">Welcome Back</h1>
+          <p className="text-body text-neutral-500 mt-2">Sign in to DooSplit</p>
         </div>
 
-        {/* Login Form */}
         <div className="bg-white rounded-xl shadow-md p-6 md:p-8">
           {needsEmailVerification ? (
             <div className="text-center">
@@ -177,46 +98,19 @@ export default function LoginPage() {
               <h3 className="text-lg font-semibold text-neutral-900 mb-2">
                 Email Verification Required
               </h3>
-              <p className="text-neutral-600 mb-4">
-                We&apos;ve sent a verification email to <strong>{verificationEmail}</strong>.
-                Please check your inbox and click the verification link to activate your account.
+              <p className="text-neutral-600 mb-6">
+                Please verify your email address before signing in. A verification email has been sent to your inbox.
               </p>
-              <div className="bg-blue-50 p-4 rounded-lg mb-6">
-                <p className="text-sm text-blue-700">
-                  <strong>Didn&apos;t receive the email?</strong> Check your spam folder or click below to resend.
-                </p>
-              </div>
-              <div className="space-y-3">
-                <Button
-                  onClick={handleResendVerification}
-                  className="w-full"
-                  isLoading={isLoading}
-                >
-                  Resend Verification Email
-                </Button>
-                <Button
-                  onClick={() => {
-                    setNeedsEmailVerification(false);
-                    setVerificationEmail("");
-                    setError("");
-                  }}
-                  variant="secondary"
-                  className="w-full"
-                >
-                  Try Different Account
-                </Button>
-              </div>
-
-              {/* Sign Up Link */}
-              <p className="text-center text-sm text-neutral-600 mt-6">
-                Don&apos;t have an account?{" "}
-                <Link
-                  href="/auth/register"
-                  className="text-primary font-medium hover:underline"
-                >
-                  Sign up
-                </Link>
-              </p>
+              <Button
+                onClick={() => {
+                  setNeedsEmailVerification(false);
+                  setError("");
+                }}
+                variant="secondary"
+                className="w-full"
+              >
+                Back to Login
+              </Button>
             </div>
           ) : (
             <div>
@@ -227,39 +121,13 @@ export default function LoginPage() {
                   </div>
                 )}
 
-                {recommendedMethod && (
-                  <div className="bg-blue-50 border border-blue-200 text-blue-800 px-4 py-3 rounded-md">
-                    <div className="flex items-start gap-3">
-                      <div className="flex-shrink-0">
-                        <svg className="h-5 w-5 text-blue-400" viewBox="0 0 20 20" fill="currentColor">
-                          <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
-                        </svg>
-                      </div>
-                      <div className="flex-1">
-                        <p className="text-sm font-medium text-blue-800">
-                          {recommendedMethod === "google"
-                            ? "Try Google Sign-In"
-                            : "Try Email & Password Login"}
-                        </p>
-                        <p className="text-sm text-blue-700 mt-1">
-                          {recommendedMethod === "google"
-                            ? "This account was created using Google sign-in. Use the Google button below."
-                            : "This account was created with email and password. Use the form above."}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
                 <Input
                   label="Email"
                   type="email"
                   placeholder="Enter your email"
                   icon={<Mail className="h-5 w-5" />}
                   value={formData.email}
-                  onChange={(e) =>
-                    setFormData({ ...formData, email: e.target.value })
-                  }
+                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                   required
                 />
 
@@ -267,12 +135,10 @@ export default function LoginPage() {
                   <Input
                     label="Password"
                     type={showPassword ? "text" : "password"}
-                    placeholder="••••••••"
+                    placeholder="********"
                     icon={<Lock className="h-5 w-5" />}
                     value={formData.password}
-                    onChange={(e) =>
-                      setFormData({ ...formData, password: e.target.value })
-                    }
+                    onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                     required
                   />
                   <button
@@ -288,51 +154,26 @@ export default function LoginPage() {
                   </button>
                 </div>
 
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center">
-                    <input
-                      type="checkbox"
-                      id="rememberMe"
-                      checked={rememberMe}
-                      onChange={(e) => setRememberMe(e.target.checked)}
-                      className="h-4 w-4 text-primary border-neutral-300 rounded focus:ring-primary focus:ring-2"
-                    />
-                    <label
-                      htmlFor="rememberMe"
-                      className="ml-2 text-sm text-neutral-600"
-                    >
-                      Remember me
-                    </label>
-                  </div>
-                  <Link
-                    href="/auth/forgot-password"
-                    className="text-sm text-primary hover:underline"
-                  >
+                <div className="flex items-center justify-end">
+                  <Link href="/auth/forgot-password" className="text-sm text-primary hover:underline">
                     Forgot password?
                   </Link>
                 </div>
 
-                <Button
-                  type="submit"
-                  variant="primary"
-                  className="w-full"
-                  isLoading={isLoading}
-                >
+                <Button type="submit" variant="primary" className="w-full" isLoading={isLoading}>
                   Sign In
                 </Button>
               </form>
 
-              {/* Divider */}
               <div className="relative my-6">
                 <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-neutral-200"></div>
+                  <div className="w-full border-t border-neutral-200" />
                 </div>
                 <div className="relative flex justify-center text-sm">
                   <span className="px-2 bg-white text-neutral-500">OR</span>
                 </div>
               </div>
 
-              {/* Google Sign-In */}
               <Button
                 type="button"
                 variant="secondary"
@@ -361,13 +202,9 @@ export default function LoginPage() {
                 Continue with Google
               </Button>
 
-              {/* Sign Up Link */}
               <p className="text-center text-sm text-neutral-600 mt-6">
                 Don&apos;t have an account?{" "}
-                <Link
-                  href="/auth/register"
-                  className="text-primary font-medium hover:underline"
-                >
+                <Link href="/auth/register" className="text-primary font-medium hover:underline">
                   Sign up
                 </Link>
               </p>
@@ -378,3 +215,4 @@ export default function LoginPage() {
     </div>
   );
 }
+

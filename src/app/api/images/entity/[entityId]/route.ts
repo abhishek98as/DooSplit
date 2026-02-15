@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
+import { requireUser } from "@/lib/auth/require-user";
 import { ImageType } from "@/lib/imagekit-service";
 import { getManagedImagesForEntity } from "@/lib/storage/image-storage";
 
@@ -12,9 +11,9 @@ export async function GET(
   { params }: { params: Promise<{ entityId: string }> }
 ) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const auth = await requireUser(request);
+    if (auth.response || !auth.user) {
+      return auth.response as NextResponse;
     }
 
     const { entityId } = await params;
@@ -27,7 +26,7 @@ export async function GET(
     }
 
     // For privacy, users can only see their own profile images
-    if (type === ImageType.USER_PROFILE && entityId !== session.user.id) {
+    if (type === ImageType.USER_PROFILE && entityId !== auth.user.id) {
       return NextResponse.json({ error: "Cannot access another user's profile images" }, { status: 403 });
     }
 

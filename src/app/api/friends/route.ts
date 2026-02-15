@@ -5,22 +5,160 @@ import {
   getOrSetCacheJsonWithMeta,
   invalidateUsersCache,
 } from "@/lib/cache";
-import { supabaseReadRepository } from "@/lib/data/supabase-adapter";
-import { requireUser } from "@/lib/auth/require-user";
-import { newAppId, requireSupabaseAdmin } from "@/lib/supabase/app";
+import { firestoreReadRepository } from "@/lib/data/firestore-adapter";
+import { getServerFirebaseUser } from "@/lib/auth/firebase-session";
+import { newAppId } from "@/lib/ids";
+import { createFriendshipInFirestore } from "@/lib/firestore/write-operations";
 import { notifyFriendRequest } from "@/lib/notificationService";
+import { FieldValue, getAdminDb } from "@/lib/firestore/admin";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
 
+const FRIEND_CACHE_SCOPES = [
+  "friends",
+  "groups",
+  "activities",
+  "dashboard-activity",
+  "friend-transactions",
+  "friend-details",
+  "user-balance",
+  "settlements",
+  "analytics",
+];
+
+function normalizeEmail(value: unknown): string {
+  return String(value || "").trim().toLowerCase();
+}
+
+async function findUserByEmail(email: string) {
+  const db = getAdminDb();
+  const lowered = normalizeEmail(email);
+  if (!lowered) {
+    return null;
+  }
+
+  const snap = await db
+    .collection("users")
+    .where("email", "==", lowered)
+    .limit(1)
+    .get();
+  if (!snap.empty) {
+    const doc = snap.docs[0];
+    return { id: doc.id, ...(doc.data() || {}) };
+  }
+
+  const fallback = await db
+    .collection("users")
+    .where("email", "==", String(email).trim())
+    .limit(1)
+    .get();
+  if (fallback.empty) {
+    return null;
+  }
+
+  const doc = fallback.docs[0];
+  return { id: doc.id, ...(doc.data() || {}) };
+}
+
+async function getFriendshipPair(userId: string, friendId: string) {
+  const db = getAdminDb();
+  const [forwardSnap, reverseSnap] = await Promise.all([
+    db
+      .collection("friendships")
+      .where("user_id", "==", userId)
+      .where("friend_id", "==", friendId)
+      .limit(1)
+      .get(),
+    db
+      .collection("friendships")
+      .where("user_id", "==", friendId)
+      .where("friend_id", "==", userId)
+      .limit(1)
+      .get(),
+  ]);
+
+  return {
+    forward: forwardSnap.empty ? null : forwardSnap.docs[0],
+    reverse: reverseSnap.empty ? null : reverseSnap.docs[0],
+  };
+}
+
+async function upsertBidirectionalFriendship(
+  userId: string,
+  friendId: string,
+  status: "pending" | "accepted" | "rejected",
+  requestedBy: string
+) {
+  const db = getAdminDb();
+  const nowIso = new Date().toISOString();
+  const { forward, reverse } = await getFriendshipPair(userId, friendId);
+
+  const batch = db.batch();
+
+  if (forward) {
+    batch.set(
+      forward.ref,
+      {
+        status,
+        requested_by: requestedBy,
+        updated_at: nowIso,
+        _updated_at: FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+  } else {
+    const forwardRef = db.collection("friendships").doc(newAppId());
+    batch.set(forwardRef, {
+      id: forwardRef.id,
+      user_id: userId,
+      friend_id: friendId,
+      status,
+      requested_by: requestedBy,
+      created_at: nowIso,
+      updated_at: nowIso,
+      _created_at: FieldValue.serverTimestamp(),
+      _updated_at: FieldValue.serverTimestamp(),
+    });
+  }
+
+  if (reverse) {
+    batch.set(
+      reverse.ref,
+      {
+        status,
+        requested_by: requestedBy,
+        updated_at: nowIso,
+        _updated_at: FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+  } else {
+    const reverseRef = db.collection("friendships").doc(newAppId());
+    batch.set(reverseRef, {
+      id: reverseRef.id,
+      user_id: friendId,
+      friend_id: userId,
+      status,
+      requested_by: requestedBy,
+      created_at: nowIso,
+      updated_at: nowIso,
+      _created_at: FieldValue.serverTimestamp(),
+      _updated_at: FieldValue.serverTimestamp(),
+    });
+  }
+
+  await batch.commit();
+}
+
 export async function GET(request: NextRequest) {
   try {
     const routeStart = Date.now();
-    const auth = await requireUser(request);
-    if (auth.response || !auth.user) {
-      return auth.response as NextResponse;
+    const user = await getServerFirebaseUser(request);
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    const userId = auth.user.id;
+    const userId = user.id;
 
     const cacheKey = buildUserScopedCacheKey(
       "friends",
@@ -32,7 +170,7 @@ export async function GET(request: NextRequest) {
       cacheKey,
       CACHE_TTL.friends,
       async () =>
-        supabaseReadRepository.getFriends({
+        firestoreReadRepository.getFriends({
           userId,
           requestSearch: request.nextUrl.search,
         })
@@ -56,15 +194,15 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const auth = await requireUser(request);
-    if (auth.response || !auth.user) {
-      return auth.response as NextResponse;
+    const user = await getServerFirebaseUser(request);
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    const userId = auth.user.id;
+    const userId = user.id;
 
     const body = await request.json();
     const { email, userId: friendUserId, dummyName } = body || {};
-    const supabase = requireSupabaseAdmin();
+    const db = getAdminDb();
 
     if (dummyName) {
       const trimmedName = String(dummyName).trim();
@@ -79,73 +217,61 @@ export async function POST(request: NextRequest) {
       const dummyEmail = `dummy_${Date.now()}_${Math.random().toString(36).slice(2, 8)}@placeholder.doosplit`;
       const nowIso = new Date().toISOString();
 
-      const { data: dummyUser, error: dummyError } = await supabase
-        .from("users")
-        .insert({
-          id: dummyId,
-          name: trimmedName,
-          email: dummyEmail.toLowerCase(),
-          password: "dummy_no_login",
-          is_dummy: true,
-          created_by: userId,
-          is_active: true,
-          role: "user",
-          auth_provider: "email",
-          email_verified: false,
-        })
-        .select("id,name,email,is_dummy")
-        .single();
-
-      if (dummyError || !dummyUser) {
-        throw dummyError || new Error("Failed to create dummy friend");
+      const existingDummySnap = await db
+        .collection("users")
+        .where("created_by", "==", userId)
+        .where("is_dummy", "==", true)
+        .limit(200)
+        .get();
+      const existingDummy = existingDummySnap.docs.find((doc) => {
+        const row = doc.data() || {};
+        return String(row.name || "").trim().toLowerCase() === trimmedName.toLowerCase();
+      });
+      if (existingDummy) {
+        return NextResponse.json(
+          { error: "A dummy friend with this name already exists" },
+          { status: 409 }
+        );
       }
 
-      const forwardId = newAppId();
-      const reverseId = newAppId();
-      const { error: friendshipError } = await supabase.from("friendships").insert([
-        {
-          id: forwardId,
-          user_id: userId,
-          friend_id: dummyId,
-          status: "accepted",
-          requested_by: userId,
-          created_at: nowIso,
-          updated_at: nowIso,
-        },
-        {
-          id: reverseId,
-          user_id: dummyId,
-          friend_id: userId,
-          status: "accepted",
-          requested_by: userId,
-          created_at: nowIso,
-          updated_at: nowIso,
-        },
-      ]);
+      await db.collection("users").doc(dummyId).set({
+        id: dummyId,
+        name: trimmedName,
+        email: dummyEmail,
+        is_dummy: true,
+        created_by: userId,
+        role: "user",
+        is_active: true,
+        auth_provider: "dummy",
+        email_verified: false,
+        default_currency: "INR",
+        timezone: "Asia/Kolkata",
+        language: "en",
+        push_notifications_enabled: false,
+        email_notifications_enabled: false,
+        created_at: nowIso,
+        updated_at: nowIso,
+        _created_at: FieldValue.serverTimestamp(),
+        _updated_at: FieldValue.serverTimestamp(),
+      });
 
-      if (friendshipError) {
-        throw friendshipError;
-      }
+      await createFriendshipInFirestore({
+        user_id: userId,
+        friend_id: dummyId,
+        status: "accepted",
+        requested_by: userId,
+      });
 
-      await invalidateUsersCache(
-        [userId, dummyId],
-        [
-          "friends",
-          "activities",
-          "dashboard-activity",
-          "friend-transactions",
-          "friend-details",
-        ]
-      );
+      await invalidateUsersCache([userId, dummyId], FRIEND_CACHE_SCOPES);
 
       return NextResponse.json(
         {
           message: `Dummy friend "${trimmedName}" created successfully`,
           friendship: {
             friend: {
-              id: dummyUser.id,
-              name: dummyUser.name,
-              email: dummyUser.email,
+              id: dummyId,
+              name: trimmedName,
+              email: dummyEmail,
               isDummy: true,
             },
           },
@@ -154,23 +280,23 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const targetUserId = String(friendUserId || "").trim();
+    const targetEmail = normalizeEmail(email);
+    if (!targetUserId && !targetEmail) {
+      return NextResponse.json(
+        { error: "Provide a valid userId or email" },
+        { status: 400 }
+      );
+    }
+
     let friendUser: any = null;
-    if (email) {
-      const normalizedEmail = String(email).toLowerCase().trim();
-      const { data } = await supabase
-        .from("users")
-        .select("id,name,email,is_dummy")
-        .eq("email", normalizedEmail)
-        .eq("is_dummy", false)
-        .maybeSingle();
-      friendUser = data;
-    } else if (friendUserId) {
-      const { data } = await supabase
-        .from("users")
-        .select("id,name,email,is_dummy")
-        .eq("id", String(friendUserId))
-        .maybeSingle();
-      friendUser = data;
+    if (targetUserId) {
+      const targetDoc = await db.collection("users").doc(targetUserId).get();
+      if (targetDoc.exists) {
+        friendUser = { id: targetDoc.id, ...(targetDoc.data() || {}) };
+      }
+    } else if (targetEmail) {
+      friendUser = await findUserByEmail(targetEmail);
     }
 
     if (!friendUser) {
@@ -183,91 +309,65 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { data: existingFriendship } = await supabase
-      .from("friendships")
-      .select("id,status")
-      .or(
-        `and(user_id.eq.${userId},friend_id.eq.${friendUser.id}),and(user_id.eq.${friendUser.id},friend_id.eq.${userId})`
-      )
-      .limit(1);
+    const friendId = String(friendUser.id);
+    const { forward, reverse } = await getFriendshipPair(userId, friendId);
+    const existingStatus = String(
+      forward?.data()?.status || reverse?.data()?.status || ""
+    );
 
-    if (existingFriendship && existingFriendship.length > 0) {
-      const status = existingFriendship[0].status;
-      if (status === "accepted") {
-        return NextResponse.json({ error: "Already friends" }, { status: 400 });
-      }
-      if (status === "pending") {
-        return NextResponse.json(
-          { error: "Friend request already sent" },
-          { status: 400 }
-        );
-      }
+    if (existingStatus === "accepted") {
+      return NextResponse.json(
+        { error: "You are already friends with this user" },
+        { status: 409 }
+      );
     }
 
-    const forwardId = newAppId();
-    const reverseId = newAppId();
-    const nowIso = new Date().toISOString();
-    const { error: createFriendshipError } = await supabase.from("friendships").insert([
-      {
-        id: forwardId,
+    if (existingStatus === "pending") {
+      return NextResponse.json(
+        { error: "A friend request is already pending for this user" },
+        { status: 409 }
+      );
+    }
+
+    let friendshipId = "";
+    if (existingStatus === "rejected") {
+      await upsertBidirectionalFriendship(userId, friendId, "pending", userId);
+      const updatedPair = await getFriendshipPair(userId, friendId);
+      friendshipId = String(updatedPair.forward?.id || updatedPair.reverse?.id || "");
+    } else {
+      const friendshipData = {
         user_id: userId,
-        friend_id: friendUser.id,
+        friend_id: friendId,
         status: "pending",
         requested_by: userId,
-        created_at: nowIso,
-        updated_at: nowIso,
-      },
-      {
-        id: reverseId,
-        user_id: friendUser.id,
-        friend_id: userId,
-        status: "pending",
-        requested_by: userId,
-        created_at: nowIso,
-        updated_at: nowIso,
-      },
-    ]);
-    if (createFriendshipError) {
-      throw createFriendshipError;
+      };
+      friendshipId = await createFriendshipInFirestore(friendshipData);
     }
+
 
     try {
-      const { data: currentUser } = await supabase
-        .from("users")
-        .select("id,name")
-        .eq("id", userId)
-        .maybeSingle();
       await notifyFriendRequest(
         {
           id: userId,
-          name: currentUser?.name || "Someone",
+          name: user.name || "Someone",
         },
-        String(friendUser.id)
+        friendId
       );
     } catch (notifError) {
       console.error("Failed to send notification:", notifError);
     }
 
-    await invalidateUsersCache(
-      [userId, String(friendUser.id)],
-      [
-        "friends",
-        "activities",
-        "dashboard-activity",
-        "friend-transactions",
-        "friend-details",
-      ]
-    );
+    await invalidateUsersCache([userId, friendId], FRIEND_CACHE_SCOPES);
 
     return NextResponse.json(
       {
         message: "Friend request sent successfully",
         friendship: {
-          id: forwardId,
+          id: friendshipId,
           friend: {
-            id: friendUser.id,
-            name: friendUser.name,
-            email: friendUser.email,
+            id: friendId,
+            name: friendUser.name || "Unknown",
+            email: friendUser.email || "",
           },
         },
       },
@@ -281,4 +381,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-

@@ -109,7 +109,7 @@ export async function GET(
         if (groupsError) {
           throw groupsError;
         }
-        groupsMap = new Map((groups || []).map((group: any) => [String(group.id), group]));
+        groupsMap = new Map<string, any>((groups || []).map((group: any) => [String(group.id), group]));
       }
     }
 
@@ -131,7 +131,7 @@ export async function GET(
     if (usersError) {
       throw usersError;
     }
-    const usersMap = new Map((users || []).map((u: any) => [String(u.id), u]));
+    const usersMap = new Map<string, any>((users || []).map((u: any) => [String(u.id), u]));
 
     const expenseRows: string[][] = [];
     expenseRows.push([
@@ -217,3 +217,4 @@ export async function GET(
     );
   }
 }
+

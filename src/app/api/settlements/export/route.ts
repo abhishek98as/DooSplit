@@ -46,7 +46,7 @@ export async function GET(request: NextRequest) {
     if (usersError) {
       throw usersError;
     }
-    const usersMap = new Map((users || []).map((u: any) => [String(u.id), u]));
+    const usersMap = new Map<string, any>((users || []).map((u: any) => [String(u.id), u]));
 
     const rows: string[] = [];
     rows.push(
@@ -98,3 +98,4 @@ export async function GET(request: NextRequest) {
     );
   }
 }
+

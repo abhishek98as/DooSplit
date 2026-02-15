@@ -18,7 +18,7 @@ async function fetchUsersMap(ids: string[]) {
   if (error) {
     throw error;
   }
-  return new Map((users || []).map((user: any) => [String(user.id), user]));
+  return new Map<string, any>((users || []).map((user: any) => [String(user.id), user]));
 }
 
 export async function GET(request: NextRequest) {
@@ -210,3 +210,4 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+

@@ -5,9 +5,10 @@ import {
   getOrSetCacheJsonWithMeta,
   invalidateUsersCache,
 } from "@/lib/cache";
-import { supabaseReadRepository } from "@/lib/data/supabase-adapter";
 import { requireUser } from "@/lib/auth/require-user";
-import { newAppId, requireSupabaseAdmin } from "@/lib/supabase/app";
+import { firestoreReadRepository } from "@/lib/data/firestore-adapter";
+import { createGroupInFirestore } from "@/lib/firestore/write-operations";
+import { getAdminDb } from "@/lib/firestore/admin";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -31,21 +32,20 @@ export async function GET(request: NextRequest) {
       cacheKey,
       CACHE_TTL.groups,
       async () =>
-        supabaseReadRepository.getGroups({
+        firestoreReadRepository.getGroups({
           userId,
           requestSearch: request.nextUrl.search,
         })
     );
 
     return NextResponse.json(payload, {
-      status: 200,
       headers: {
-        "X-Doosplit-Cache": cacheStatus,
-        "X-Doosplit-Route-Ms": String(Date.now() - routeStart),
+        "X-Cache-Status": cacheStatus,
+        "X-Response-Time": `${Date.now() - routeStart}ms`,
       },
     });
   } catch (error: any) {
-    console.error("Get groups error:", error);
+    console.error("Fetch groups error:", error);
     return NextResponse.json({ error: "Failed to fetch groups" }, { status: 500 });
   }
 }
@@ -65,31 +65,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Group name is required" }, { status: 400 });
     }
 
-    const supabase = requireSupabaseAdmin();
-    const groupId = newAppId();
-    const nowIso = new Date().toISOString();
-
-    const { data: groupRow, error: groupError } = await supabase
-      .from("groups")
-      .insert({
-        id: groupId,
-        name: String(name).trim(),
-        description: description || "",
-        image: image || null,
-        type: type || "trip",
-        currency: currency || "INR",
-        created_by: userId,
-        is_active: true,
-        created_at: nowIso,
-        updated_at: nowIso,
-      })
-      .select("*")
-      .single();
-
-    if (groupError || !groupRow) {
-      throw groupError || new Error("Failed to create group");
-    }
-
     const dedupMembers = Array.from(
       new Set(
         (Array.isArray(memberIds) ? memberIds : [])
@@ -98,119 +73,67 @@ export async function POST(request: NextRequest) {
       )
     );
 
-    const memberRows = [
-      {
-        id: newAppId(),
-        group_id: groupId,
-        user_id: userId,
-        role: "admin",
-        joined_at: nowIso,
-        created_at: nowIso,
-        updated_at: nowIso,
-      },
-      ...dedupMembers.map((id) => ({
-        id: newAppId(),
-        group_id: groupId,
-        user_id: id,
-        role: "member",
-        joined_at: nowIso,
-        created_at: nowIso,
-        updated_at: nowIso,
-      })),
-    ];
+    const allMemberIds = [userId, ...dedupMembers];
 
-    const { error: membersInsertError } = await supabase
-      .from("group_members")
-      .insert(memberRows);
-    if (membersInsertError) {
-      throw membersInsertError;
-    }
+    const groupData = {
+      name: String(name).trim(),
+      description: description || "",
+      image: image || null,
+      type: type || "trip",
+      currency: currency || "INR",
+      created_by: userId,
+      is_active: true,
+    };
 
-    const { data: members, error: membersError } = await supabase
-      .from("group_members")
-      .select("*")
-      .eq("group_id", groupId);
-    if (membersError) {
-      throw membersError;
-    }
+    const groupId = await createGroupInFirestore(groupData, allMemberIds);
+    const db = getAdminDb();
 
-    const userIds = Array.from(
-      new Set((members || []).map((member: any) => String(member.user_id)))
-    );
-    const { data: users, error: usersError } = await supabase
-      .from("users")
-      .select("id,name,email,profile_picture")
-      .in("id", userIds);
-    if (usersError) {
-      throw usersError;
-    }
-    const usersMap = new Map((users || []).map((user: any) => [String(user.id), user]));
+    const [groupDoc, membersSnap] = await Promise.all([
+      db.collection("groups").doc(groupId).get(),
+      db.collection("group_members").where("group_id", "==", groupId).get(),
+    ]);
 
-    const createdByUser = usersMap.get(userId);
-    const hydratedMembers = (members || []).map((member: any) => {
-      const user = usersMap.get(String(member.user_id));
+    const groupRow = groupDoc.exists ? groupDoc.data() || {} : {};
+    const members = membersSnap.docs.map((doc) => {
+      const row = doc.data() || {};
       return {
-        _id: member.id,
-        groupId: member.group_id,
-        userId: user
-          ? {
-              _id: user.id,
-              name: user.name,
-              email: user.email,
-              profilePicture: user.profile_picture || null,
-            }
-          : null,
-        role: member.role,
-        joinedAt: member.joined_at,
-        createdAt: member.created_at,
-        updatedAt: member.updated_at,
+        _id: doc.id,
+        groupId: String(row.group_id || groupId),
+        userId: String(row.user_id || ""),
+        role: String(row.role || "member"),
+        joinedAt:
+          typeof row.joined_at?.toDate === "function"
+            ? row.joined_at.toDate().toISOString()
+            : row.joined_at || new Date().toISOString(),
       };
     });
 
     await invalidateUsersCache(
-      Array.from(new Set([userId, ...dedupMembers])),
-      [
-        "groups",
-        "expenses",
-        "activities",
-        "dashboard-activity",
-        "friend-details",
-        "user-balance",
-      ]
+      Array.from(new Set(allMemberIds)),
+      ["groups", "activities", "dashboard-activity", "analytics"]
     );
 
-    return NextResponse.json(
-      {
-        message: "Group created successfully",
-        group: {
-          _id: groupRow.id,
-          name: groupRow.name,
-          description: groupRow.description,
-          image: groupRow.image,
-          type: groupRow.type,
-          currency: groupRow.currency,
-          createdBy: createdByUser
-            ? {
-                _id: createdByUser.id,
-                name: createdByUser.name,
-                email: createdByUser.email,
-                profilePicture: createdByUser.profile_picture || null,
-              }
-            : null,
-          isActive: groupRow.is_active,
-          createdAt: groupRow.created_at,
-          updatedAt: groupRow.updated_at,
-          members: hydratedMembers,
-          memberCount: hydratedMembers.length,
-          userRole: "admin",
-        },
+    // Return success response
+    return NextResponse.json({
+      success: true,
+      groupId,
+      group: {
+        _id: groupId,
+        name: String(groupRow.name || name),
+        description: String(groupRow.description || description || ""),
+        image: groupRow.image || null,
+        type: String(groupRow.type || type || "trip"),
+        currency: String(groupRow.currency || currency || "INR"),
+        memberCount: members.length,
+        userRole: "admin",
+        members,
       },
-      { status: 201 }
-    );
+      message: "Group created successfully",
+    });
   } catch (error: any) {
     console.error("Create group error:", error);
     return NextResponse.json(
-      { error: error.message || "Failed to create group" },
+      { error: "Failed to create group" },
       { status: 500 }
     );
   }

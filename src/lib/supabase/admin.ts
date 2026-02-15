@@ -1,42 +1,14 @@
 import "server-only";
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import {
-  getSupabaseServiceRoleKey,
-  getSupabaseUrl,
-  isSupabaseServiceConfigured,
-} from "./shared";
+import { getFirestoreCompatClient, type FirestoreCompat } from "@/lib/firestore/supabase-compat";
 
 declare global {
   // eslint-disable-next-line no-var
-  var __supabaseAdminClient: SupabaseClient | undefined;
+  var __supabaseAdminClient: FirestoreCompat | undefined;
 }
 
-export function getSupabaseAdminClient(): SupabaseClient | null {
-  if (!isSupabaseServiceConfigured()) {
-    return null;
-  }
-
+export function getSupabaseAdminClient(): FirestoreCompat {
   if (!global.__supabaseAdminClient) {
-    global.__supabaseAdminClient = createClient(
-      getSupabaseUrl(),
-      getSupabaseServiceRoleKey(),
-      {
-        auth: {
-          persistSession: false,
-          autoRefreshToken: false,
-        },
-        db: {
-          schema: 'public',
-        },
-        global: {
-          headers: {
-            'x-application-name': 'doosplit-api',
-          },
-        },
-        // Use connection pooler for better performance
-        // Supabase handles connection pooling via PgBouncer automatically
-      }
-    );
+    global.__supabaseAdminClient = getFirestoreCompatClient();
   }
 
   return global.__supabaseAdminClient;

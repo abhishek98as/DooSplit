@@ -1,5 +1,11 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
 import {
+  getFirestore,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+} from "firebase/firestore";
+import {
   getAuth,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
@@ -7,6 +13,10 @@ import {
   GoogleAuthProvider,
   signInWithPopup,
   sendPasswordResetEmail,
+  sendEmailVerification,
+  applyActionCode,
+  confirmPasswordReset,
+  verifyPasswordResetCode,
   updateProfile,
   type User as FirebaseUser,
 } from "firebase/auth";
@@ -26,6 +36,38 @@ const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 const auth = getAuth(app);
 const googleProvider = new GoogleAuthProvider();
 
+const firestoreDatabaseId =
+  process.env.NEXT_PUBLIC_FIREBASE_DATABASE_ID?.trim() ||
+  process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID?.trim() ||
+  "(default)";
+
+function initFirestoreInstance() {
+  if (typeof window !== "undefined") {
+    try {
+      return initializeFirestore(
+        app,
+        {
+          localCache: persistentLocalCache({
+            tabManager: persistentMultipleTabManager(),
+          }),
+        },
+        firestoreDatabaseId
+      );
+    } catch (error: any) {
+      const message = String(error?.message || "");
+      if (
+        !message.includes("already been initialized") &&
+        !message.includes("already been started")
+      ) {
+        console.warn("Firestore persistence initialization fallback:", message);
+      }
+    }
+  }
+
+  return getFirestore(app, firestoreDatabaseId);
+}
+export const db = initFirestoreInstance();
+
 export {
   app,
   auth,
@@ -35,6 +77,10 @@ export {
   firebaseSignOut,
   signInWithPopup,
   sendPasswordResetEmail,
+  sendEmailVerification,
+  applyActionCode,
+  confirmPasswordReset,
+  verifyPasswordResetCode,
   updateProfile,
 };
 export type { FirebaseUser };

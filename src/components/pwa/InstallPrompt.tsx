@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { useSession } from 'next-auth/react';
+import { useSession } from "@/lib/auth/react-session";
 import { Download, X, Smartphone, Monitor, Star } from 'lucide-react';
 import { usePWA } from './PWAProvider';
 import Button from '@/components/ui/Button';

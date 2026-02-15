@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useSession } from "next-auth/react";
+import { useSession } from "@/lib/auth/react-session";
 import { useParams, useRouter } from "next/navigation";
 import AppShell from "@/components/layout/AppShell";
 import Card, { CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
@@ -13,7 +13,6 @@ import {
   Receipt,
   Plus,
   UserPlus,
-  Settings,
   ArrowLeft,
   Trash2,
   ChevronRight,
@@ -63,6 +62,7 @@ interface Group {
     name: string;
   };
   members: GroupMember[];
+  balances?: Balance[];
   memberCount: number;
   userRole: string;
   createdAt: string;
@@ -108,7 +108,26 @@ export default function GroupDetailPage() {
       }
       const data = await response.json();
       setGroup(data.group);
-      calculateBalances(data.group.members);
+      const incomingBalances = Array.isArray(data.group?.balances)
+        ? data.group.balances
+        : [];
+      if (incomingBalances.length > 0) {
+        setBalances(
+          incomingBalances.map((item: any) => ({
+            userId: String(item.userId || ""),
+            userName: String(item.userName || "Unknown"),
+            balance: Number(item.balance || 0),
+          }))
+        );
+      } else {
+        setBalances(
+          (data.group?.members || []).map((member: GroupMember) => ({
+            userId: member.userId._id,
+            userName: member.userId.name,
+            balance: 0,
+          }))
+        );
+      }
     } catch (error) {
       console.error("Error fetching group:", error);
     }
@@ -127,17 +146,6 @@ export default function GroupDetailPage() {
     } finally {
       setLoading(false);
     }
-  };
-
-  const calculateBalances = (members: GroupMember[]) => {
-    // This is a simplified balance calculation
-    // In a real app, you'd calculate based on actual expenses
-    const balanceData: Balance[] = members.map((member) => ({
-      userId: member.userId._id,
-      userName: member.userId.name,
-      balance: 0,
-    }));
-    setBalances(balanceData);
   };
 
   const handleDeleteGroup = async () => {
@@ -364,6 +372,53 @@ export default function GroupDetailPage() {
                 </div>
               ))}
             </div>
+          </CardContent>
+        </Card>
+
+        {/* Member Balances */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Member Balances</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {balances.length === 0 ? (
+              <p className="text-sm text-neutral-500 dark:text-dark-text-secondary">
+                No balance data available.
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {balances
+                  .slice()
+                  .sort((a, b) => Math.abs(b.balance) - Math.abs(a.balance))
+                  .map((entry) => {
+                    const isCurrentUser = entry.userId === session?.user?.id;
+                    return (
+                      <div
+                        key={entry.userId}
+                        className="flex items-center justify-between py-2 border-b border-neutral-200 dark:border-dark-border last:border-0"
+                      >
+                        <p className="text-sm font-medium text-neutral-900 dark:text-dark-text">
+                          {entry.userName}
+                          {isCurrentUser ? " (You)" : ""}
+                        </p>
+                        <p
+                          className={`text-sm font-semibold ${
+                            entry.balance > 0
+                              ? "text-green-600 dark:text-green-400"
+                              : entry.balance < 0
+                              ? "text-red-600 dark:text-red-400"
+                              : "text-neutral-500 dark:text-dark-text-secondary"
+                          }`}
+                        >
+                          {entry.balance === 0
+                            ? "Settled"
+                            : `${formatCurrency(Math.abs(entry.balance), group.currency)} ${entry.balance > 0 ? "to receive" : "to pay"}`}
+                        </p>
+                      </div>
+                    );
+                  })}
+              </div>
+            )}
           </CardContent>
         </Card>
 

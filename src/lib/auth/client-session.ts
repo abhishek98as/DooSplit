@@ -1,6 +1,6 @@
 "use client";
 
-import { getSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { auth } from "@/lib/firebase";
 
 export interface ClientSessionInfo {
   accessToken: string | null;
@@ -9,25 +9,28 @@ export interface ClientSessionInfo {
   email: string | null;
 }
 
-export async function getClientSessionInfo(): Promise<ClientSessionInfo> {
-  const supabase = getSupabaseBrowserClient();
-  if (!supabase) {
-    return {
-      accessToken: null,
-      refreshToken: null,
-      userId: null,
-      email: null,
-    };
+export async function getFirebaseIdToken(forceRefresh = false): Promise<string | null> {
+  const user = auth.currentUser;
+  if (!user) {
+    return null;
   }
 
-  const { data } = await supabase.auth.getSession();
-  const session = data?.session || null;
+  try {
+    return await user.getIdToken(forceRefresh);
+  } catch {
+    return null;
+  }
+}
+
+export async function getClientSessionInfo(): Promise<ClientSessionInfo> {
+  const user = auth.currentUser;
+  const accessToken = user ? await getFirebaseIdToken() : null;
 
   return {
-    accessToken: session?.access_token || null,
-    refreshToken: session?.refresh_token || null,
-    userId: session?.user?.id || null,
-    email: session?.user?.email || null,
+    accessToken,
+    refreshToken: user?.refreshToken || null,
+    userId: user?.uid || null,
+    email: user?.email || null,
   };
 }
 
@@ -35,14 +38,18 @@ export async function authFetch(
   input: RequestInfo | URL,
   init: RequestInit = {}
 ): Promise<Response> {
-  const session = await getClientSessionInfo();
+  const token = await getFirebaseIdToken();
   const headers = new Headers(init.headers || {});
-  if (session.accessToken && !headers.has("Authorization")) {
-    headers.set("Authorization", `Bearer ${session.accessToken}`);
+
+  if (token && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${token}`);
   }
 
   return fetch(input, {
     ...init,
+    credentials: "include",
     headers,
   });
 }
+
+export const firebaseAuthFetch = authFetch;

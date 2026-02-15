@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useSession } from "next-auth/react";
+import { useSession } from "@/lib/auth/react-session";
 import { useRouter } from "next/navigation";
 import AppShell from "@/components/layout/AppShell";
 import Card, { CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
@@ -12,7 +12,7 @@ import { AnalyticsEvents } from "@/lib/firebase-analytics";
 import {
   UserPlus, Search, Users, Check, X, Mail, Send, Link2,
   Copy, CheckCircle2, AlertCircle, Trash2, UserRoundPlus,
-  Clock, Loader2,
+  Clock, Loader2, RotateCcw,
 } from "lucide-react";
 import Modal from "@/components/ui/Modal";
 import getOfflineStore from "@/lib/offline-store";
@@ -83,6 +83,9 @@ export default function FriendsPage() {
   // Invite state
   const [inviteEmail, setInviteEmail] = useState("");
   const [sendingInvite, setSendingInvite] = useState(false);
+  const [processingInviteId, setProcessingInviteId] = useState<string | null>(
+    null
+  );
   const [inviteResult, setInviteResult] = useState<{
     type: "success" | "error";
     message: string;
@@ -105,13 +108,23 @@ export default function FriendsPage() {
 
   const fetchFriends = async () => {
     try {
-      const res = await fetch("/api/friends");
-      if (res.ok) {
-        const data = await res.json();
-        setFriends(data.friends || []);
-      }
+      const offlineStore = getOfflineStore();
+      const rawFriends = await offlineStore.getFriends();
+      const normalized = (rawFriends || []).map((item: any) => ({
+        id: item.id,
+        friend: {
+          id: item.friend?._id || item.friend?.id,
+          name: item.friend?.name || item.name || "Unknown",
+          email: item.friend?.email || item.email || "",
+          profilePicture: item.friend?.profilePicture,
+          isDummy: item.friend?.isDummy,
+        },
+        balance: item.balance ?? 0,
+      }));
+      setFriends(normalized.filter((f: any) => f.id && f.friend?.id));
     } catch (error) {
       console.error("Failed to fetch friends:", error);
+      setFriends([]);
     } finally {
       setLoading(false);
     }
@@ -287,6 +300,68 @@ export default function FriendsPage() {
     }
   };
 
+  const handleReinvite = async (invitationId: string) => {
+    setProcessingInviteId(invitationId);
+    try {
+      const res = await fetch(`/api/invitations/${invitationId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "resend" }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setInviteResult({
+          type: "error",
+          message: data.error || "Failed to resend invitation",
+        });
+        return;
+      }
+      setInviteResult({
+        type: "success",
+        message: data.emailSent
+          ? "Invitation resent successfully."
+          : "Invitation refreshed, but email could not be sent.",
+      });
+      await fetchInvitations();
+    } catch {
+      setInviteResult({
+        type: "error",
+        message: "Failed to resend invitation",
+      });
+    } finally {
+      setProcessingInviteId(null);
+    }
+  };
+
+  const handleCancelInvite = async (invitationId: string) => {
+    setProcessingInviteId(invitationId);
+    try {
+      const res = await fetch(`/api/invitations/${invitationId}`, {
+        method: "DELETE",
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setInviteResult({
+          type: "error",
+          message: data.error || "Failed to cancel invitation",
+        });
+        return;
+      }
+      setInviteResult({
+        type: "success",
+        message: "Invitation cancelled.",
+      });
+      await fetchInvitations();
+    } catch {
+      setInviteResult({
+        type: "error",
+        message: "Failed to cancel invitation",
+      });
+    } finally {
+      setProcessingInviteId(null);
+    }
+  };
+
   const handleRequest = async (requestId: string, action: "accept" | "reject") => {
     try {
       const res = await fetch(`/api/friends/${requestId}`, {
@@ -447,10 +522,34 @@ export default function FriendsPage() {
                         </p>
                       </div>
                     </div>
-                    <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
-                      <Clock className="h-3 w-3" />
-                      Pending
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+                        <Clock className="h-3 w-3" />
+                        Pending
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleReinvite(inv._id)}
+                        disabled={processingInviteId === inv._id}
+                        className="p-1.5 rounded-md text-neutral-500 hover:text-primary hover:bg-primary/10 transition-colors"
+                        title="Reinvite"
+                      >
+                        {processingInviteId === inv._id ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <RotateCcw className="h-4 w-4" />
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleCancelInvite(inv._id)}
+                        disabled={processingInviteId === inv._id}
+                        className="p-1.5 rounded-md text-neutral-500 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-50/10 transition-colors"
+                        title="Cancel invite"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -861,3 +960,4 @@ export default function FriendsPage() {
     </AppShell>
   );
 }
+

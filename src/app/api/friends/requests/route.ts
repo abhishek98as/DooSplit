@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
       if (usersError) {
         throw usersError;
       }
-      usersMap = new Map((users || []).map((u: any) => [String(u.id), u]));
+      usersMap = new Map<string, any>((users || []).map((u: any) => [String(u.id), u]));
     }
 
     const requests = (pendingRequests || []).map((req: any) => {
@@ -63,4 +63,5 @@ export async function GET(request: NextRequest) {
     );
   }
 }
+
 

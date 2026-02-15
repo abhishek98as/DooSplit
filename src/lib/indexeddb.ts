@@ -369,12 +369,12 @@ class IndexedDB {
     return this.put(STORES.settlements, settlement);
   }
 
-  // Friends operations
+  // Friends operations - supports both API format ({ id, friend, balance }) and FriendRecord ({ userId, friendId })
   async getFriends(userId?: string): Promise<FriendRecord[]> {
-    let friends = await this.getAll<FriendRecord>(STORES.friends);
+    let friends = await this.getAll<FriendRecord & { friend?: { _id?: string; name?: string; email?: string; profilePicture?: string } }>(STORES.friends);
 
-    if (userId) {
-      friends = friends.filter(f => f.userId === userId);
+    if (userId && friends.some(f => 'userId' in f && f.userId !== undefined)) {
+      friends = friends.filter(f => (f as FriendRecord).userId === userId);
     }
 
     return friends;
@@ -384,14 +384,18 @@ class IndexedDB {
     return this.put(STORES.friends, friend);
   }
 
-  // Groups operations
+  // Groups operations - supports both API format (members[].userId as object) and GroupRecord (members[].userId as string)
   async getGroups(userId?: string): Promise<GroupRecord[]> {
     let groups = await this.getAll<GroupRecord>(STORES.groups);
 
-    if (userId) {
-      groups = groups.filter(g =>
-        g.members.some(m => m.userId === userId)
-      );
+    if (userId && Array.isArray(groups)) {
+      groups = groups.filter(g => {
+        const members = g.members || [];
+        return members.some((m: { userId?: string | { _id?: string } }) => {
+          const uid = typeof m.userId === 'string' ? m.userId : m.userId?._id;
+          return uid === userId;
+        });
+      });
     }
 
     return groups;

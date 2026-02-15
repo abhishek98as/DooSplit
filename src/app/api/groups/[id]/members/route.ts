@@ -44,7 +44,7 @@ async function loadGroupMembers(groupId: string) {
   if (usersError) {
     throw usersError;
   }
-  const usersMap = new Map((users || []).map((user: any) => [String(user.id), user]));
+  const usersMap = new Map<string, any>((users || []).map((user: any) => [String(user.id), user]));
   return mapMembers(members || [], usersMap);
 }
 
@@ -277,3 +277,4 @@ export async function DELETE(
     );
   }
 }
+

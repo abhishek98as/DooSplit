@@ -5,6 +5,47 @@ import { requireSupabaseAdmin } from "@/lib/supabase/app";
 
 export const dynamic = "force-dynamic";
 
+function toIso(value: unknown): string {
+  if (!value) {
+    return "";
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  if (typeof (value as any)?.toDate === "function") {
+    return (value as any).toDate().toISOString();
+  }
+  return "";
+}
+
+function normalizeInvitation(invitation: any) {
+  const id = String(invitation?.id || invitation?._id || "");
+  const createdAt = toIso(invitation?.created_at || invitation?.createdAt);
+  const updatedAt = toIso(invitation?.updated_at || invitation?.updatedAt);
+  const expiresAt = toIso(invitation?.expires_at || invitation?.expiresAt);
+
+  return {
+    _id: id,
+    id,
+    invitedBy: String(invitation?.invited_by || invitation?.invitedBy || ""),
+    invited_by: String(invitation?.invited_by || invitation?.invitedBy || ""),
+    email: String(invitation?.email || ""),
+    token: String(invitation?.token || ""),
+    status: String(invitation?.status || "pending"),
+    createdAt,
+    created_at: createdAt,
+    updatedAt,
+    updated_at: updatedAt,
+    expiresAt,
+    expires_at: expiresAt,
+    acceptedAt: toIso(invitation?.accepted_at || invitation?.acceptedAt),
+    accepted_at: toIso(invitation?.accepted_at || invitation?.acceptedAt),
+  };
+}
+
 export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -66,14 +107,21 @@ export async function PUT(
     }
 
     const newExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-    const { error: updateError } = await supabase
+    const nowIso = new Date().toISOString();
+    const { data: updatedInvitation, error: updateError } = await supabase
       .from("invitations")
-      .update({ expires_at: newExpiresAt })
-      .eq("id", invitation.id);
+      .update({ expires_at: newExpiresAt, updated_at: nowIso })
+      .eq("id", invitation.id)
+      .select("*")
+      .maybeSingle();
 
     if (updateError) {
       throw updateError;
     }
+
+    const normalizedUpdatedInvitation = normalizeInvitation(
+      updatedInvitation || { ...invitation, expires_at: newExpiresAt, updated_at: nowIso }
+    );
 
     const { data: inviter } = await supabase
       .from("users")
@@ -97,12 +145,7 @@ export async function PUT(
       return NextResponse.json(
         {
           message: "Invitation resent successfully!",
-          invitation: {
-            id: invitation.id,
-            email: invitation.email,
-            status: invitation.status,
-            expiresAt: newExpiresAt,
-          },
+          invitation: normalizedUpdatedInvitation,
           emailSent: true,
         },
         { status: 200 }
@@ -112,12 +155,7 @@ export async function PUT(
       return NextResponse.json(
         {
           message: "Invitation updated but email could not be sent",
-          invitation: {
-            id: invitation.id,
-            email: invitation.email,
-            status: invitation.status,
-            expiresAt: newExpiresAt,
-          },
+          invitation: normalizedUpdatedInvitation,
           emailSent: false,
         },
         { status: 200 }
@@ -164,10 +202,13 @@ export async function DELETE(
       );
     }
 
-    const { error: cancelError } = await supabase
+    const nowIso = new Date().toISOString();
+    const { data: cancelledInvitation, error: cancelError } = await supabase
       .from("invitations")
-      .update({ status: "cancelled" })
-      .eq("id", invitation.id);
+      .update({ status: "cancelled", updated_at: nowIso })
+      .eq("id", invitation.id)
+      .select("*")
+      .maybeSingle();
 
     if (cancelError) {
       throw cancelError;
@@ -176,11 +217,9 @@ export async function DELETE(
     return NextResponse.json(
       {
         message: "Invitation cancelled successfully",
-        invitation: {
-          id: invitation.id,
-          email: invitation.email,
-          status: "cancelled",
-        },
+        invitation: normalizeInvitation(
+          cancelledInvitation || { ...invitation, status: "cancelled", updated_at: nowIso }
+        ),
       },
       { status: 200 }
     );
@@ -192,4 +231,3 @@ export async function DELETE(
     );
   }
 }
-

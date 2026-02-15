@@ -12,7 +12,7 @@ import getIndexedDB, {
   GroupRecord,
   SyncQueueItem
 } from './indexeddb';
-import { authFetch } from "@/lib/auth/client-session";
+import { firebaseAuthFetch as authFetch, getFirebaseIdToken, getClientSessionInfo } from "@/lib/auth/client-session";
 
 // Types for API responses
 export interface ExpenseApiResponse {
@@ -53,7 +53,8 @@ class OfflineStore {
   private syncInProgress: boolean = false;
   private inFlightRequests = new Map<string, Promise<any>>();
   private revalidateInFlight = new Set<string>();
-  private readonly requestTimeoutMs = 12000;
+  private readonly requestTimeoutMs = 25000;
+  private indexedDbUnavailableLogged = false;
 
   constructor() {
     // Only add listeners on client side
@@ -84,6 +85,14 @@ class OfflineStore {
   // Sync status
   isSyncing(): boolean {
     return this.syncInProgress;
+  }
+
+  private logIndexedDbUnavailable(context: string): void {
+    if (this.indexedDbUnavailableLogged) {
+      return;
+    }
+    this.indexedDbUnavailableLogged = true;
+    console.warn(`IndexedDB unavailable, running without local cache (${context})`);
   }
 
   private buildRequestKey(
@@ -249,7 +258,7 @@ class OfflineStore {
         try {
           await this.indexedDB.putMany('expenses', response.expenses);
         } catch (dbError) {
-          console.log('IndexedDB not available, skipping cache');
+          this.logIndexedDbUnavailable("expenses cache write");
         }
       }
 
@@ -259,7 +268,7 @@ class OfflineStore {
       try {
         return this.indexedDB.getExpenses(query);
       } catch (dbError) {
-        console.log('IndexedDB not available, returning empty array');
+        this.logIndexedDbUnavailable("expenses cache read");
         return [];
       }
     }
@@ -304,7 +313,7 @@ class OfflineStore {
             await this.indexedDB.delete('expenses', tempId);
             await this.indexedDB.putExpense(data.expense);
           } catch (dbError) {
-            console.log('IndexedDB not available, skipping cache update');
+            this.logIndexedDbUnavailable("expense cache update");
           }
           return data.expense;
         } else {
@@ -333,7 +342,7 @@ class OfflineStore {
         data: expenseData,
       });
     } catch (dbError) {
-      console.log('IndexedDB not available, cannot store offline');
+      this.logIndexedDbUnavailable("expense offline create");
       throw new Error('Cannot create expense offline - IndexedDB not available');
     }
 
@@ -345,7 +354,7 @@ class OfflineStore {
     try {
       existing = await this.indexedDB.get<ExpenseRecord>('expenses', expenseId);
     } catch (dbError) {
-      console.log('IndexedDB not available, cannot update offline');
+      this.logIndexedDbUnavailable("expense offline read for update");
       throw new Error('Cannot update expense - IndexedDB not available');
     }
 
@@ -374,7 +383,7 @@ class OfflineStore {
           try {
             await this.indexedDB.putExpense(data.expense);
           } catch (dbError) {
-            console.log('IndexedDB not available, skipping cache update');
+            this.logIndexedDbUnavailable("expense cache update after PUT");
           }
           return data.expense;
         }
@@ -393,7 +402,7 @@ class OfflineStore {
         data: updates,
       });
     } catch (dbError) {
-      console.log('IndexedDB not available, cannot store offline update');
+      this.logIndexedDbUnavailable("expense offline update");
       throw new Error('Cannot update expense offline - IndexedDB not available');
     }
 
@@ -444,7 +453,7 @@ class OfflineStore {
         try {
           await this.indexedDB.putMany('settlements', response.settlements);
         } catch (dbError) {
-          console.log('IndexedDB not available, skipping cache');
+          this.logIndexedDbUnavailable("settlements cache write");
         }
       }
 
@@ -454,7 +463,7 @@ class OfflineStore {
       try {
         return this.indexedDB.getSettlements();
       } catch (dbError) {
-        console.log('IndexedDB not available, returning empty array');
+        this.logIndexedDbUnavailable("settlements cache read");
         return [];
       }
     }
@@ -513,7 +522,8 @@ class OfflineStore {
   // Friends operations
   async getFriends(): Promise<FriendRecord[]> {
     const url = '/api/friends';
-    const cacheKey = 'friends';
+    const session = await getClientSessionInfo();
+    const cacheKey = `friends_${session.userId || 'anon'}`;
 
     try {
       const response: FriendApiResponse = await this.fetchWithCache(url, {}, cacheKey);
@@ -523,7 +533,7 @@ class OfflineStore {
         try {
           await this.indexedDB.putMany('friends', response.friends);
         } catch (dbError) {
-          console.log('IndexedDB not available, skipping cache');
+          this.logIndexedDbUnavailable("friends cache write");
         }
       }
 
@@ -533,7 +543,7 @@ class OfflineStore {
       try {
         return this.indexedDB.getFriends();
       } catch (dbError) {
-        console.log('IndexedDB not available, returning empty array');
+        this.logIndexedDbUnavailable("friends cache read");
         return [];
       }
     }
@@ -542,7 +552,8 @@ class OfflineStore {
   // Groups operations
   async getGroups(): Promise<GroupRecord[]> {
     const url = '/api/groups';
-    const cacheKey = 'groups';
+    const session = await getClientSessionInfo();
+    const cacheKey = `groups_${session.userId || 'anon'}`;
 
     try {
       const response: GroupApiResponse = await this.fetchWithCache(url, {}, cacheKey);
@@ -552,7 +563,7 @@ class OfflineStore {
         try {
           await this.indexedDB.putMany('groups', response.groups);
         } catch (dbError) {
-          console.log('IndexedDB not available, skipping cache');
+          this.logIndexedDbUnavailable("groups cache write");
         }
       }
 
@@ -562,7 +573,7 @@ class OfflineStore {
       try {
         return this.indexedDB.getGroups();
       } catch (dbError) {
-        console.log('IndexedDB not available, returning empty array');
+        this.logIndexedDbUnavailable("groups cache read");
         return [];
       }
     }

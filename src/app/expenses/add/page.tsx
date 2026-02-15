@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useSession } from "next-auth/react";
+import { useSession } from "@/lib/auth/react-session";
 import { useRouter } from "next/navigation";
 import AppShell from "@/components/layout/AppShell";
 import Card from "@/components/ui/Card";
@@ -190,7 +190,12 @@ export default function AddExpensePage() {
 
     for (const imageFile of imageFiles) {
       try {
-        // If it's already a reference ID (from re-upload), keep it
+        // Skip temporary local IDs that were not uploaded yet
+        if (imageFile.startsWith("temp_") || imageFile.startsWith("local_")) {
+          continue;
+        }
+
+        // If it's already a stored reference ID, keep it
         if (!imageFile.startsWith('data:')) {
           uploadedRefs.push(imageFile);
           continue;
@@ -338,11 +343,19 @@ export default function AddExpensePage() {
         // Refresh groups
         await fetchGroups();
         // Set the newly created group as selected
-        setSelectedGroup({
-          _id: newGroup.group._id,
-          name: newGroup.group.name,
-          memberCount: newGroup.group.members.length,
-        });
+        if (newGroup?.group?._id) {
+          setSelectedGroup({
+            _id: newGroup.group._id,
+            name: newGroup.group.name,
+            memberCount: Number(newGroup.group.memberCount || newGroup.group.members?.length || 0),
+          });
+        } else if (newGroup?.groupId) {
+          setSelectedGroup({
+            _id: String(newGroup.groupId),
+            name: groupFormData.name.trim(),
+            memberCount: groupFormData.memberIds.length + 1,
+          });
+        }
         // Clear form
         setGroupFormData({
           name: "",
@@ -591,6 +604,7 @@ export default function AddExpensePage() {
               maxImages={10}
               type={ImageType.EXPENSE}
               entityId="new-expense" // Will be replaced with actual expense ID after creation
+              deferUpload
             />
 
             {/* Notes */}
@@ -912,3 +926,4 @@ export default function AddExpensePage() {
     </AppShell>
   );
 }
+

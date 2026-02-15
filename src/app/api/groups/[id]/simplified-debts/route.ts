@@ -119,7 +119,9 @@ export async function GET(
         };
       }
 
-      const netMap = new Map(memberIds.map((memberId) => [memberId, 0]));
+      const netMap = new Map<string, number>(
+        memberIds.map((memberId) => [String(memberId), 0] as [string, number])
+      );
 
       const { data: expenses, error: expensesError } = await supabase
         .from("expenses")
@@ -176,7 +178,7 @@ export async function GET(
       if (usersError) {
         throw usersError;
       }
-      const usersMap = new Map((users || []).map((u: any) => [String(u.id), u]));
+      const usersMap = new Map<string, any>((users || []).map((u: any) => [String(u.id), u]));
 
       const transactions = simplified.transactions.map((tx) => {
         const fromUser = usersMap.get(tx.from);
@@ -219,3 +221,4 @@ export async function GET(
     );
   }
 }
+

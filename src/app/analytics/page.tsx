@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useSession } from "next-auth/react";
+import { useSession } from "@/lib/auth/react-session";
 import AppShell from "@/components/layout/AppShell";
 import Card, { CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
@@ -347,7 +347,7 @@ export default function AnalyticsPage() {
               <CardTitle>Monthly Spending Trend</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="h-80">
+              <div className="h-80 min-h-[320px] min-w-0 w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={lineChartData}>
                     <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
@@ -390,7 +390,7 @@ export default function AnalyticsPage() {
               <CardTitle>Spending by Category</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="h-80">
+              <div className="h-80 min-h-[320px] min-w-0 w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <RechartsPieChart>
                     <Pie
@@ -475,3 +475,4 @@ export default function AnalyticsPage() {
     </AppShell>
   );
 }
+

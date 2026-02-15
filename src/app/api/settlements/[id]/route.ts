@@ -48,7 +48,7 @@ export async function GET(
       if (usersError) {
         throw usersError;
       }
-      const usersMap = new Map((users || []).map((u: any) => [String(u.id), u]));
+      const usersMap = new Map<string, any>((users || []).map((u: any) => [String(u.id), u]));
 
       let groupData: { _id: string; name: string; image: string | null } | null = null;
       if (row.group_id) {
@@ -192,3 +192,4 @@ export async function DELETE(
     );
   }
 }
+

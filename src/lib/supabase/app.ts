@@ -1,17 +1,11 @@
-import crypto from "crypto";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
+import { newAppId } from "@/lib/ids";
 
 export function requireSupabaseAdmin() {
-  const supabase = getSupabaseAdminClient();
-  if (!supabase) {
-    throw new Error("Supabase service client is not configured");
-  }
-  return supabase;
+  return getSupabaseAdminClient();
 }
 
-export function newAppId(): string {
-  return crypto.randomBytes(12).toString("hex");
-}
+export { newAppId };
 
 export function mapUserRow(row: any) {
   if (!row) {
@@ -39,4 +33,3 @@ export function mapUserRow(row: any) {
     updatedAt: row.updated_at,
   };
 }
-

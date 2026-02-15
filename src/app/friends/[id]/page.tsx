@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useSession } from "next-auth/react";
+import { useSession } from "@/lib/auth/react-session";
 import { useRouter, useParams } from "next/navigation";
 import Link from "next/link";
 import AppShell from "@/components/layout/AppShell";
@@ -415,7 +415,7 @@ export default function FriendProfilePage() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="h-64">
+                <div className="h-64 min-h-[256px] min-w-0 w-full">
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={stats.monthlyTrend}>
                       <CartesianGrid strokeDasharray="3 3" />
@@ -438,7 +438,7 @@ export default function FriendProfilePage() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="h-64">
+                <div className="h-64 min-h-[256px] min-w-0 w-full">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
                       <Pie

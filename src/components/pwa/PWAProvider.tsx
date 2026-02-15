@@ -36,8 +36,8 @@ interface PWAProviderProps {
 
 export function PWAProvider({ children }: PWAProviderProps) {
   // Network status
-  const [isOnline, setIsOnline] = useState(typeof window !== 'undefined' ? navigator.onLine : true);
-  const [isOffline, setIsOffline] = useState(typeof window !== 'undefined' ? !navigator.onLine : false);
+  const [isOnline, setIsOnline] = useState(true);
+  const [isOffline, setIsOffline] = useState(false);
 
   // Sync status
   const [isSyncing, setIsSyncing] = useState(false);
@@ -62,12 +62,14 @@ export function PWAProvider({ children }: PWAProviderProps) {
     // Only run on client side
     if (typeof window === 'undefined') return;
 
+    setIsOnline(navigator.onLine);
+    setIsOffline(!navigator.onLine);
     initializePWA();
-    initializeNetworkListeners();
+    const cleanup = initializeNetworkListeners();
     initializeSyncStatus();
 
     return () => {
-      cleanupNetworkListeners();
+      cleanup?.();
     };
   }, []);
 
@@ -105,10 +107,6 @@ export function PWAProvider({ children }: PWAProviderProps) {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
-  };
-
-  const cleanupNetworkListeners = () => {
-    // Cleanup is handled in useEffect return
   };
 
   const initializeSyncStatus = async () => {

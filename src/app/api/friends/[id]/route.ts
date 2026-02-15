@@ -160,7 +160,7 @@ export async function GET(
       const userGroupIds = new Set((userMemberships || []).map((row: any) => String(row.group_id)));
       const commonGroupIds = (friendMemberships || [])
         .map((row: any) => String(row.group_id))
-        .filter((groupId) => userGroupIds.has(groupId));
+        .filter((groupId: string) => userGroupIds.has(groupId));
 
       if (commonGroupIds.length > 0) {
         const { data: groups, error: groupsError } = await supabase

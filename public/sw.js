@@ -114,6 +114,11 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(request.url);
 
+  // Let the browser handle Next.js build assets so deploys don't serve stale chunks.
+  if (url.pathname.startsWith('/_next/')) {
+    return;
+  }
+
   // Handle different types of requests
   if (url.pathname.startsWith('/api/')) {
     event.respondWith(handleApiRequest(request));

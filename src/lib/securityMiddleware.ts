@@ -8,8 +8,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { checkRateLimit, createRateLimitResponse, RATE_LIMITS } from "@/lib/rateLimit";
 import { validateCsrfToken, createCsrfErrorResponse } from "@/lib/csrf";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
+import { getServerAppUser } from "@/lib/auth/server-session";
 
 /**
  * Apply rate limiting to a route handler
@@ -140,9 +139,9 @@ export async function securityMiddleware(
  * // Use user.id in your route logic
  */
 export async function withAuth(request: NextRequest) {
-  const session = await getServerSession(authOptions);
+  const user = await getServerAppUser(request);
 
-  if (!session?.user?.id) {
+  if (!user?.id) {
     return {
       user: null,
       error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
@@ -153,7 +152,7 @@ export async function withAuth(request: NextRequest) {
   const rateLimitResult = await applyRateLimit(
     request,
     RATE_LIMITS.api,
-    session.user.id
+    user.id
   );
 
   if (!rateLimitResult.allowed) {
@@ -164,7 +163,12 @@ export async function withAuth(request: NextRequest) {
   }
 
   return {
-    user: session.user,
+    user: {
+      id: user.id,
+      email: user.email || null,
+      name: user.name || null,
+      role: user.role || "user",
+    },
     error: null,
     headers: rateLimitResult.headers,
   };

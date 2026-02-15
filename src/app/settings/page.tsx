@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useSession, signOut } from "next-auth/react";
+import { useSession, signOut } from "@/lib/auth/react-session";
 import AppShell from "@/components/layout/AppShell";
 import { useTheme } from "@/contexts/ThemeContext";
 import Card, { CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
@@ -727,3 +727,4 @@ export default function SettingsPage() {
     </AppShell>
   );
 }
+
