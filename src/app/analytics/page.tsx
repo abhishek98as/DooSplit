@@ -347,8 +347,8 @@ export default function AnalyticsPage() {
               <CardTitle>Monthly Spending Trend</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="h-80 min-h-[320px] min-w-0 w-full">
-                <ResponsiveContainer width="100%" height="100%" minWidth={280} minHeight={280}>
+              <div className="min-w-0 w-full">
+                <ResponsiveContainer width="100%" height={320} minWidth={280}>
                   <LineChart data={lineChartData}>
                     <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
                     <XAxis
@@ -390,8 +390,8 @@ export default function AnalyticsPage() {
               <CardTitle>Spending by Category</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="h-80 min-h-[320px] min-w-0 w-full">
-                <ResponsiveContainer width="100%" height="100%" minWidth={280} minHeight={280}>
+              <div className="min-w-0 w-full">
+                <ResponsiveContainer width="100%" height={320} minWidth={280}>
                   <RechartsPieChart>
                     <Pie
                       data={pieChartData}
