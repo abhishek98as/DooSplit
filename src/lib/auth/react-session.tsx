@@ -225,6 +225,9 @@ function toErrorMessage(error: unknown): string {
   if (code === "auth/invalid-credential") {
     return "Invalid email or password";
   }
+  if (code === "auth/invalid-login-credentials") {
+    return "Invalid email or password";
+  }
   if (code === "auth/user-not-found") {
     return "Invalid email or password";
   }
