@@ -21,13 +21,36 @@ import {
   type User as FirebaseUser,
 } from "firebase/auth";
 
+function normalizeEnvValue(value: string | undefined): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const hasDoubleQuotes = trimmed.startsWith('"') && trimmed.endsWith('"');
+  const hasSingleQuotes = trimmed.startsWith("'") && trimmed.endsWith("'");
+  if (hasDoubleQuotes || hasSingleQuotes) {
+    return trimmed.slice(1, -1).trim() || undefined;
+  }
+
+  return trimmed;
+}
+
+function readPublicEnv(name: string): string | undefined {
+  return normalizeEnvValue(process.env[name]);
+}
+
 function resolveProjectId(): string | undefined {
-  const explicit = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID?.trim();
+  const explicit = readPublicEnv("NEXT_PUBLIC_FIREBASE_PROJECT_ID");
   if (explicit) {
     return explicit;
   }
 
-  const authDomain = process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN?.trim();
+  const authDomain = readPublicEnv("NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN");
   if (!authDomain) {
     return undefined;
   }
@@ -37,7 +60,7 @@ function resolveProjectId(): string | undefined {
 }
 
 function resolveStorageBucket(projectId?: string): string | undefined {
-  const explicit = process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET?.trim();
+  const explicit = readPublicEnv("NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET");
   if (explicit) {
     return explicit.replace(/^gs:\/\//, "");
   }
@@ -52,13 +75,13 @@ function resolveStorageBucket(projectId?: string): string | undefined {
 const resolvedProjectId = resolveProjectId();
 
 const firebaseConfig = {
-  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
+  apiKey: readPublicEnv("NEXT_PUBLIC_FIREBASE_API_KEY"),
+  authDomain: readPublicEnv("NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN"),
   projectId: resolvedProjectId,
   storageBucket: resolveStorageBucket(resolvedProjectId),
-  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
-  measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID,
+  messagingSenderId: readPublicEnv("NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID"),
+  appId: readPublicEnv("NEXT_PUBLIC_FIREBASE_APP_ID"),
+  measurementId: readPublicEnv("NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID"),
 };
 
 // Initialize Firebase (singleton)
@@ -67,7 +90,7 @@ const auth = getAuth(app);
 const googleProvider = new GoogleAuthProvider();
 
 const firestoreDatabaseId =
-  process.env.NEXT_PUBLIC_FIREBASE_DATABASE_ID?.trim() ||
+  readPublicEnv("NEXT_PUBLIC_FIREBASE_DATABASE_ID") ||
   resolvedProjectId ||
   "(default)";
 

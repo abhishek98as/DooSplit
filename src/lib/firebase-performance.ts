@@ -11,15 +11,25 @@ let initialized = false;
 let fetchPatched = false;
 let appStartupTrace: any = null;
 
+function readFlag(name: string): boolean {
+  return String(process.env[name] || "").trim() === "true";
+}
+
+function hasCoreFirebaseClientConfig(): boolean {
+  const options = app.options;
+  return Boolean(
+    String(options.apiKey || "").trim() &&
+      String(options.appId || "").trim() &&
+      String(options.projectId || "").trim()
+  );
+}
+
 function canEnablePerformance(): boolean {
   if (typeof window === "undefined") {
     return false;
   }
 
-  return (
-    process.env.NODE_ENV === "production" ||
-    process.env.NEXT_PUBLIC_ENABLE_PERFORMANCE_MONITORING === "true"
-  );
+  return readFlag("NEXT_PUBLIC_ENABLE_PERFORMANCE_MONITORING");
 }
 
 function safeTraceName(input: string): string {
@@ -31,7 +41,7 @@ function safeTraceName(input: string): string {
 }
 
 async function ensurePerfReady(): Promise<{ mod: PerfModule; perf: any } | null> {
-  if (!canEnablePerformance()) {
+  if (!canEnablePerformance() || !hasCoreFirebaseClientConfig()) {
     return null;
   }
 

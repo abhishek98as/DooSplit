@@ -62,6 +62,16 @@ export async function validateAppCheckRequest(
       appId: decoded.appId,
     };
   } catch (error: any) {
+    if (!required) {
+      // In non-enforced mode, invalid/malformed tokens should not block user requests.
+      return {
+        ok: true,
+        required,
+        tokenPresent: true,
+        error: error?.message || "Invalid App Check token",
+      };
+    }
+
     return {
       ok: false,
       required,

@@ -21,9 +21,11 @@ export async function initializeFirebaseAppCheck(): Promise<any> {
 
   const siteKey = getSiteKey();
   if (!siteKey) {
-    console.warn(
-      "Firebase App Check site key is not configured (NEXT_PUBLIC_FIREBASE_APP_CHECK_SITE_KEY)"
-    );
+    if (process.env.NODE_ENV !== "production") {
+      console.warn(
+        "Firebase App Check site key is not configured (NEXT_PUBLIC_FIREBASE_APP_CHECK_SITE_KEY)"
+      );
+    }
     return null;
   }
 
