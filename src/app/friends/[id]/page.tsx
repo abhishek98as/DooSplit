@@ -416,7 +416,7 @@ export default function FriendProfilePage() {
               </CardHeader>
               <CardContent>
                 <div className="h-64 min-h-[256px] min-w-0 w-full">
-                  <ResponsiveContainer width="100%" height="100%">
+                  <ResponsiveContainer width="100%" height="100%" minWidth={240} minHeight={240}>
                     <LineChart data={stats.monthlyTrend}>
                       <CartesianGrid strokeDasharray="3 3" />
                       <XAxis dataKey="month" />
@@ -439,7 +439,7 @@ export default function FriendProfilePage() {
               </CardHeader>
               <CardContent>
                 <div className="h-64 min-h-[256px] min-w-0 w-full">
-                  <ResponsiveContainer width="100%" height="100%">
+                  <ResponsiveContainer width="100%" height="100%" minWidth={240} minHeight={240}>
                     <PieChart>
                       <Pie
                         data={stats.categoryBreakdown}

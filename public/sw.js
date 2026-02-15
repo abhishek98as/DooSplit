@@ -1,8 +1,8 @@
 // Enhanced Service Worker for DooSplit PWA
-const CACHE_NAME = 'doosplit-v4';
-const STATIC_CACHE = 'doosplit-static-v4';
-const API_CACHE = 'doosplit-api-v4';
-const IMAGE_CACHE = 'doosplit-images-v4';
+const CACHE_NAME = 'doosplit-v5';
+const STATIC_CACHE = 'doosplit-static-v5';
+const API_CACHE = 'doosplit-api-v5';
+const IMAGE_CACHE = 'doosplit-images-v5';
 
 // Cache strategies
 const CACHE_STRATEGIES = {
@@ -15,8 +15,7 @@ const CACHE_STRATEGIES = {
 // Static assets to cache immediately
 const STATIC_ASSETS = [
   '/manifest.json',
-  '/logo.webp',
-  '/favicon.ico'
+  '/logo.webp'
 ];
 
 // API routes that should be cached
@@ -55,16 +54,32 @@ function shouldHandleRequest(request) {
   }
 }
 
+async function precacheStaticAssets() {
+  const cache = await caches.open(STATIC_CACHE);
+  const results = await Promise.allSettled(
+    STATIC_ASSETS.map(async (asset) => {
+      const request = new Request(asset, { cache: 'reload' });
+      const response = await fetch(request);
+      if (!response.ok) {
+        throw new Error(`Pre-cache failed for ${asset}: ${response.status}`);
+      }
+      await cache.put(request, response.clone());
+    })
+  );
+
+  const failures = results.filter((result) => result.status === 'rejected');
+  if (failures.length > 0) {
+    console.warn('Service Worker: Some static assets failed to cache', failures.length);
+  }
+}
+
 // Install Service Worker
 self.addEventListener('install', (event) => {
   console.log('Service Worker: Install event');
   event.waitUntil(
     Promise.all([
       // Cache static assets
-      caches.open(STATIC_CACHE).then(cache => {
-        console.log('Service Worker: Caching static assets');
-        return cache.addAll(STATIC_ASSETS);
-      }),
+      precacheStaticAssets(),
 
       // Create other caches
       caches.open(API_CACHE),

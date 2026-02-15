@@ -95,7 +95,7 @@ export interface MetadataRecord {
 
 // Database configuration
 const DB_NAME = 'doosplit-db';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 const STORES = {
   expenses: 'expenses',
@@ -104,6 +104,15 @@ const STORES = {
   groups: 'groups',
   syncQueue: 'syncQueue',
   metadata: 'metadata',
+} as const;
+
+const STORE_KEY_PATHS = {
+  expenses: '_id',
+  settlements: '_id',
+  friends: 'id',
+  groups: '_id',
+  syncQueue: 'id',
+  metadata: 'key',
 } as const;
 
 const INDEXES = {
@@ -172,19 +181,42 @@ class IndexedDB {
 
       request.onupgradeneeded = (event) => {
         const db = (event.target as IDBOpenDBRequest).result;
+        const transaction = (event.target as IDBOpenDBRequest).transaction;
 
-        // Create object stores
+        const ensureIndexes = (
+          store: IDBObjectStore,
+          storeIndexes: ReadonlyArray<{ name: string; keyPath: string }>
+        ) => {
+          storeIndexes.forEach(index => {
+            if (!store.indexNames.contains(index.name)) {
+              store.createIndex(index.name, index.keyPath);
+            }
+          });
+        };
+
+        // Create object stores and migrate invalid key paths.
         Object.entries(STORES).forEach(([key, storeName]) => {
+          const expectedKeyPath = STORE_KEY_PATHS[key as keyof typeof STORE_KEY_PATHS];
+          const storeIndexes = INDEXES[key as keyof typeof INDEXES];
+
+          if (db.objectStoreNames.contains(storeName)) {
+            const existingStore = transaction?.objectStore(storeName);
+            const existingKeyPath =
+              typeof existingStore?.keyPath === 'string' ? existingStore.keyPath : '';
+
+            // Recreate stores with incorrect key paths (old schema used _id for every store).
+            if (existingKeyPath !== expectedKeyPath) {
+              db.deleteObjectStore(storeName);
+            } else if (existingStore) {
+              ensureIndexes(existingStore, storeIndexes);
+            }
+          }
+
           if (!db.objectStoreNames.contains(storeName)) {
             const store = db.createObjectStore(storeName, {
-              keyPath: key === 'metadata' ? 'key' : '_id'
+              keyPath: expectedKeyPath
             });
-
-            // Create indexes
-            const storeIndexes = INDEXES[key as keyof typeof INDEXES];
-            storeIndexes.forEach(index => {
-              store.createIndex(index.name, index.keyPath);
-            });
+            ensureIndexes(store, storeIndexes);
 
             console.log(`IndexedDB: Created store '${storeName}'`);
           }

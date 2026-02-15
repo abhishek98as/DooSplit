@@ -20,6 +20,10 @@ function hasCoreFirebaseClientConfig(): boolean {
 // Initialize Firebase Analytics
 export const initializeAnalytics = async () => {
   try {
+    if (analytics) {
+      return analytics;
+    }
+
     if (
       typeof window !== "undefined" &&
       ENABLE_ANALYTICS &&
