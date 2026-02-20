@@ -1,6 +1,8 @@
 import { getAdminDb, FieldValue } from "./admin";
 import { COLLECTIONS } from "./collections";
 import { newAppId } from "@/lib/ids";
+import { groupMemberDocId } from "@/lib/social/keys";
+import { upsertBidirectionalFriendship } from "@/lib/social/friendship-store";
 
 export async function createExpenseInFirestore(expenseData: any, participants: any[]) {
   const db = getAdminDb();
@@ -45,8 +47,11 @@ export async function createGroupInFirestore(groupData: any, memberIds: string[]
   });
 
   for (const userId of memberIds) {
-    const memberRef = db.collection(COLLECTIONS.groupMembers).doc(newAppId());
+    const memberRef = db
+      .collection(COLLECTIONS.groupMembers)
+      .doc(groupMemberDocId(groupId, userId));
     batch.set(memberRef, {
+      id: memberRef.id,
       group_id: groupId,
       user_id: userId,
       role: userId === groupData.created_by ? "admin" : "member",
@@ -76,33 +81,20 @@ export async function createSettlementInFirestore(settlementData: any) {
 }
 
 export async function createFriendshipInFirestore(friendshipData: any) {
-  const db = getAdminDb();
-  const friendshipId = newAppId();
-  const reverseId = newAppId();
+  const userId = String(friendshipData?.user_id || "");
+  const friendId = String(friendshipData?.friend_id || "");
+  const requestedBy = String(friendshipData?.requested_by || userId);
 
-  const batch = db.batch();
+  if (!userId || !friendId || userId === friendId) {
+    throw new Error("Invalid friendship payload");
+  }
 
-  // Forward friendship
-  const forwardRef = db.collection(COLLECTIONS.friendships).doc(friendshipId);
-  batch.set(forwardRef, {
-    ...friendshipData,
-    id: friendshipId,
-    created_at: FieldValue.serverTimestamp(),
-    updated_at: FieldValue.serverTimestamp(),
+  const result = await upsertBidirectionalFriendship({
+    userId,
+    friendId,
+    status: friendshipData?.status || "pending",
+    requestedBy,
   });
 
-  // Reverse friendship
-  const reverseRef = db.collection(COLLECTIONS.friendships).doc(reverseId);
-  batch.set(reverseRef, {
-    user_id: friendshipData.friend_id,
-    friend_id: friendshipData.user_id,
-    status: friendshipData.status,
-    requested_by: friendshipData.requested_by,
-    id: reverseId,
-    created_at: FieldValue.serverTimestamp(),
-    updated_at: FieldValue.serverTimestamp(),
-  });
-
-  await batch.commit();
-  return friendshipId;
+  return result.forwardId;
 }

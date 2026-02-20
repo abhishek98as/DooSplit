@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { invalidateUsersCache } from "@/lib/cache";
 import { requireUser } from "@/lib/auth/require-user";
-import { newAppId, requireSupabaseAdmin } from "@/lib/supabase/app";
+import { requireSupabaseAdmin } from "@/lib/supabase/app";
+import { groupMemberDocId } from "@/lib/social/keys";
 
 function mapMembers(members: any[], usersMap: Map<string, any>) {
   return members.map((member: any) => {
@@ -116,7 +117,7 @@ export async function POST(
 
     const nowIso = new Date().toISOString();
     const { error: insertError } = await supabase.from("group_members").insert({
-      id: newAppId(),
+      id: groupMemberDocId(id, newMemberId),
       group_id: id,
       user_id: newMemberId,
       role: "member",

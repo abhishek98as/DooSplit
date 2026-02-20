@@ -2,9 +2,23 @@ import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import { sendInviteEmail } from "@/lib/email";
 import { requireUser } from "@/lib/auth/require-user";
-import { newAppId, requireSupabaseAdmin } from "@/lib/supabase/app";
+import { FieldValue, getAdminDb } from "@/lib/firestore/admin";
+import { invitationDocId, normalizeEmail } from "@/lib/social/keys";
+import {
+  getFriendshipStatus,
+  upsertBidirectionalFriendship,
+} from "@/lib/social/friendship-store";
+import { notifyFriendAccepted, notifyFriendRequest } from "@/lib/notificationService";
+import { invalidateUsersCache } from "@/lib/cache";
 
 export const dynamic = "force-dynamic";
+
+type InvitationMode =
+  | "invitation_created"
+  | "friend_request_created"
+  | "already_friends"
+  | "already_pending"
+  | "auto_accepted_pending";
 
 function toIso(value: unknown): string {
   if (!value) {
@@ -20,6 +34,15 @@ function toIso(value: unknown): string {
     return (value as any).toDate().toISOString();
   }
   return "";
+}
+
+function toMillis(value: unknown): number {
+  const iso = toIso(value);
+  if (!iso) {
+    return 0;
+  }
+  const ms = new Date(iso).getTime();
+  return Number.isFinite(ms) ? ms : 0;
 }
 
 function normalizeInvitation(invitation: any) {
@@ -47,6 +70,100 @@ function normalizeInvitation(invitation: any) {
   };
 }
 
+function modeResponse(
+  mode: InvitationMode,
+  message: string,
+  status = 200,
+  extra: Record<string, unknown> = {}
+) {
+  return NextResponse.json(
+    {
+      mode,
+      message,
+      ...extra,
+    },
+    { status }
+  );
+}
+
+async function findUserByEmailNormalized(
+  emailNormalized: string
+): Promise<Record<string, any> | null> {
+  const db = getAdminDb();
+  const [normalizedSnap, legacySnap] = await Promise.all([
+    db.collection("users").where("email_normalized", "==", emailNormalized).limit(1).get(),
+    db.collection("users").where("email", "==", emailNormalized).limit(1).get(),
+  ]);
+
+  const doc = !normalizedSnap.empty
+    ? normalizedSnap.docs[0]
+    : !legacySnap.empty
+    ? legacySnap.docs[0]
+    : null;
+
+  if (!doc) {
+    return null;
+  }
+
+  return {
+    id: doc.id,
+    ...(doc.data() || {}),
+  };
+}
+
+async function getLatestInvitationForInviterEmail(invitedBy: string, emailNormalized: string) {
+  const db = getAdminDb();
+  const deterministicId = invitationDocId(invitedBy, emailNormalized);
+
+  const [deterministicDoc, normalizedSnap, legacySnap] = await Promise.all([
+    db.collection("invitations").doc(deterministicId).get(),
+    db
+      .collection("invitations")
+      .where("invited_by", "==", invitedBy)
+      .where("email_normalized", "==", emailNormalized)
+      .limit(20)
+      .get(),
+    db
+      .collection("invitations")
+      .where("invited_by", "==", invitedBy)
+      .where("email", "==", emailNormalized)
+      .limit(20)
+      .get(),
+  ]);
+
+  const rows = new Map<string, any>();
+  const refs = new Map<string, any>();
+
+  if (deterministicDoc.exists) {
+    rows.set(deterministicDoc.id, {
+      id: deterministicDoc.id,
+      ...(deterministicDoc.data() || {}),
+    });
+    refs.set(deterministicDoc.id, deterministicDoc.ref);
+  }
+
+  for (const doc of [...normalizedSnap.docs, ...legacySnap.docs]) {
+    rows.set(doc.id, {
+      id: doc.id,
+      ...(doc.data() || {}),
+    });
+    refs.set(doc.id, doc.ref);
+  }
+
+  const values = Array.from(rows.values());
+  values.sort((left, right) => {
+    const leftMs = toMillis(left.updated_at || left.created_at);
+    const rightMs = toMillis(right.updated_at || right.created_at);
+    return rightMs - leftMs;
+  });
+
+  return {
+    deterministicId,
+    latest: values[0] || null,
+    refs,
+  };
+}
+
 export async function GET(request: NextRequest) {
   try {
     const auth = await requireUser(request);
@@ -54,20 +171,21 @@ export async function GET(request: NextRequest) {
       return auth.response as NextResponse;
     }
 
-    const supabase = requireSupabaseAdmin();
-    const { data: invitations, error } = await supabase
-      .from("invitations")
-      .select("*")
-      .eq("invited_by", auth.user.id)
-      .order("created_at", { ascending: false })
-      .limit(50);
+    const db = getAdminDb();
+    const invitationsSnap = await db
+      .collection("invitations")
+      .where("invited_by", "==", auth.user.id)
+      .orderBy("created_at", "desc")
+      .limit(50)
+      .get();
 
-    if (error) {
-      throw error;
-    }
+    const invitations = invitationsSnap.docs.map((doc) => ({
+      id: doc.id,
+      ...(doc.data() || {}),
+    }));
 
     return NextResponse.json(
-      { invitations: (invitations || []).map(normalizeInvitation) },
+      { invitations: invitations.map(normalizeInvitation) },
       { status: 200 }
     );
   } catch (error: any) {
@@ -87,7 +205,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const email = String(body?.email || "").toLowerCase().trim();
+    const email = normalizeEmail(body?.email || "");
 
     if (!email) {
       return NextResponse.json(
@@ -104,174 +222,230 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const supabase = requireSupabaseAdmin();
-    const { data: inviter, error: inviterError } = await supabase
-      .from("users")
-      .select("id,name,email")
-      .eq("id", auth.user.id)
-      .maybeSingle();
-    if (inviterError) {
-      throw inviterError;
-    }
-    if (!inviter) {
+    const db = getAdminDb();
+    const inviterDoc = await db.collection("users").doc(auth.user.id).get();
+    if (!inviterDoc.exists) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
-    if (String(inviter.email).toLowerCase() === email) {
+
+    const inviter = inviterDoc.data() || {};
+    if (normalizeEmail(inviter.email || "") === email) {
       return NextResponse.json(
         { error: "You cannot invite yourself" },
         { status: 400 }
       );
     }
 
-    const { data: existingUser } = await supabase
-      .from("users")
-      .select("id")
-      .eq("email", email)
-      .maybeSingle();
+    const existingUser = await findUserByEmailNormalized(email);
     if (existingUser?.id) {
-      return NextResponse.json(
+      const existingUserId = String(existingUser.id);
+      if (!existingUserId || existingUserId === auth.user.id) {
+        return NextResponse.json(
+          { error: "You cannot invite yourself" },
+          { status: 400 }
+        );
+      }
+
+      const inviterId = auth.user.id;
+      const inviterName = String(inviter.name || auth.user.name || "Someone");
+      const friendshipStatus = await getFriendshipStatus(inviterId, existingUserId);
+
+      if (friendshipStatus.status === "accepted") {
+        return modeResponse(
+          "already_friends",
+          "You are already friends with this user.",
+          200,
+          {
+            friend: {
+              id: existingUserId,
+              name: String(existingUser.name || "Unknown"),
+              email: String(existingUser.email || email),
+            },
+          }
+        );
+      }
+
+      if (friendshipStatus.status === "pending") {
+        const reversePending =
+          friendshipStatus.reverse &&
+          String(friendshipStatus.reverse.data.status || "") === "pending" &&
+          String(friendshipStatus.reverse.data.requested_by || "") === existingUserId;
+
+        if (reversePending) {
+          await upsertBidirectionalFriendship({
+            userId: inviterId,
+            friendId: existingUserId,
+            status: "accepted",
+            requestedBy: existingUserId,
+          });
+
+          try {
+            await notifyFriendAccepted(
+              { id: inviterId, name: inviterName },
+              existingUserId
+            );
+          } catch (notifError) {
+            console.error("Failed to send auto-accept notification:", notifError);
+          }
+
+          await invalidateUsersCache(
+            [inviterId, existingUserId],
+            [
+              "friends",
+              "activities",
+              "dashboard-activity",
+              "friend-transactions",
+              "friend-details",
+              "analytics",
+            ]
+          );
+
+          return modeResponse(
+            "auto_accepted_pending",
+            "Pending request already existed. Friendship accepted automatically.",
+            200,
+            {
+              friend: {
+                id: existingUserId,
+                name: String(existingUser.name || "Unknown"),
+                email: String(existingUser.email || email),
+              },
+            }
+          );
+        }
+
+        return modeResponse(
+          "already_pending",
+          "A friend request is already pending for this user.",
+          200,
+          {
+            friend: {
+              id: existingUserId,
+              name: String(existingUser.name || "Unknown"),
+              email: String(existingUser.email || email),
+            },
+          }
+        );
+      }
+
+      await upsertBidirectionalFriendship({
+        userId: inviterId,
+        friendId: existingUserId,
+        status: "pending",
+        requestedBy: inviterId,
+      });
+
+      try {
+        await notifyFriendRequest(
+          {
+            id: inviterId,
+            name: inviterName,
+          },
+          existingUserId
+        );
+      } catch (notifError) {
+        console.error("Failed to send friend request notification:", notifError);
+      }
+
+      await invalidateUsersCache(
+        [inviterId, existingUserId],
+        [
+          "friends",
+          "activities",
+          "dashboard-activity",
+          "friend-transactions",
+          "friend-details",
+          "analytics",
+        ]
+      );
+
+      return modeResponse(
+        "friend_request_created",
+        "User is already on DooSplit. Friend request sent successfully.",
+        201,
         {
-          error:
-            "This user is already registered on DooSplit. Send them a friend request instead!",
-        },
+          friend: {
+            id: existingUserId,
+            name: String(existingUser.name || "Unknown"),
+            email: String(existingUser.email || email),
+          },
+        }
+      );
+    }
+
+    const { deterministicId, latest, refs } = await getLatestInvitationForInviterEmail(
+      auth.user.id,
+      email
+    );
+
+    if (latest?.id && String(latest.status || "") === "accepted") {
+      return NextResponse.json(
+        { error: "This invitation has already been accepted." },
         { status: 409 }
       );
     }
 
-    const { data: latestInvitation } = await supabase
-      .from("invitations")
-      .select("*")
-      .eq("invited_by", auth.user.id)
-      .eq("email", email)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (latestInvitation?.id) {
-      if (String(latestInvitation.status || "") === "accepted") {
-        return NextResponse.json(
-          { error: "This invitation has already been accepted." },
-          { status: 409 }
-        );
-      }
-
-      const nowIso = new Date().toISOString();
-      const refreshedExpiresAt = new Date(
-        Date.now() + 7 * 24 * 60 * 60 * 1000
-      ).toISOString();
-      const invitationToken = String(
-        latestInvitation.token || crypto.randomBytes(32).toString("hex")
-      );
-
-      const { data: refreshedInvitation, error: refreshError } = await supabase
-        .from("invitations")
-        .update({
-          status: "pending",
-          token: invitationToken,
-          expires_at: refreshedExpiresAt,
-          updated_at: nowIso,
-        })
-        .eq("id", latestInvitation.id)
-        .select("*")
-        .maybeSingle();
-
-      if (refreshError) {
-        throw refreshError;
-      }
-
-      const invitationToSend = refreshedInvitation || {
-        ...latestInvitation,
-        status: "pending",
-        token: invitationToken,
-        expires_at: refreshedExpiresAt,
-        updated_at: nowIso,
-      };
-
-      const appUrl =
-        process.env.NEXT_PUBLIC_APP_URL ||
-        process.env.NEXTAUTH_URL ||
-        "http://localhost:3000";
-      const inviteLink = `${appUrl}/invite/${String(
-        invitationToSend.token || invitationToken
-      )}`;
-
-      try {
-        await sendInviteEmail({
-          to: email,
-          inviterName: inviter.name || "A friend",
-          inviteLink,
-        });
-      } catch (emailError: any) {
-        console.error("Email resend error:", emailError);
-        return NextResponse.json(
-          {
-            message:
-              "Invitation refreshed but email could not be sent. Share the link manually.",
-            invitation: {
-              ...normalizeInvitation(invitationToSend),
-              inviteLink,
-            },
-            emailSent: false,
-            reinvited: true,
-          },
-          { status: 200 }
-        );
-      }
-
-      return NextResponse.json(
-        {
-          message: "Invitation resent successfully!",
-          invitation: {
-            ...normalizeInvitation(invitationToSend),
-            inviteLink,
-          },
-          emailSent: true,
-          reinvited: true,
-        },
-        { status: 200 }
-      );
-    }
-
-    const token = crypto.randomBytes(32).toString("hex");
     const nowIso = new Date().toISOString();
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-    const invitationId = newAppId();
+    const refreshedExpiresAt = new Date(
+      Date.now() + 7 * 24 * 60 * 60 * 1000
+    ).toISOString();
+    const invitationToken = String(
+      latest?.token || crypto.randomBytes(32).toString("hex")
+    );
 
-    const { data: invitation, error: inviteError } = await supabase
-      .from("invitations")
-      .insert({
-        id: invitationId,
+    const createdAt = String(latest?.created_at || nowIso);
+    const invitationRef = db.collection("invitations").doc(deterministicId);
+
+    await invitationRef.set(
+      {
+        id: deterministicId,
         invited_by: auth.user.id,
         email,
-        token,
+        email_normalized: email,
+        token: invitationToken,
         status: "pending",
-        created_at: nowIso,
+        created_at: createdAt,
         updated_at: nowIso,
-        expires_at: expiresAt,
-      })
-      .select("*")
-      .single();
+        expires_at: refreshedExpiresAt,
+        _updated_at: FieldValue.serverTimestamp(),
+        ...(latest?.id ? {} : { _created_at: FieldValue.serverTimestamp() }),
+      },
+      { merge: true }
+    );
 
-    if (inviteError || !invitation) {
-      throw inviteError || new Error("Failed to create invitation");
+    const cleanupBatch = db.batch();
+    for (const [rowId, ref] of refs.entries()) {
+      if (rowId !== deterministicId) {
+        cleanupBatch.delete(ref);
+      }
     }
+    if (refs.size > 1 || (refs.size === 1 && !refs.has(deterministicId))) {
+      await cleanupBatch.commit();
+    }
+
+    const invitationDoc = await invitationRef.get();
+    const invitation = {
+      id: invitationDoc.id,
+      ...(invitationDoc.data() || {}),
+    };
 
     const appUrl =
       process.env.NEXT_PUBLIC_APP_URL ||
       process.env.NEXTAUTH_URL ||
       "http://localhost:3000";
-    const inviteLink = `${appUrl}/invite/${token}`;
+    const inviteLink = `${appUrl}/invite/${invitationToken}`;
 
     try {
       await sendInviteEmail({
         to: email,
-        inviterName: inviter.name || "A friend",
+        inviterName: String(inviter.name || "A friend"),
         inviteLink,
       });
     } catch (emailError: any) {
       console.error("Email send error:", emailError);
       return NextResponse.json(
         {
+          mode: "invitation_created",
           message:
             "Invitation created but email could not be sent. Share the link manually.",
           invitation: {
@@ -279,21 +453,26 @@ export async function POST(request: NextRequest) {
             inviteLink,
           },
           emailSent: false,
+          reinvited: Boolean(latest?.id),
         },
-        { status: 201 }
+        { status: latest?.id ? 200 : 201 }
       );
     }
 
     return NextResponse.json(
       {
-        message: "Invitation sent successfully!",
+        mode: "invitation_created",
+        message: latest?.id
+          ? "Invitation resent successfully!"
+          : "Invitation sent successfully!",
         invitation: {
           ...normalizeInvitation(invitation),
           inviteLink,
         },
         emailSent: true,
+        reinvited: Boolean(latest?.id),
       },
-      { status: 201 }
+      { status: latest?.id ? 200 : 201 }
     );
   } catch (error: any) {
     console.error("Send invitation error:", error);

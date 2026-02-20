@@ -267,6 +267,44 @@ export default function FriendsPage() {
         return;
       }
 
+      const mode = String(data.mode || "");
+      if (mode === "friend_request_created") {
+        setInviteResult({
+          type: "success",
+          message: `User already has DooSplit. Friend request sent to ${targetEmail}!`,
+        });
+        setInviteEmail("");
+        fetchFriends();
+        fetchRequests();
+        return;
+      }
+      if (mode === "already_friends") {
+        setInviteResult({
+          type: "success",
+          message: "You are already friends with this user.",
+        });
+        setInviteEmail("");
+        return;
+      }
+      if (mode === "already_pending") {
+        setInviteResult({
+          type: "success",
+          message: "A friend request is already pending for this user.",
+        });
+        setInviteEmail("");
+        return;
+      }
+      if (mode === "auto_accepted_pending") {
+        setInviteResult({
+          type: "success",
+          message: "Pending request was auto-accepted. You are now friends.",
+        });
+        setInviteEmail("");
+        fetchFriends();
+        fetchRequests();
+        return;
+      }
+
       setInviteResult({
         type: "success",
         message: data.emailSent

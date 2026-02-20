@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sendInviteEmail } from "@/lib/email";
 import { requireUser } from "@/lib/auth/require-user";
-import { requireSupabaseAdmin } from "@/lib/supabase/app";
+import { FieldValue, getAdminDb } from "@/lib/firestore/admin";
+import { invitationDocId, normalizeEmail } from "@/lib/social/keys";
 
 export const dynamic = "force-dynamic";
 
@@ -46,6 +47,99 @@ function normalizeInvitation(invitation: any) {
   };
 }
 
+async function resolveInvitationByAnyId(invitationId: string): Promise<{
+  id: string;
+  data: Record<string, any>;
+} | null> {
+  const db = getAdminDb();
+  const directDoc = await db.collection("invitations").doc(invitationId).get();
+  if (directDoc.exists) {
+    return {
+      id: directDoc.id,
+      data: {
+        id: directDoc.id,
+        ...(directDoc.data() || {}),
+      },
+    };
+  }
+
+  const fallbackSnap = await db
+    .collection("invitations")
+    .where("id", "==", invitationId)
+    .limit(1)
+    .get();
+  if (fallbackSnap.empty) {
+    return null;
+  }
+
+  const doc = fallbackSnap.docs[0];
+  return {
+    id: doc.id,
+    data: {
+      id: doc.id,
+      ...(doc.data() || {}),
+    },
+  };
+}
+
+async function findUserByEmailNormalized(emailNormalized: string) {
+  const db = getAdminDb();
+  const [normalizedSnap, legacySnap] = await Promise.all([
+    db.collection("users").where("email_normalized", "==", emailNormalized).limit(1).get(),
+    db.collection("users").where("email", "==", emailNormalized).limit(1).get(),
+  ]);
+
+  const doc = !normalizedSnap.empty
+    ? normalizedSnap.docs[0]
+    : !legacySnap.empty
+    ? legacySnap.docs[0]
+    : null;
+
+  if (!doc) {
+    return null;
+  }
+  return {
+    id: doc.id,
+    ...(doc.data() || {}),
+  };
+}
+
+async function writeCanonicalInvitation(
+  rowId: string,
+  rowData: Record<string, any>,
+  patch: Record<string, unknown>
+): Promise<Record<string, any>> {
+  const db = getAdminDb();
+  const invitedBy = String(rowData.invited_by || "");
+  const emailNormalized = normalizeEmail(rowData.email_normalized || rowData.email || "");
+  const targetId =
+    invitedBy && emailNormalized ? invitationDocId(invitedBy, emailNormalized) : rowId;
+  const nowIso = new Date().toISOString();
+
+  const nextData = {
+    ...rowData,
+    ...patch,
+    id: targetId,
+    email: String(rowData.email || emailNormalized),
+    email_normalized: emailNormalized,
+    updated_at: nowIso,
+    _updated_at: FieldValue.serverTimestamp(),
+  };
+
+  const targetRef = db.collection("invitations").doc(targetId);
+  await targetRef.set(nextData, { merge: true });
+
+  if (rowId !== targetId) {
+    await db.collection("invitations").doc(rowId).delete();
+  }
+
+  const updatedDoc = await targetRef.get();
+  return {
+    id: updatedDoc.id,
+    ...(updatedDoc.data() || {}),
+  };
+}
+
 export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -63,18 +157,13 @@ export async function PUT(
       return NextResponse.json({ error: "Invalid action" }, { status: 400 });
     }
 
-    const supabase = requireSupabaseAdmin();
-    const { data: invitation, error: invitationError } = await supabase
-      .from("invitations")
-      .select("*")
-      .eq("id", id)
-      .eq("invited_by", auth.user.id)
-      .maybeSingle();
-
-    if (invitationError) {
-      throw invitationError;
+    const resolved = await resolveInvitationByAnyId(id);
+    if (!resolved) {
+      return NextResponse.json({ error: "Invitation not found" }, { status: 404 });
     }
-    if (!invitation) {
+
+    const invitation = resolved.data;
+    if (String(invitation.invited_by || "") !== auth.user.id) {
       return NextResponse.json({ error: "Invitation not found" }, { status: 404 });
     }
     if (invitation.status === "accepted") {
@@ -90,16 +179,14 @@ export async function PUT(
       );
     }
 
-    const { data: existingUser } = await supabase
-      .from("users")
-      .select("id")
-      .eq("email", invitation.email)
-      .maybeSingle();
+    const emailNormalized = normalizeEmail(
+      invitation.email_normalized || invitation.email || ""
+    );
+    const existingUser = await findUserByEmailNormalized(emailNormalized);
     if (existingUser?.id) {
-      await supabase
-        .from("invitations")
-        .update({ status: "accepted" })
-        .eq("id", invitation.id);
+      await writeCanonicalInvitation(resolved.id, invitation, {
+        status: "accepted",
+      });
       return NextResponse.json(
         { error: "This user has already registered" },
         { status: 400 }
@@ -107,45 +194,32 @@ export async function PUT(
     }
 
     const newExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-    const nowIso = new Date().toISOString();
-    const { data: updatedInvitation, error: updateError } = await supabase
-      .from("invitations")
-      .update({ expires_at: newExpiresAt, updated_at: nowIso })
-      .eq("id", invitation.id)
-      .select("*")
-      .maybeSingle();
+    const updatedInvitation = await writeCanonicalInvitation(resolved.id, invitation, {
+      status: "pending",
+      expires_at: newExpiresAt,
+    });
 
-    if (updateError) {
-      throw updateError;
-    }
-
-    const normalizedUpdatedInvitation = normalizeInvitation(
-      updatedInvitation || { ...invitation, expires_at: newExpiresAt, updated_at: nowIso }
-    );
-
-    const { data: inviter } = await supabase
-      .from("users")
-      .select("name")
-      .eq("id", auth.user.id)
-      .maybeSingle();
+    const db = getAdminDb();
+    const inviterDoc = await db.collection("users").doc(auth.user.id).get();
+    const inviterName = String(inviterDoc.data()?.name || "A friend");
 
     const appUrl =
       process.env.NEXT_PUBLIC_APP_URL ||
       process.env.NEXTAUTH_URL ||
       "http://localhost:3000";
-    const inviteLink = `${appUrl}/invite/${invitation.token}`;
+    const inviteLink = `${appUrl}/invite/${String(updatedInvitation.token || "")}`;
 
     try {
       await sendInviteEmail({
-        to: invitation.email,
-        inviterName: inviter?.name || "A friend",
+        to: emailNormalized,
+        inviterName,
         inviteLink,
       });
 
       return NextResponse.json(
         {
           message: "Invitation resent successfully!",
-          invitation: normalizedUpdatedInvitation,
+          invitation: normalizeInvitation(updatedInvitation),
           emailSent: true,
         },
         { status: 200 }
@@ -155,7 +229,7 @@ export async function PUT(
       return NextResponse.json(
         {
           message: "Invitation updated but email could not be sent",
-          invitation: normalizedUpdatedInvitation,
+          invitation: normalizeInvitation(updatedInvitation),
           emailSent: false,
         },
         { status: 200 }
@@ -181,18 +255,13 @@ export async function DELETE(
       return auth.response as NextResponse;
     }
 
-    const supabase = requireSupabaseAdmin();
-    const { data: invitation, error } = await supabase
-      .from("invitations")
-      .select("*")
-      .eq("id", id)
-      .eq("invited_by", auth.user.id)
-      .maybeSingle();
-
-    if (error) {
-      throw error;
+    const resolved = await resolveInvitationByAnyId(id);
+    if (!resolved) {
+      return NextResponse.json({ error: "Invitation not found" }, { status: 404 });
     }
-    if (!invitation) {
+
+    const invitation = resolved.data;
+    if (String(invitation.invited_by || "") !== auth.user.id) {
       return NextResponse.json({ error: "Invitation not found" }, { status: 404 });
     }
     if (invitation.status === "accepted") {
@@ -202,24 +271,14 @@ export async function DELETE(
       );
     }
 
-    const nowIso = new Date().toISOString();
-    const { data: cancelledInvitation, error: cancelError } = await supabase
-      .from("invitations")
-      .update({ status: "cancelled", updated_at: nowIso })
-      .eq("id", invitation.id)
-      .select("*")
-      .maybeSingle();
-
-    if (cancelError) {
-      throw cancelError;
-    }
+    const cancelledInvitation = await writeCanonicalInvitation(resolved.id, invitation, {
+      status: "cancelled",
+    });
 
     return NextResponse.json(
       {
         message: "Invitation cancelled successfully",
-        invitation: normalizeInvitation(
-          cancelledInvitation || { ...invitation, status: "cancelled", updated_at: nowIso }
-        ),
+        invitation: normalizeInvitation(cancelledInvitation),
       },
       { status: 200 }
     );

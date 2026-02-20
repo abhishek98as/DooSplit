@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { invalidateUsersCache } from "@/lib/cache";
 import { requireUser } from "@/lib/auth/require-user";
 import { mapUserRow, requireSupabaseAdmin } from "@/lib/supabase/app";
+import { normalizeName } from "@/lib/social/keys";
 
 export const dynamic = "force-dynamic";
 
@@ -59,7 +60,11 @@ export async function PUT(request: NextRequest) {
     } = body || {};
 
     const updatePayload: Record<string, any> = {};
-    if (name !== undefined) updatePayload.name = String(name).trim();
+    if (name !== undefined) {
+      const trimmedName = String(name).trim();
+      updatePayload.name = trimmedName;
+      updatePayload.name_normalized = normalizeName(trimmedName);
+    }
     if (phone !== undefined) updatePayload.phone = phone ? String(phone).trim() : null;
     if (profilePicture !== undefined) updatePayload.profile_picture = profilePicture || null;
     if (defaultCurrency !== undefined) updatePayload.default_currency = defaultCurrency;
@@ -112,4 +117,3 @@ export async function PUT(request: NextRequest) {
     );
   }
 }
-

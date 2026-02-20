@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireSupabaseAdmin } from "@/lib/supabase/app";
+import { getAdminDb } from "@/lib/firestore/admin";
 
 export const dynamic = "force-dynamic";
 
@@ -9,24 +9,25 @@ export async function GET(
 ) {
   try {
     const { token } = await params;
-    const supabase = requireSupabaseAdmin();
+    const db = getAdminDb();
 
-    const { data: invitation, error } = await supabase
-      .from("invitations")
-      .select("id,email,invited_by,status,expires_at,token")
-      .eq("token", token)
-      .maybeSingle();
+    const inviteSnap = await db
+      .collection("invitations")
+      .where("token", "==", token)
+      .limit(1)
+      .get();
 
-    if (error) {
-      throw error;
-    }
-    if (!invitation) {
+    if (inviteSnap.empty) {
       return NextResponse.json(
         { error: "Invitation not found", valid: false },
         { status: 404 }
       );
     }
-    if (invitation.status === "accepted") {
+
+    const inviteDoc = inviteSnap.docs[0];
+    const invitation = inviteDoc.data() || {};
+
+    if (String(invitation.status || "") === "accepted") {
       return NextResponse.json(
         { error: "This invitation has already been used", valid: false },
         { status: 410 }
@@ -39,17 +40,23 @@ export async function GET(
       );
     }
 
-    const { data: inviter } = await supabase
-      .from("users")
-      .select("id,name,email,profile_picture")
-      .eq("id", invitation.invited_by)
-      .maybeSingle();
+    const inviterId = String(invitation.invited_by || "");
+    let inviter: any = null;
+    if (inviterId) {
+      const inviterDoc = await db.collection("users").doc(inviterId).get();
+      if (inviterDoc.exists) {
+        inviter = {
+          id: inviterDoc.id,
+          ...(inviterDoc.data() || {}),
+        };
+      }
+    }
 
     return NextResponse.json(
       {
         valid: true,
         invitation: {
-          email: invitation.email,
+          email: String(invitation.email || ""),
           invitedBy: inviter
             ? {
                 _id: inviter.id,
@@ -58,7 +65,7 @@ export async function GET(
                 profilePicture: inviter.profile_picture || null,
               }
             : null,
-          expiresAt: invitation.expires_at,
+          expiresAt: invitation.expires_at || null,
         },
       },
       { status: 200 }

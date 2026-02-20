@@ -1,11 +1,100 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth/require-user";
-import { requireSupabaseAdmin } from "@/lib/supabase/app";
+import { getAdminDb } from "@/lib/firestore/admin";
+import { normalizeName } from "@/lib/social/keys";
 
 export const dynamic = "force-dynamic";
 
-function escapeLike(value: string): string {
-  return value.replace(/[%_]/g, "");
+function chunk<T>(values: T[], size: number): T[][] {
+  if (values.length === 0) {
+    return [];
+  }
+  const chunks: T[][] = [];
+  for (let i = 0; i < values.length; i += size) {
+    chunks.push(values.slice(i, i + size));
+  }
+  return chunks;
+}
+
+function uniqueStrings(values: Array<string | null | undefined>): string[] {
+  return Array.from(new Set(values.map((value) => String(value || "")).filter(Boolean)));
+}
+
+function compareStatusPriority(status: string): number {
+  if (status === "accepted") return 3;
+  if (status === "pending") return 2;
+  if (status === "rejected") return 1;
+  return 0;
+}
+
+async function getFriendshipStatuses(
+  userId: string,
+  candidateIds: string[]
+): Promise<Map<string, string>> {
+  const ids = uniqueStrings(candidateIds);
+  if (ids.length === 0) {
+    return new Map();
+  }
+
+  const db = getAdminDb();
+  const statuses = new Map<string, string>();
+  for (const idChunk of chunk(ids, 30)) {
+    const snap = await db
+      .collection("friendships")
+      .where("user_id", "==", userId)
+      .where("friend_id", "in", idChunk)
+      .get();
+    for (const doc of snap.docs) {
+      const row = doc.data() || {};
+      const friendId = String(row.friend_id || "");
+      const status = String(row.status || "none");
+      const existing = statuses.get(friendId);
+      if (!existing || compareStatusPriority(status) > compareStatusPriority(existing)) {
+        statuses.set(friendId, status);
+      }
+    }
+  }
+
+  return statuses;
+}
+
+async function searchUsers(query: string, limit = 10): Promise<any[]> {
+  const db = getAdminDb();
+  const term = normalizeName(query);
+  const max = `${term}\uf8ff`;
+  const isEmailQuery = term.includes("@");
+
+  if (isEmailQuery) {
+    const snap = await db
+      .collection("users")
+      .where("email_normalized", ">=", term)
+      .where("email_normalized", "<=", max)
+      .limit(limit)
+      .get();
+    return snap.docs.map((doc) => ({ id: doc.id, ...(doc.data() || {}) }));
+  }
+
+  const [nameSnap, emailSnap] = await Promise.all([
+    db
+      .collection("users")
+      .where("name_normalized", ">=", term)
+      .where("name_normalized", "<=", max)
+      .limit(limit)
+      .get(),
+    db
+      .collection("users")
+      .where("email_normalized", ">=", term)
+      .where("email_normalized", "<=", max)
+      .limit(limit)
+      .get(),
+  ]);
+
+  const dedup = new Map<string, any>();
+  for (const doc of [...nameSnap.docs, ...emailSnap.docs]) {
+    dedup.set(doc.id, { id: doc.id, ...(doc.data() || {}) });
+  }
+
+  return Array.from(dedup.values()).slice(0, limit);
 }
 
 export async function GET(request: NextRequest) {
@@ -14,10 +103,10 @@ export async function GET(request: NextRequest) {
     if (auth.response || !auth.user) {
       return auth.response as NextResponse;
     }
+    const userId = auth.user.id;
 
     const searchParams = request.nextUrl.searchParams;
     const query = (searchParams.get("q") || searchParams.get("query") || "").trim();
-
     if (!query || query.length < 2) {
       return NextResponse.json(
         { error: "Search query must be at least 2 characters" },
@@ -25,40 +114,19 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const supabase = requireSupabaseAdmin();
-    const safe = escapeLike(query);
-    const { data: users, error } = await supabase
-      .from("users")
-      .select("id,name,email,profile_picture")
-      .neq("id", auth.user.id)
-      .eq("is_dummy", false)
-      .eq("is_active", true)
-      .or(`name.ilike.%${safe}%,email.ilike.%${safe}%`)
-      .limit(10);
+    const candidateUsers = await searchUsers(query, 15);
+    const users = candidateUsers
+      .filter((user) => String(user.id) !== userId)
+      .filter((user) => Boolean(user.is_active !== false))
+      .filter((user) => !Boolean(user.is_dummy))
+      .slice(0, 10);
 
-    if (error) {
-      throw error;
-    }
+    const friendshipMap = await getFriendshipStatuses(
+      userId,
+      users.map((user) => String(user.id))
+    );
 
-    const userIds = (users || []).map((u: any) => String(u.id));
-    let friendshipMap = new Map<string, string>();
-    if (userIds.length > 0) {
-      const { data: friendships, error: friendshipError } = await supabase
-        .from("friendships")
-        .select("friend_id,status")
-        .eq("user_id", auth.user.id)
-        .in("friend_id", userIds);
-
-      if (friendshipError) {
-        throw friendshipError;
-      }
-
-      friendshipMap = new Map(
-        (friendships || []).map((f: any) => [String(f.friend_id), String(f.status)])
-      );
-    }
-
-    const usersWithStatus = (users || []).map((user: any) => ({
+    const usersWithStatus = users.map((user: any) => ({
       id: user.id,
       name: user.name,
       email: user.email,
@@ -75,4 +143,3 @@ export async function GET(request: NextRequest) {
     );
   }
 }
-

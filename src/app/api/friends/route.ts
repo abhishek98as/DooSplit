@@ -8,9 +8,13 @@ import {
 import { firestoreReadRepository } from "@/lib/data/firestore-adapter";
 import { getServerFirebaseUser } from "@/lib/auth/firebase-session";
 import { newAppId } from "@/lib/ids";
-import { createFriendshipInFirestore } from "@/lib/firestore/write-operations";
 import { notifyFriendRequest } from "@/lib/notificationService";
 import { FieldValue, getAdminDb } from "@/lib/firestore/admin";
+import { normalizeEmail, normalizeName } from "@/lib/social/keys";
+import {
+  getFriendshipStatus,
+  upsertBidirectionalFriendship,
+} from "@/lib/social/friendship-store";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -27,10 +31,6 @@ const FRIEND_CACHE_SCOPES = [
   "analytics",
 ];
 
-function normalizeEmail(value: unknown): string {
-  return String(value || "").trim().toLowerCase();
-}
-
 async function findUserByEmail(email: string) {
   const db = getAdminDb();
   const lowered = normalizeEmail(email);
@@ -40,7 +40,7 @@ async function findUserByEmail(email: string) {
 
   const snap = await db
     .collection("users")
-    .where("email", "==", lowered)
+    .where("email_normalized", "==", lowered)
     .limit(1)
     .get();
   if (!snap.empty) {
@@ -59,96 +59,6 @@ async function findUserByEmail(email: string) {
 
   const doc = fallback.docs[0];
   return { id: doc.id, ...(doc.data() || {}) };
-}
-
-async function getFriendshipPair(userId: string, friendId: string) {
-  const db = getAdminDb();
-  const [forwardSnap, reverseSnap] = await Promise.all([
-    db
-      .collection("friendships")
-      .where("user_id", "==", userId)
-      .where("friend_id", "==", friendId)
-      .limit(1)
-      .get(),
-    db
-      .collection("friendships")
-      .where("user_id", "==", friendId)
-      .where("friend_id", "==", userId)
-      .limit(1)
-      .get(),
-  ]);
-
-  return {
-    forward: forwardSnap.empty ? null : forwardSnap.docs[0],
-    reverse: reverseSnap.empty ? null : reverseSnap.docs[0],
-  };
-}
-
-async function upsertBidirectionalFriendship(
-  userId: string,
-  friendId: string,
-  status: "pending" | "accepted" | "rejected",
-  requestedBy: string
-) {
-  const db = getAdminDb();
-  const nowIso = new Date().toISOString();
-  const { forward, reverse } = await getFriendshipPair(userId, friendId);
-
-  const batch = db.batch();
-
-  if (forward) {
-    batch.set(
-      forward.ref,
-      {
-        status,
-        requested_by: requestedBy,
-        updated_at: nowIso,
-        _updated_at: FieldValue.serverTimestamp(),
-      },
-      { merge: true }
-    );
-  } else {
-    const forwardRef = db.collection("friendships").doc(newAppId());
-    batch.set(forwardRef, {
-      id: forwardRef.id,
-      user_id: userId,
-      friend_id: friendId,
-      status,
-      requested_by: requestedBy,
-      created_at: nowIso,
-      updated_at: nowIso,
-      _created_at: FieldValue.serverTimestamp(),
-      _updated_at: FieldValue.serverTimestamp(),
-    });
-  }
-
-  if (reverse) {
-    batch.set(
-      reverse.ref,
-      {
-        status,
-        requested_by: requestedBy,
-        updated_at: nowIso,
-        _updated_at: FieldValue.serverTimestamp(),
-      },
-      { merge: true }
-    );
-  } else {
-    const reverseRef = db.collection("friendships").doc(newAppId());
-    batch.set(reverseRef, {
-      id: reverseRef.id,
-      user_id: friendId,
-      friend_id: userId,
-      status,
-      requested_by: requestedBy,
-      created_at: nowIso,
-      updated_at: nowIso,
-      _created_at: FieldValue.serverTimestamp(),
-      _updated_at: FieldValue.serverTimestamp(),
-    });
-  }
-
-  await batch.commit();
 }
 
 export async function GET(request: NextRequest) {
@@ -237,7 +147,9 @@ export async function POST(request: NextRequest) {
       await db.collection("users").doc(dummyId).set({
         id: dummyId,
         name: trimmedName,
+        name_normalized: normalizeName(trimmedName),
         email: dummyEmail,
+        email_normalized: normalizeEmail(dummyEmail),
         is_dummy: true,
         created_by: userId,
         role: "user",
@@ -255,11 +167,11 @@ export async function POST(request: NextRequest) {
         _updated_at: FieldValue.serverTimestamp(),
       });
 
-      await createFriendshipInFirestore({
-        user_id: userId,
-        friend_id: dummyId,
+      await upsertBidirectionalFriendship({
+        userId,
+        friendId: dummyId,
         status: "accepted",
-        requested_by: userId,
+        requestedBy: userId,
       });
 
       await invalidateUsersCache([userId, dummyId], FRIEND_CACHE_SCOPES);
@@ -310,10 +222,8 @@ export async function POST(request: NextRequest) {
     }
 
     const friendId = String(friendUser.id);
-    const { forward, reverse } = await getFriendshipPair(userId, friendId);
-    const existingStatus = String(
-      forward?.data()?.status || reverse?.data()?.status || ""
-    );
+    const statusResult = await getFriendshipStatus(userId, friendId);
+    const existingStatus = statusResult.status;
 
     if (existingStatus === "accepted") {
       return NextResponse.json(
@@ -329,20 +239,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    let friendshipId = "";
-    if (existingStatus === "rejected") {
-      await upsertBidirectionalFriendship(userId, friendId, "pending", userId);
-      const updatedPair = await getFriendshipPair(userId, friendId);
-      friendshipId = String(updatedPair.forward?.id || updatedPair.reverse?.id || "");
-    } else {
-      const friendshipData = {
-        user_id: userId,
-        friend_id: friendId,
-        status: "pending",
-        requested_by: userId,
-      };
-      friendshipId = await createFriendshipInFirestore(friendshipData);
-    }
+    const friendshipWrite = await upsertBidirectionalFriendship({
+      userId,
+      friendId,
+      status: "pending",
+      requestedBy: userId,
+    });
+    const friendshipId = friendshipWrite.forwardId;
 
 
     try {

@@ -6,6 +6,7 @@ import {
   getSessionCookieOptions,
 } from "@/lib/auth/session-cookie";
 import { getServerAppUser } from "@/lib/auth/server-session";
+import { normalizeEmail, normalizeName } from "@/lib/social/keys";
 
 export const dynamic = "force-dynamic";
 
@@ -18,7 +19,9 @@ async function ensureUserDoc(decoded: { uid: string; email?: string; name?: stri
     await userRef.set({
       id: decoded.uid,
       email: decoded.email || "",
+      email_normalized: normalizeEmail(decoded.email || ""),
       name: decoded.name || "User",
+      name_normalized: normalizeName(decoded.name || "User"),
       phone: null,
       profile_picture: null,
       default_currency: "INR",

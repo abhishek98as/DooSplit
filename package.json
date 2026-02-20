@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "next lint",
     "test:firebase": "node scripts/test-firebase-connection.js",
-    "seed:firebase": "node scripts/seed-firebase.js"
+    "seed:firebase": "node scripts/seed-firebase.js",
+    "backfill:user-normalized": "node scripts/backfill-user-normalized-fields.js"
   },
   "dependencies": {
     "@types/bcryptjs": "^2.4.6",

@@ -7,7 +7,14 @@ import {
 } from "@/lib/cache";
 import { requireUser } from "@/lib/auth/require-user";
 import { notifyFriendAccepted } from "@/lib/notificationService";
-import { requireSupabaseAdmin } from "@/lib/supabase/app";
+import { getAdminDb } from "@/lib/firestore/admin";
+import {
+  deleteBidirectionalFriendship,
+  getFriendshipStatus,
+  getFriendshipPair,
+  resolveFriendshipPairByAnyId,
+  upsertBidirectionalFriendship,
+} from "@/lib/social/friendship-store";
 
 export const dynamic = "force-dynamic";
 
@@ -17,6 +24,46 @@ function toNum(value: any): number {
 
 function round2(value: number): number {
   return Number(value.toFixed(2));
+}
+
+function uniqueStrings(values: Array<string | null | undefined>): string[] {
+  return Array.from(new Set(values.map((value) => String(value || "")).filter(Boolean)));
+}
+
+function chunk<T>(values: T[], size: number): T[][] {
+  if (values.length === 0) {
+    return [];
+  }
+
+  const chunks: T[][] = [];
+  for (let i = 0; i < values.length; i += size) {
+    chunks.push(values.slice(i, i + size));
+  }
+  return chunks;
+}
+
+async function fetchDocsByIds(collection: string, ids: string[]): Promise<Map<string, any>> {
+  const uniqueIds = uniqueStrings(ids);
+  if (uniqueIds.length === 0) {
+    return new Map();
+  }
+
+  const db = getAdminDb();
+  const rows = new Map<string, any>();
+  for (const idChunk of chunk(uniqueIds, 200)) {
+    const refs = idChunk.map((id) => db.collection(collection).doc(id));
+    const docs = await db.getAll(...refs);
+    for (const doc of docs) {
+      if (doc.exists) {
+        rows.set(doc.id, {
+          id: doc.id,
+          ...(doc.data() || {}),
+        });
+      }
+    }
+  }
+
+  return rows;
 }
 
 export async function GET(
@@ -31,22 +78,12 @@ export async function GET(
     }
     const userId = auth.user.id;
     const friendId = id;
-    const supabase = requireSupabaseAdmin();
 
-    const { data: friendship, error: friendshipError } = await supabase
-      .from("friendships")
-      .select("id,created_at")
-      .or(
-        `and(user_id.eq.${userId},friend_id.eq.${friendId},status.eq.accepted),and(user_id.eq.${friendId},friend_id.eq.${userId},status.eq.accepted)`
-      )
-      .limit(1)
-      .maybeSingle();
-    if (friendshipError) {
-      throw friendshipError;
-    }
-    if (!friendship) {
+    const friendshipStatus = await getFriendshipStatus(userId, friendId);
+    if (friendshipStatus.status !== "accepted") {
       return NextResponse.json({ error: "Friend not found" }, { status: 404 });
     }
+    const friendship = friendshipStatus.forward || friendshipStatus.reverse;
 
     const cacheKey = buildUserScopedCacheKey(
       "friend-details",
@@ -55,28 +92,27 @@ export async function GET(
     );
 
     const payload = await getOrSetCacheJson(cacheKey, CACHE_TTL.activities, async () => {
-      const { data: friend, error: friendError } = await supabase
-        .from("users")
-        .select("id,name,email,profile_picture,created_at")
-        .eq("id", friendId)
-        .maybeSingle();
-      if (friendError) {
-        throw friendError;
-      }
-      if (!friend) {
+      const db = getAdminDb();
+      const friendDoc = await db.collection("users").doc(friendId).get();
+      if (!friendDoc.exists) {
         throw new Error("Friend not found");
       }
+      const friend: any = {
+        id: friendDoc.id,
+        ...(friendDoc.data() || {}),
+      };
 
-      const { data: pairParticipants, error: participantsError } = await supabase
-        .from("expense_participants")
-        .select("expense_id,user_id,paid_amount,owed_amount")
-        .in("user_id", [userId, friendId]);
-      if (participantsError) {
-        throw participantsError;
-      }
+      const pairParticipantsSnap = await db
+        .collection("expense_participants")
+        .where("user_id", "in", [userId, friendId])
+        .get();
+      const pairParticipants: any[] = pairParticipantsSnap.docs.map((doc) => ({
+        id: doc.id,
+        ...(doc.data() || {}),
+      }));
 
       const participantsByExpense = new Map<string, any[]>();
-      for (const participant of pairParticipants || []) {
+      for (const participant of pairParticipants) {
         const expenseId = String(participant.expense_id);
         const list = participantsByExpense.get(expenseId) || [];
         list.push(participant);
@@ -100,15 +136,13 @@ export async function GET(
 
       let pairExpenses: any[] = [];
       if (pairExpenseIds.length > 0) {
-        const { data: expenses, error: expensesError } = await supabase
-          .from("expenses")
-          .select("id,group_id,created_by,updated_at,is_deleted")
-          .in("id", pairExpenseIds)
-          .eq("is_deleted", false);
-        if (expensesError) {
-          throw expensesError;
+        const expensesById = await fetchDocsByIds("expenses", pairExpenseIds);
+        for (const expenseId of pairExpenseIds) {
+          const expense = expensesById.get(expenseId);
+          if (expense && !expense.is_deleted) {
+            pairExpenses.push(expense);
+          }
         }
-        pairExpenses = expenses || [];
 
         for (const expense of pairExpenses) {
           const participants = participantsByExpense.get(String(expense.id)) || [];
@@ -124,17 +158,24 @@ export async function GET(
         }
       }
 
-      const { data: settlements, error: settlementsError } = await supabase
-        .from("settlements")
-        .select("from_user_id,to_user_id,amount")
-        .or(
-          `and(from_user_id.eq.${userId},to_user_id.eq.${friendId}),and(from_user_id.eq.${friendId},to_user_id.eq.${userId})`
-        );
-      if (settlementsError) {
-        throw settlementsError;
-      }
+      const [outgoingSettlementsSnap, incomingSettlementsSnap] = await Promise.all([
+        db
+          .collection("settlements")
+          .where("from_user_id", "==", userId)
+          .where("to_user_id", "==", friendId)
+          .get(),
+        db
+          .collection("settlements")
+          .where("from_user_id", "==", friendId)
+          .where("to_user_id", "==", userId)
+          .get(),
+      ]);
+      const settlements: any[] = [
+        ...outgoingSettlementsSnap.docs.map((doc) => ({ id: doc.id, ...(doc.data() || {}) })),
+        ...incomingSettlementsSnap.docs.map((doc) => ({ id: doc.id, ...(doc.data() || {}) })),
+      ];
 
-      for (const settlement of settlements || []) {
+      for (const settlement of settlements) {
         if (String(settlement.from_user_id) === userId) {
           balance = round2(balance - toNum(settlement.amount));
         } else {
@@ -142,34 +183,22 @@ export async function GET(
         }
       }
 
-      const { data: userMemberships, error: userGroupsError } = await supabase
-        .from("group_members")
-        .select("group_id")
-        .eq("user_id", userId);
-      if (userGroupsError) {
-        throw userGroupsError;
-      }
-      const { data: friendMemberships, error: friendGroupsError } = await supabase
-        .from("group_members")
-        .select("group_id")
-        .eq("user_id", friendId);
-      if (friendGroupsError) {
-        throw friendGroupsError;
-      }
+      const [userMembershipsSnap, friendMembershipsSnap] = await Promise.all([
+        db.collection("group_members").where("user_id", "==", userId).get(),
+        db.collection("group_members").where("user_id", "==", friendId).get(),
+      ]);
+      const userMemberships = userMembershipsSnap.docs.map((doc) => doc.data() || {});
+      const friendMemberships = friendMembershipsSnap.docs.map((doc) => doc.data() || {});
 
-      const userGroupIds = new Set((userMemberships || []).map((row: any) => String(row.group_id)));
-      const commonGroupIds = (friendMemberships || [])
-        .map((row: any) => String(row.group_id))
-        .filter((groupId: string) => userGroupIds.has(groupId));
+      const userGroupIds = new Set(userMemberships.map((row: any) => String(row.group_id)));
+      const commonGroupIds = uniqueStrings(
+        friendMemberships
+          .map((row: any) => String(row.group_id))
+          .filter((groupId: string) => userGroupIds.has(groupId))
+      );
 
       if (commonGroupIds.length > 0) {
-        const { data: groups, error: groupsError } = await supabase
-          .from("groups")
-          .select("id,name")
-          .in("id", commonGroupIds);
-        if (groupsError) {
-          throw groupsError;
-        }
+        const groupsById = await fetchDocsByIds("groups", commonGroupIds);
 
         const grouped = new Map<string, any[]>();
         for (const expense of pairExpenses) {
@@ -182,7 +211,10 @@ export async function GET(
           grouped.set(key, list);
         }
 
-        groupBreakdown = (groups || []).map((group: any) => {
+        groupBreakdown = commonGroupIds
+          .map((groupId) => groupsById.get(groupId))
+          .filter(Boolean)
+          .map((group: any) => {
           const expenses = grouped.get(String(group.id)) || [];
           let groupBalance = 0;
           let lastActivity: string | null = null;
@@ -222,7 +254,7 @@ export async function GET(
           email: friend.email,
           profilePicture: friend.profile_picture || null,
           balance: round2(balance),
-          friendsSince: friendship.created_at,
+          friendsSince: String(friendship?.data.created_at || ""),
         },
         groupBreakdown,
       };
@@ -261,57 +293,56 @@ export async function PUT(
       );
     }
 
-    const supabase = requireSupabaseAdmin();
-    const { data: friendship, error: friendshipError } = await supabase
-      .from("friendships")
-      .select("id,user_id,friend_id,status,requested_by")
-      .eq("id", id)
-      .maybeSingle();
-    if (friendshipError) {
-      throw friendshipError;
-    }
-    if (!friendship) {
+    const resolved = await resolveFriendshipPairByAnyId(id);
+    if (!resolved) {
       return NextResponse.json({ error: "Request not found" }, { status: 404 });
     }
-    if (String(friendship.user_id) !== currentUserId) {
+
+    const directUserId = String(resolved.userId || "");
+    const directFriendId = String(resolved.friendId || "");
+    if (!directUserId || !directFriendId) {
+      return NextResponse.json({ error: "Request not found" }, { status: 404 });
+    }
+    if (directUserId !== currentUserId && directFriendId !== currentUserId) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
-    if (String(friendship.status) !== "pending") {
+
+    const requesterId = directUserId === currentUserId ? directFriendId : directUserId;
+    const pair = await getFriendshipPair(currentUserId, requesterId);
+    const incomingEdge = pair.forward;
+    if (!incomingEdge) {
+      return NextResponse.json({ error: "Request not found" }, { status: 404 });
+    }
+
+    if (String(incomingEdge.data.status || "") !== "pending") {
       return NextResponse.json(
         { error: "Request already handled" },
         { status: 400 }
       );
     }
-
-    const requesterId = String(friendship.friend_id);
-    const nowIso = new Date().toISOString();
+    if (String(incomingEdge.data.requested_by || "") === currentUserId) {
+      return NextResponse.json(
+        { error: "Only incoming requests can be handled here" },
+        { status: 403 }
+      );
+    }
 
     if (action === "accept") {
-      const { error: forwardError } = await supabase
-        .from("friendships")
-        .update({ status: "accepted", updated_at: nowIso })
-        .eq("user_id", currentUserId)
-        .eq("friend_id", requesterId);
-      if (forwardError) {
-        throw forwardError;
-      }
-      const { error: reverseError } = await supabase
-        .from("friendships")
-        .update({ status: "accepted", updated_at: nowIso })
-        .eq("user_id", requesterId)
-        .eq("friend_id", currentUserId);
-      if (reverseError) {
-        throw reverseError;
-      }
+      await upsertBidirectionalFriendship({
+        userId: currentUserId,
+        friendId: requesterId,
+        status: "accepted",
+        requestedBy: requesterId,
+      });
 
       try {
-        const { data: userRow } = await supabase
-          .from("users")
-          .select("id,name")
-          .eq("id", currentUserId)
-          .maybeSingle();
+        const db = getAdminDb();
+        const userDoc = await db.collection("users").doc(currentUserId).get();
         await notifyFriendAccepted(
-          { id: currentUserId, name: userRow?.name || "Someone" },
+          {
+            id: currentUserId,
+            name: String(userDoc.data()?.name || auth.user.name || "Someone"),
+          },
           requesterId
         );
       } catch (notifError) {
@@ -336,15 +367,7 @@ export async function PUT(
       );
     }
 
-    const { error: deleteError } = await supabase
-      .from("friendships")
-      .delete()
-      .or(
-        `and(user_id.eq.${currentUserId},friend_id.eq.${requesterId}),and(user_id.eq.${requesterId},friend_id.eq.${currentUserId})`
-      );
-    if (deleteError) {
-      throw deleteError;
-    }
+    await deleteBidirectionalFriendship(currentUserId, requesterId);
 
     await invalidateUsersCache(
       [currentUserId, requesterId],
@@ -382,33 +405,24 @@ export async function DELETE(
       return auth.response as NextResponse;
     }
     const currentUserId = auth.user.id;
-    const supabase = requireSupabaseAdmin();
 
-    const { data: friendship, error: friendshipError } = await supabase
-      .from("friendships")
-      .select("id,user_id,friend_id")
-      .eq("id", id)
-      .maybeSingle();
-    if (friendshipError) {
-      throw friendshipError;
-    }
-    if (!friendship) {
+    const resolved = await resolveFriendshipPairByAnyId(id);
+    if (!resolved) {
       return NextResponse.json({ error: "Friendship not found" }, { status: 404 });
     }
-    if (String(friendship.user_id) !== currentUserId) {
+
+    const sourceUserId = String(resolved.userId || "");
+    const sourceFriendId = String(resolved.friendId || "");
+    if (!sourceUserId || !sourceFriendId) {
+      return NextResponse.json({ error: "Friendship not found" }, { status: 404 });
+    }
+    if (sourceUserId !== currentUserId && sourceFriendId !== currentUserId) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    const friendId = String(friendship.friend_id);
-    const { error: deleteError } = await supabase
-      .from("friendships")
-      .delete()
-      .or(
-        `and(user_id.eq.${currentUserId},friend_id.eq.${friendId}),and(user_id.eq.${friendId},friend_id.eq.${currentUserId})`
-      );
-    if (deleteError) {
-      throw deleteError;
-    }
+    const friendId =
+      sourceUserId === currentUserId ? sourceFriendId : sourceUserId;
+    await deleteBidirectionalFriendship(currentUserId, friendId);
 
     await invalidateUsersCache(
       [currentUserId, friendId],

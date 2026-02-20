@@ -3,52 +3,14 @@ import { requireUser } from "@/lib/auth/require-user";
 import { getAdminDb, FieldValue } from "@/lib/firestore/admin";
 import { newAppId } from "@/lib/ids";
 import { invalidateUsersCache } from "@/lib/cache";
+import {
+  friendshipPairKey,
+  normalizeEmail,
+  normalizeName,
+} from "@/lib/social/keys";
+import { upsertBidirectionalFriendship } from "@/lib/social/friendship-store";
 
 export const dynamic = "force-dynamic";
-
-async function ensureFriendship(
-  userId: string,
-  friendId: string,
-  status: "pending" | "accepted" | "rejected",
-  requestedBy: string
-) {
-  const db = getAdminDb();
-  const existing = await db
-    .collection("friendships")
-    .where("user_id", "==", userId)
-    .where("friend_id", "==", friendId)
-    .limit(1)
-    .get();
-
-  if (!existing.empty) {
-    const doc = existing.docs[0];
-    await doc.ref.set(
-      {
-        status,
-        requested_by: requestedBy,
-        updated_at: new Date().toISOString(),
-        _updated_at: FieldValue.serverTimestamp(),
-      },
-      { merge: true }
-    );
-    return doc.id;
-  }
-
-  const id = newAppId();
-  await db.collection("friendships").doc(id).set({
-    id,
-    user_id: userId,
-    friend_id: friendId,
-    status,
-    requested_by: requestedBy,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-    _created_at: FieldValue.serverTimestamp(),
-    _updated_at: FieldValue.serverTimestamp(),
-  });
-
-  return id;
-}
 
 async function mergeDummyFriends(inviterId: string, newUserId: string, targetName: string) {
   const db = getAdminDb();
@@ -68,6 +30,7 @@ async function mergeDummyFriends(inviterId: string, newUserId: string, targetNam
 
   for (const dummyDoc of dummies) {
     const dummyId = dummyDoc.id;
+    const migratedPairs = new Set<string>();
 
     const [linksAsUser, linksAsFriend] = await Promise.all([
       db.collection("friendships").where("user_id", "==", dummyId).get(),
@@ -78,9 +41,20 @@ async function mergeDummyFriends(inviterId: string, newUserId: string, targetNam
       const row = doc.data();
       const nextUserId = row.user_id === dummyId ? newUserId : String(row.user_id);
       const nextFriendId = row.friend_id === dummyId ? newUserId : String(row.friend_id);
+      const nextStatus = row.status || "accepted";
+      const nextRequestedBy = row.requested_by || inviterId;
 
       if (nextUserId !== nextFriendId) {
-        await ensureFriendship(nextUserId, nextFriendId, row.status || "accepted", row.requested_by || inviterId);
+        const pairKey = friendshipPairKey(nextUserId, nextFriendId);
+        if (!migratedPairs.has(pairKey)) {
+          await upsertBidirectionalFriendship({
+            userId: nextUserId,
+            friendId: nextFriendId,
+            status: nextStatus,
+            requestedBy: nextRequestedBy,
+          });
+          migratedPairs.add(pairKey);
+        }
       }
 
       await doc.ref.delete();
@@ -169,8 +143,12 @@ async function processInvite(inviteToken: string, newUserId: string): Promise<{ 
     { merge: true }
   );
 
-  await ensureFriendship(newUserId, inviterId, "accepted", inviterId);
-  await ensureFriendship(inviterId, newUserId, "accepted", inviterId);
+  await upsertBidirectionalFriendship({
+    userId: newUserId,
+    friendId: inviterId,
+    status: "accepted",
+    requestedBy: inviterId,
+  });
 
   return { inviterId, friendAdded: true };
 }
@@ -190,8 +168,12 @@ async function processReferral(
     return { inviterId: null, friendAdded: false };
   }
 
-  await ensureFriendship(newUserId, inviterId, "accepted", inviterId);
-  await ensureFriendship(inviterId, newUserId, "accepted", inviterId);
+  await upsertBidirectionalFriendship({
+    userId: newUserId,
+    friendId: inviterId,
+    status: "accepted",
+    requestedBy: inviterId,
+  });
 
   return { inviterId, friendAdded: true };
 }
@@ -225,7 +207,9 @@ export async function POST(request: NextRequest) {
       {
         id: auth.user.id,
         email: fallbackEmail,
+        email_normalized: normalizeEmail(fallbackEmail),
         name: fallbackName,
+        name_normalized: normalizeName(fallbackName),
         role: "user",
         is_active: true,
         is_dummy: false,

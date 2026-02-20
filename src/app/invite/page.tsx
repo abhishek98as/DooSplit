@@ -128,6 +128,40 @@ export default function InvitePage() {
         return;
       }
 
+      const mode = String(data.mode || "");
+      if (mode === "friend_request_created") {
+        setSendResult({
+          type: "success",
+          message: `User already has DooSplit. Friend request sent to ${email}!`,
+        });
+        setEmail("");
+        return;
+      }
+      if (mode === "already_friends") {
+        setSendResult({
+          type: "success",
+          message: "You are already friends with this user.",
+        });
+        setEmail("");
+        return;
+      }
+      if (mode === "already_pending") {
+        setSendResult({
+          type: "success",
+          message: "A friend request is already pending for this user.",
+        });
+        setEmail("");
+        return;
+      }
+      if (mode === "auto_accepted_pending") {
+        setSendResult({
+          type: "success",
+          message: "Pending request was auto-accepted. You are now friends.",
+        });
+        setEmail("");
+        return;
+      }
+
       setSendResult({
         type: "success",
         message: data.emailSent
