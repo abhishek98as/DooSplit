@@ -1,59 +1,60 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth/require-user";
-import { requireSupabaseAdmin } from "@/lib/supabase/app";
+import { FieldValue, getAdminDb } from "@/lib/firestore/admin";
+import { mapNotification } from "@/lib/firestore/route-helpers";
 
 export const dynamic = "force-dynamic";
-
-function mapNotificationRow(row: any) {
-  return {
-    _id: row.id,
-    id: row.id,
-    userId: row.user_id,
-    type: row.type,
-    message: row.message,
-    data: row.data || {},
-    isRead: !!row.is_read,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
 
 export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const routeStart = Date.now();
     const { id } = await params;
     const auth = await requireUser(request);
     if (auth.response || !auth.user) {
       return auth.response as NextResponse;
     }
 
-    const supabase = requireSupabaseAdmin();
-    const { data: notification, error } = await supabase
-      .from("notifications")
-      .update({ is_read: true })
-      .eq("id", id)
-      .eq("user_id", auth.user.id)
-      .select("*")
-      .maybeSingle();
-
-    if (error) {
-      throw error;
-    }
-    if (!notification) {
+    const db = getAdminDb();
+    const ref = db.collection("notifications").doc(id);
+    const snap = await ref.get();
+    if (!snap.exists) {
       return NextResponse.json(
         { error: "Notification not found" },
         { status: 404 }
       );
     }
+    const row = snap.data() || {};
+    if (String(row.user_id || "") !== auth.user.id) {
+      return NextResponse.json({ error: "Notification not found" }, { status: 404 });
+    }
+
+    const nowIso = new Date().toISOString();
+    await ref.set(
+      {
+        is_read: true,
+        updated_at: nowIso,
+        _updated_at: FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+
+    const updatedSnap = await ref.get();
+    const updated = { id: updatedSnap.id, ...(updatedSnap.data() || {}) };
 
     return NextResponse.json(
       {
         message: "Notification marked as read",
-        notification: mapNotificationRow(notification),
+        notification: mapNotification(updated),
       },
-      { status: 200 }
+      {
+        status: 200,
+        headers: {
+          "X-Doosplit-Route-Ms": String(Date.now() - routeStart),
+        },
+      }
     );
   } catch (error: any) {
     console.error("Mark notification read error:", error);
@@ -69,32 +70,38 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const routeStart = Date.now();
     const { id } = await params;
     const auth = await requireUser(request);
     if (auth.response || !auth.user) {
       return auth.response as NextResponse;
     }
 
-    const supabase = requireSupabaseAdmin();
-    const { data: deleted, error } = await supabase
-      .from("notifications")
-      .delete()
-      .eq("id", id)
-      .eq("user_id", auth.user.id)
-      .select("id")
-      .maybeSingle();
-
-    if (error) {
-      throw error;
-    }
-    if (!deleted?.id) {
+    const db = getAdminDb();
+    const ref = db.collection("notifications").doc(id);
+    const snap = await ref.get();
+    if (!snap.exists) {
       return NextResponse.json(
         { error: "Notification not found" },
         { status: 404 }
       );
     }
+    const row = snap.data() || {};
+    if (String(row.user_id || "") !== auth.user.id) {
+      return NextResponse.json({ error: "Notification not found" }, { status: 404 });
+    }
 
-    return NextResponse.json({ message: "Notification deleted" }, { status: 200 });
+    await ref.delete();
+
+    return NextResponse.json(
+      { message: "Notification deleted" },
+      {
+        status: 200,
+        headers: {
+          "X-Doosplit-Route-Ms": String(Date.now() - routeStart),
+        },
+      }
+    );
   } catch (error: any) {
     console.error("Delete notification error:", error);
     return NextResponse.json(
@@ -103,4 +110,3 @@ export async function DELETE(
     );
   }
 }
-

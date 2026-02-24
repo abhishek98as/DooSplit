@@ -5,7 +5,8 @@ import {
   getOrSetCacheJson,
 } from "@/lib/cache";
 import { requireUser } from "@/lib/auth/require-user";
-import { requireSupabaseAdmin } from "@/lib/supabase/app";
+import { getAdminDb } from "@/lib/firestore/admin";
+import { fetchDocsByIds, round2, toNum, uniqueStrings } from "@/lib/firestore/route-helpers";
 
 export const dynamic = "force-dynamic";
 
@@ -18,10 +19,6 @@ interface SimplifiedTx {
   from: string;
   to: string;
   amount: number;
-}
-
-function round2(value: number): number {
-  return Number(value.toFixed(2));
 }
 
 function simplifyFromNet(netMap: Map<string, number>) {
@@ -73,24 +70,22 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const routeStart = Date.now();
     const { id } = await params;
     const auth = await requireUser(request);
     if (auth.response || !auth.user) {
       return auth.response as NextResponse;
     }
     const userId = auth.user.id;
-    const supabase = requireSupabaseAdmin();
+    const db = getAdminDb();
 
-    const { data: membership, error: membershipError } = await supabase
-      .from("group_members")
-      .select("id")
-      .eq("group_id", id)
-      .eq("user_id", userId)
-      .maybeSingle();
-    if (membershipError) {
-      throw membershipError;
-    }
-    if (!membership) {
+    const membershipSnap = await db
+      .collection("group_members")
+      .where("group_id", "==", id)
+      .where("user_id", "==", userId)
+      .limit(1)
+      .get();
+    if (membershipSnap.empty) {
       return NextResponse.json(
         { error: "You are not a member of this group" },
         { status: 403 }
@@ -99,15 +94,12 @@ export async function GET(
 
     const cacheKey = buildUserScopedCacheKey("groups", userId, `debts:${id}`);
     const payload = await getOrSetCacheJson(cacheKey, CACHE_TTL.friends, async () => {
-      const { data: groupMembers, error: membersError } = await supabase
-        .from("group_members")
-        .select("user_id")
-        .eq("group_id", id);
-      if (membersError) {
-        throw membersError;
-      }
-      const memberIds = Array.from(
-        new Set((groupMembers || []).map((m: any) => String(m.user_id)))
+      const groupMembersSnap = await db
+        .collection("group_members")
+        .where("group_id", "==", id)
+        .get();
+      const memberIds = uniqueStrings(
+        groupMembersSnap.docs.map((doc) => String(doc.data()?.user_id || ""))
       );
       if (memberIds.length === 0) {
         return {
@@ -123,45 +115,46 @@ export async function GET(
         memberIds.map((memberId) => [String(memberId), 0] as [string, number])
       );
 
-      const { data: expenses, error: expensesError } = await supabase
-        .from("expenses")
-        .select("id")
-        .eq("group_id", id)
-        .eq("is_deleted", false);
-      if (expensesError) {
-        throw expensesError;
-      }
-      const expenseIds = (expenses || []).map((expense: any) => String(expense.id));
+      const expensesSnap = await db
+        .collection("expenses")
+        .where("group_id", "==", id)
+        .where("is_deleted", "==", false)
+        .get();
+      const expenseIds = expensesSnap.docs.map((doc) => String(doc.data()?.id || doc.id));
+
       if (expenseIds.length > 0) {
-        const { data: participants, error: participantsError } = await supabase
-          .from("expense_participants")
-          .select("user_id,paid_amount,owed_amount")
-          .in("expense_id", expenseIds);
-        if (participantsError) {
-          throw participantsError;
-        }
-        for (const participant of participants || []) {
-          const participantUserId = String(participant.user_id);
-          if (!netMap.has(participantUserId)) {
-            continue;
+        for (const expenseIdChunk of (() => {
+          const chunks: string[][] = [];
+          for (let i = 0; i < expenseIds.length; i += 10) {
+            chunks.push(expenseIds.slice(i, i + 10));
           }
-          const delta =
-            Number(participant.paid_amount || 0) - Number(participant.owed_amount || 0);
-          netMap.set(participantUserId, round2((netMap.get(participantUserId) || 0) + delta));
+          return chunks;
+        })()) {
+          const participantsSnap = await db
+            .collection("expense_participants")
+            .where("expense_id", "in", expenseIdChunk)
+            .get();
+          for (const participantDoc of participantsSnap.docs) {
+            const participant = participantDoc.data() || {};
+            const participantUserId = String(participant.user_id || "");
+            if (!netMap.has(participantUserId)) {
+              continue;
+            }
+            const delta = toNum(participant.paid_amount) - toNum(participant.owed_amount);
+            netMap.set(participantUserId, round2((netMap.get(participantUserId) || 0) + delta));
+          }
         }
       }
 
-      const { data: settlements, error: settlementsError } = await supabase
-        .from("settlements")
-        .select("from_user_id,to_user_id,amount")
-        .eq("group_id", id);
-      if (settlementsError) {
-        throw settlementsError;
-      }
-      for (const settlement of settlements || []) {
-        const from = String(settlement.from_user_id);
-        const to = String(settlement.to_user_id);
-        const amount = Number(settlement.amount || 0);
+      const settlementsSnap = await db
+        .collection("settlements")
+        .where("group_id", "==", id)
+        .get();
+      for (const settlementDoc of settlementsSnap.docs) {
+        const settlement = settlementDoc.data() || {};
+        const from = String(settlement.from_user_id || "");
+        const to = String(settlement.to_user_id || "");
+        const amount = toNum(settlement.amount);
         if (netMap.has(from)) {
           netMap.set(from, round2((netMap.get(from) || 0) - amount));
         }
@@ -171,14 +164,7 @@ export async function GET(
       }
 
       const simplified = simplifyFromNet(netMap);
-      const { data: users, error: usersError } = await supabase
-        .from("users")
-        .select("id,name,email,profile_picture")
-        .in("id", memberIds);
-      if (usersError) {
-        throw usersError;
-      }
-      const usersMap = new Map<string, any>((users || []).map((u: any) => [String(u.id), u]));
+      const usersMap = await fetchDocsByIds("users", memberIds);
 
       const transactions = simplified.transactions.map((tx) => {
         const fromUser = usersMap.get(tx.from);
@@ -212,7 +198,12 @@ export async function GET(
       };
     });
 
-    return NextResponse.json(payload, { status: 200 });
+    return NextResponse.json(payload, {
+      status: 200,
+      headers: {
+        "X-Doosplit-Route-Ms": String(Date.now() - routeStart),
+      },
+    });
   } catch (error: any) {
     console.error("Get simplified debts error:", error);
     return NextResponse.json(
@@ -221,4 +212,3 @@ export async function GET(
     );
   }
 }
-

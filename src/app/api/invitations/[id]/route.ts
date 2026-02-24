@@ -77,7 +77,7 @@ async function resolveInvitationByAnyId(invitationId: string): Promise<{
     id: doc.id,
     data: {
       id: doc.id,
-      ...(doc.data() || {}),
+      ...((doc.data() as any) || {}),
     },
   };
 }
@@ -100,7 +100,7 @@ async function findUserByEmailNormalized(emailNormalized: string) {
   }
   return {
     id: doc.id,
-    ...(doc.data() || {}),
+    ...((doc.data() as any) || {}),
   };
 }
 
@@ -290,3 +290,4 @@ export async function DELETE(
     );
   }
 }
+

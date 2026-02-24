@@ -5,6 +5,7 @@ import { SessionProvider } from "@/lib/auth/react-session";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { PWAProvider } from "@/components/pwa/PWAProvider";
 import { AnalyticsProvider } from "@/components/analytics/AnalyticsProvider";
+import { RealtimeDataSyncProvider } from "@/components/realtime/RealtimeDataSyncProvider";
 import { initializeFirebaseAppCheck } from "@/lib/firebase-app-check";
 import {
   initializeFirebasePerformance,
@@ -24,9 +25,11 @@ export function Providers({ children }: { children: React.ReactNode }) {
     <SessionProvider>
       <ThemeProvider>
         <PWAProvider>
-          <AnalyticsProvider>
-            {children}
-          </AnalyticsProvider>
+          <RealtimeDataSyncProvider>
+            <AnalyticsProvider>
+              {children}
+            </AnalyticsProvider>
+          </RealtimeDataSyncProvider>
         </PWAProvider>
       </ThemeProvider>
     </SessionProvider>

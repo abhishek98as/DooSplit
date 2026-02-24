@@ -365,6 +365,32 @@ export default function DashboardPage() {
     }
   }, [fetchDashboardData, router, status]);
 
+  useEffect(() => {
+    if (status !== "authenticated") {
+      return;
+    }
+
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ domains?: string[] }>).detail;
+      const domains = detail?.domains || [];
+      if (
+        domains.includes("expenses") ||
+        domains.includes("friends") ||
+        domains.includes("groups") ||
+        domains.includes("settlements") ||
+        domains.includes("analytics") ||
+        domains.includes("activity")
+      ) {
+        void fetchDashboardData();
+      }
+    };
+
+    window.addEventListener("doosplit:data-updated", handler as EventListener);
+    return () => {
+      window.removeEventListener("doosplit:data-updated", handler as EventListener);
+    };
+  }, [fetchDashboardData, status]);
+
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat("en-IN", {
       style: "currency",

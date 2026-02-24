@@ -17,8 +17,10 @@ import { requireUser } from "@/lib/auth/require-user";
 import { firestoreReadRepository } from "@/lib/data/firestore-adapter";
 import { createExpenseInFirestore } from "@/lib/firestore/write-operations";
 import { getAdminDb } from "@/lib/firestore/admin";
+import { EXPENSE_MUTATION_CACHE_SCOPES } from "@/lib/cache-scopes";
 
 export const dynamic = "force-dynamic";
+export const preferredRegion = "iad1";
 
 function toStringId(value: any): string {
   if (value === null || value === undefined) {
@@ -307,17 +309,7 @@ export async function POST(request: NextRequest) {
       console.error("Failed to send expense notifications:", notificationError);
     }
 
-    await invalidateUsersCache(affectedUserIds, [
-      "expenses",
-      "friends",
-      "groups",
-      "activities",
-      "dashboard-activity",
-      "friend-transactions",
-      "friend-details",
-      "user-balance",
-      "analytics",
-    ]);
+    await invalidateUsersCache(affectedUserIds, [...EXPENSE_MUTATION_CACHE_SCOPES]);
 
     // Return success response
     const responseExpense = {

@@ -57,7 +57,7 @@ async function fetchDocsByIds(collection: string, ids: string[]): Promise<Map<st
       if (doc.exists) {
         rows.set(doc.id, {
           id: doc.id,
-          ...(doc.data() || {}),
+          ...((doc.data() as any) || {}),
         });
       }
     }
@@ -108,7 +108,7 @@ export async function GET(
         .get();
       const pairParticipants: any[] = pairParticipantsSnap.docs.map((doc) => ({
         id: doc.id,
-        ...(doc.data() || {}),
+        ...((doc.data() as any) || {}),
       }));
 
       const participantsByExpense = new Map<string, any[]>();
@@ -171,8 +171,8 @@ export async function GET(
           .get(),
       ]);
       const settlements: any[] = [
-        ...outgoingSettlementsSnap.docs.map((doc) => ({ id: doc.id, ...(doc.data() || {}) })),
-        ...incomingSettlementsSnap.docs.map((doc) => ({ id: doc.id, ...(doc.data() || {}) })),
+        ...outgoingSettlementsSnap.docs.map((doc) => ({ id: doc.id, ...((doc.data() as any) || {}) })),
+        ...incomingSettlementsSnap.docs.map((doc) => ({ id: doc.id, ...((doc.data() as any) || {}) })),
       ];
 
       for (const settlement of settlements) {
@@ -451,3 +451,4 @@ export async function DELETE(
     );
   }
 }
+

@@ -14,7 +14,21 @@ import {
   invalidateUsersCache,
 } from "@/lib/cache";
 import { requireUser } from "@/lib/auth/require-user";
-import { newAppId, requireSupabaseAdmin } from "@/lib/supabase/app";
+import { FieldValue, getAdminDb } from "@/lib/firestore/admin";
+import { EXPENSE_MUTATION_CACHE_SCOPES } from "@/lib/cache-scopes";
+import {
+  fetchDocsByIds,
+  logSlowRoute,
+  mapGroup,
+  mapUser,
+  toIso,
+  toNum,
+  uniqueStrings,
+} from "@/lib/firestore/route-helpers";
+import { newAppId } from "@/lib/ids";
+
+export const dynamic = "force-dynamic";
+export const preferredRegion = "iad1";
 
 function toStringId(value: any): string {
   if (value === null || value === undefined) {
@@ -23,121 +37,100 @@ function toStringId(value: any): string {
   return typeof value === "string" ? value : value.toString();
 }
 
-function toNumber(value: any): number {
-  return Number(value || 0);
+async function getExpenseRow(expenseId: string) {
+  const db = getAdminDb();
+  const doc = await db.collection("expenses").doc(expenseId).get();
+  if (!doc.exists) {
+    return null;
+  }
+  const row: any = { id: doc.id, ...((doc.data() as any) || {}) };
+  if (row.is_deleted) {
+    return null;
+  }
+  return row;
+}
+
+async function getExpenseParticipants(expenseId: string): Promise<any[]> {
+  const db = getAdminDb();
+  const snap = await db
+    .collection("expense_participants")
+    .where("expense_id", "==", expenseId)
+    .get();
+  return snap.docs.map((doc) => ({ id: doc.id, ...((doc.data() as any) || {}) }));
+}
+
+async function isExpenseParticipant(expenseId: string, userId: string): Promise<boolean> {
+  const db = getAdminDb();
+  const snap = await db
+    .collection("expense_participants")
+    .where("expense_id", "==", expenseId)
+    .where("user_id", "==", userId)
+    .limit(1)
+    .get();
+  return !snap.empty;
 }
 
 async function buildExpenseResponse(expenseId: string) {
-  const supabase = requireSupabaseAdmin();
-
-  const { data: expense, error: expenseError } = await supabase
-    .from("expenses")
-    .select("*")
-    .eq("id", expenseId)
-    .eq("is_deleted", false)
-    .maybeSingle();
-  if (expenseError) {
-    throw expenseError;
-  }
+  const expense = await getExpenseRow(expenseId);
   if (!expense) {
     throw new Error("Expense not found");
   }
 
-  const { data: participants, error: participantsError } = await supabase
-    .from("expense_participants")
-    .select("*")
-    .eq("expense_id", expenseId);
-  if (participantsError) {
-    throw participantsError;
-  }
-
-  const userIds = Array.from(
-    new Set([
-      String(expense.created_by),
-      ...(participants || []).map((participant: any) => String(participant.user_id)),
-    ])
-  );
-  const { data: users, error: usersError } = await supabase
-    .from("users")
-    .select("id,name,email,profile_picture")
-    .in("id", userIds.length > 0 ? userIds : ["__none__"]);
-  if (usersError) {
-    throw usersError;
-  }
-  const usersMap = new Map<string, any>(
-    (users || []).map((user: any) => [String(user.id), user] as [string, any])
-  );
+  const participants = await getExpenseParticipants(expenseId);
+  const userIds = uniqueStrings([
+    String(expense.created_by || ""),
+    ...participants.map((participant: any) => String(participant.user_id || "")),
+  ]);
+  const usersMap = await fetchDocsByIds("users", userIds);
 
   let group: { _id: string; name: string; image: string | null } | null = null;
   if (expense.group_id) {
-    const { data: groupRow, error: groupError } = await supabase
-      .from("groups")
-      .select("id,name,image")
-      .eq("id", expense.group_id)
-      .maybeSingle();
-    if (groupError) {
-      throw groupError;
-    }
+    const groupRows = await fetchDocsByIds("groups", [String(expense.group_id)]);
+    const groupRow = groupRows.get(String(expense.group_id));
     if (groupRow) {
-      group = {
-        _id: groupRow.id,
-        name: groupRow.name,
-        image: groupRow.image || null,
-      };
+      group = mapGroup(groupRow);
     }
   }
 
-  const mappedParticipants = (participants || []).map((participant: any) => {
-    const user = usersMap.get(String(participant.user_id));
+  const mappedParticipants = participants.map((participant: any) => {
+    const user = usersMap.get(String(participant.user_id || ""));
     return {
-      _id: participant.id,
-      expenseId: participant.expense_id,
-      userId: user
-        ? {
-            _id: user.id,
-            name: user.name,
-            email: user.email,
-            profilePicture: user.profile_picture || null,
-          }
-        : null,
-      paidAmount: toNumber(participant.paid_amount),
-      owedAmount: toNumber(participant.owed_amount),
-      isSettled: !!participant.is_settled,
-      createdAt: participant.created_at,
-      updatedAt: participant.updated_at,
+      _id: String(participant.id || ""),
+      expenseId: String(participant.expense_id || ""),
+      userId: user ? mapUser(user) : null,
+      paidAmount: toNum(participant.paid_amount),
+      owedAmount: toNum(participant.owed_amount),
+      isSettled: Boolean(participant.is_settled),
+      createdAt: toIso(participant.created_at || participant._created_at),
+      updatedAt: toIso(participant.updated_at || participant._updated_at),
     };
   });
 
-  const creator = usersMap.get(String(expense.created_by));
+  const creator = usersMap.get(String(expense.created_by || ""));
+  const createdAt = toIso(expense.created_at || expense._created_at);
+  const updatedAt = toIso(expense.updated_at || expense._updated_at);
   const versionVector = {
     version: 1,
-    lastModified: expense.updated_at,
-    modifiedBy: expense.created_by,
+    lastModified: updatedAt || createdAt,
+    modifiedBy: String(expense.created_by || ""),
   };
 
   return {
     expense: {
-      _id: expense.id,
-      amount: toNumber(expense.amount),
-      description: expense.description,
-      category: expense.category,
-      date: expense.date,
-      currency: expense.currency,
-      createdBy: creator
-        ? {
-            _id: creator.id,
-            name: creator.name,
-            email: creator.email,
-            profilePicture: creator.profile_picture || null,
-          }
-        : null,
+      _id: String(expense.id || ""),
+      amount: toNum(expense.amount),
+      description: String(expense.description || ""),
+      category: String(expense.category || "other"),
+      date: toIso(expense.date) || createdAt,
+      currency: String(expense.currency || "INR"),
+      createdBy: creator ? mapUser(creator) : null,
       groupId: group,
       images: Array.isArray(expense.images) ? expense.images : [],
-      notes: expense.notes,
-      isDeleted: !!expense.is_deleted,
+      notes: expense.notes || "",
+      isDeleted: Boolean(expense.is_deleted),
       editHistory: Array.isArray(expense.edit_history) ? expense.edit_history : [],
-      createdAt: expense.created_at,
-      updatedAt: expense.updated_at,
+      createdAt,
+      updatedAt,
       participants: mappedParticipants,
       _version: versionVector,
     },
@@ -151,24 +144,16 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const routeStart = Date.now();
     const { id } = await params;
     const auth = await requireUser(request);
     if (auth.response || !auth.user) {
       return auth.response as NextResponse;
     }
     const userId = auth.user.id;
-    const supabase = requireSupabaseAdmin();
 
-    const { data: isParticipant, error: participantError } = await supabase
-      .from("expense_participants")
-      .select("id")
-      .eq("expense_id", id)
-      .eq("user_id", userId)
-      .maybeSingle();
-    if (participantError) {
-      throw participantError;
-    }
-    if (!isParticipant) {
+    const participant = await isExpenseParticipant(id, userId);
+    if (!participant) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
@@ -177,6 +162,7 @@ export async function GET(
       buildExpenseResponse(id)
     );
 
+    const routeMs = logSlowRoute("/api/expenses/[id]#GET", routeStart);
     return NextResponse.json(
       {
         expense: payload.expense,
@@ -186,6 +172,7 @@ export async function GET(
         headers: {
           ETag: payload.etag,
           "X-Version-Vector": JSON.stringify(payload.versionVector),
+          "X-Doosplit-Route-Ms": String(routeMs),
         },
       }
     );
@@ -206,13 +193,14 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const routeStart = Date.now();
     const { id } = await params;
     const auth = await requireUser(request);
     if (auth.response || !auth.user) {
       return auth.response as NextResponse;
     }
     const currentUserId = auth.user.id;
-    const supabase = requireSupabaseAdmin();
+    const db = getAdminDb();
 
     const body = await request.json();
     const {
@@ -229,32 +217,16 @@ export async function PUT(
       participants,
     } = body || {};
 
-    const { data: expense, error: expenseError } = await supabase
-      .from("expenses")
-      .select("*")
-      .eq("id", id)
-      .eq("is_deleted", false)
-      .maybeSingle();
-    if (expenseError) {
-      throw expenseError;
-    }
+    const expense = await getExpenseRow(id);
     if (!expense) {
       return NextResponse.json({ error: "Expense not found" }, { status: 404 });
     }
 
-    const { data: participantCheck, error: participantCheckError } = await supabase
-      .from("expense_participants")
-      .select("id")
-      .eq("expense_id", id)
-      .eq("user_id", currentUserId)
-      .maybeSingle();
-    if (participantCheckError) {
-      throw participantCheckError;
-    }
+    const participantCheck = await isExpenseParticipant(id, currentUserId);
     if (!participantCheck) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
-    if (String(expense.created_by) !== currentUserId) {
+    if (String(expense.created_by || "") !== currentUserId) {
       return NextResponse.json(
         { error: "Only expense creator can edit" },
         { status: 403 }
@@ -293,21 +265,14 @@ export async function PUT(
       }
     }
 
-    const previousParticipantsResult = await supabase
-      .from("expense_participants")
-      .select("user_id")
-      .eq("expense_id", id);
-    if (previousParticipantsResult.error) {
-      throw previousParticipantsResult.error;
-    }
-    const previousParticipants = previousParticipantsResult.data || [];
+    const previousParticipants = await getExpenseParticipants(id);
 
     const changes: string[] = [];
-    if (amount !== undefined && Number(amount) !== toNumber(expense.amount)) {
-      changes.push(`amount: ${toNumber(expense.amount)} -> ${Number(amount)}`);
+    if (amount !== undefined && Number(amount) !== toNum(expense.amount)) {
+      changes.push(`amount: ${toNum(expense.amount)} -> ${Number(amount)}`);
     }
     if (description !== undefined && String(description) !== String(expense.description)) {
-      changes.push(`description updated`);
+      changes.push("description updated");
     }
     if (category !== undefined && String(category) !== String(expense.category)) {
       changes.push(`category: ${expense.category} -> ${category}`);
@@ -323,9 +288,11 @@ export async function PUT(
       changes: changes.length > 0 ? changes.join(", ") : "Updated",
     });
 
+    const nowIso = new Date().toISOString();
     const updatePayload: Record<string, any> = {
       edit_history: editHistory,
-      updated_at: new Date().toISOString(),
+      updated_at: nowIso,
+      _updated_at: FieldValue.serverTimestamp(),
     };
     if (amount !== undefined) updatePayload.amount = Number(amount);
     if (description !== undefined) updatePayload.description = String(description);
@@ -336,16 +303,10 @@ export async function PUT(
     if (images !== undefined) updatePayload.images = Array.isArray(images) ? images : [];
     if (notes !== undefined) updatePayload.notes = notes ? String(notes) : "";
 
-    const { error: updateError } = await supabase
-      .from("expenses")
-      .update(updatePayload)
-      .eq("id", id);
-    if (updateError) {
-      throw updateError;
-    }
+    await db.collection("expenses").doc(id).set(updatePayload, { merge: true });
 
     if (splitMethod && participants) {
-      const finalAmount = amount !== undefined ? Number(amount) : toNumber(expense.amount);
+      const finalAmount = amount !== undefined ? Number(amount) : toNum(expense.amount);
       let splitParticipants: any[] = [];
 
       switch (splitMethod) {
@@ -397,31 +358,30 @@ export async function PUT(
         );
       }
 
-      const { error: deleteParticipantsError } = await supabase
-        .from("expense_participants")
-        .delete()
-        .eq("expense_id", id);
-      if (deleteParticipantsError) {
-        throw deleteParticipantsError;
+      const existingParticipantsSnap = await db
+        .collection("expense_participants")
+        .where("expense_id", "==", id)
+        .get();
+      const batch = db.batch();
+      for (const doc of existingParticipantsSnap.docs) {
+        batch.delete(doc.ref);
       }
-
-      const nowIso = new Date().toISOString();
-      const rows = splitParticipants.map((participant) => ({
-        id: newAppId(),
-        expense_id: id,
-        user_id: toStringId(participant.userId),
-        paid_amount: Number(participant.paidAmount || 0),
-        owed_amount: Number(participant.owedAmount || 0),
-        is_settled: false,
-        created_at: nowIso,
-        updated_at: nowIso,
-      }));
-      const { error: insertParticipantsError } = await supabase
-        .from("expense_participants")
-        .insert(rows);
-      if (insertParticipantsError) {
-        throw insertParticipantsError;
+      for (const participant of splitParticipants) {
+        const participantRef = db.collection("expense_participants").doc(newAppId());
+        batch.set(participantRef, {
+          id: participantRef.id,
+          expense_id: id,
+          user_id: toStringId(participant.userId),
+          paid_amount: Number(participant.paidAmount || 0),
+          owed_amount: Number(participant.owedAmount || 0),
+          is_settled: false,
+          created_at: nowIso,
+          updated_at: nowIso,
+          _created_at: FieldValue.serverTimestamp(),
+          _updated_at: FieldValue.serverTimestamp(),
+        });
       }
+      await batch.commit();
     }
 
     const responsePayload = await buildExpenseResponse(id);
@@ -430,43 +390,29 @@ export async function PUT(
       .filter(Boolean);
 
     try {
-      const { data: updater } = await supabase
-        .from("users")
-        .select("id,name")
-        .eq("id", currentUserId)
-        .maybeSingle();
+      const updaterDoc = await db.collection("users").doc(currentUserId).get();
       await notifyExpenseUpdated(
         responsePayload.expense._id,
         responsePayload.expense.description,
-        { id: currentUserId, name: updater?.name || "Someone" },
+        {
+          id: currentUserId,
+          name: updaterDoc.data()?.name || "Someone",
+        },
         participantIds
       );
     } catch (notifError) {
       console.error("Failed to send notifications:", notifError);
     }
 
-    const affectedUserIds = Array.from(
-      new Set(
-        [
-          currentUserId,
-          ...previousParticipants.map((participant: any) => String(participant.user_id)),
-          ...participantIds.map((participantId: any) => String(participantId)),
-        ].filter(Boolean)
-      )
-    ) as string[];
-
-    await invalidateUsersCache(affectedUserIds, [
-      "expenses",
-      "friends",
-      "groups",
-      "activities",
-      "dashboard-activity",
-      "friend-transactions",
-      "friend-details",
-      "user-balance",
-      "analytics",
+    const affectedUserIds = uniqueStrings([
+      currentUserId,
+      ...previousParticipants.map((participant: any) => String(participant.user_id || "")),
+      ...participantIds.map((participantId: any) => String(participantId || "")),
     ]);
 
+    await invalidateUsersCache(affectedUserIds, [...EXPENSE_MUTATION_CACHE_SCOPES]);
+
+    const routeMs = logSlowRoute("/api/expenses/[id]#PUT", routeStart);
     return NextResponse.json(
       {
         message: "Expense updated successfully",
@@ -477,6 +423,7 @@ export async function PUT(
         headers: {
           ETag: responsePayload.etag,
           "X-Version-Vector": JSON.stringify(responsePayload.versionVector),
+          "X-Doosplit-Route-Ms": String(routeMs),
         },
       }
     );
@@ -494,86 +441,68 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const routeStart = Date.now();
     const { id } = await params;
     const auth = await requireUser(request);
     if (auth.response || !auth.user) {
       return auth.response as NextResponse;
     }
     const currentUserId = auth.user.id;
-    const supabase = requireSupabaseAdmin();
+    const db = getAdminDb();
 
-    const { data: expense, error: expenseError } = await supabase
-      .from("expenses")
-      .select("*")
-      .eq("id", id)
-      .eq("is_deleted", false)
-      .maybeSingle();
-    if (expenseError) {
-      throw expenseError;
-    }
+    const expense = await getExpenseRow(id);
     if (!expense) {
       return NextResponse.json({ error: "Expense not found" }, { status: 404 });
     }
-    if (String(expense.created_by) !== currentUserId) {
+
+    const participantCheck = await isExpenseParticipant(id, currentUserId);
+    if (!participantCheck) {
       return NextResponse.json(
-        { error: "Only expense creator can delete" },
+        { error: "Only expense participants can delete" },
         { status: 403 }
       );
     }
 
-    const { data: participants, error: participantsError } = await supabase
-      .from("expense_participants")
-      .select("user_id")
-      .eq("expense_id", id);
-    if (participantsError) {
-      throw participantsError;
-    }
-
-    const { error: deleteError } = await supabase
-      .from("expenses")
-      .update({ is_deleted: true, updated_at: new Date().toISOString() })
-      .eq("id", id);
-    if (deleteError) {
-      throw deleteError;
-    }
+    const participants = await getExpenseParticipants(id);
+    const nowIso = new Date().toISOString();
+    await db.collection("expenses").doc(id).set(
+      {
+        is_deleted: true,
+        deleted_by: currentUserId,
+        deleted_at: nowIso,
+        updated_at: nowIso,
+        _updated_at: FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
 
     try {
-      const { data: deleter } = await supabase
-        .from("users")
-        .select("id,name")
-        .eq("id", currentUserId)
-        .maybeSingle();
+      const deleterDoc = await db.collection("users").doc(currentUserId).get();
       await notifyExpenseDeleted(
         String(expense.description || "Expense"),
-        { id: currentUserId, name: deleter?.name || "Someone" },
-        (participants || []).map((participant: any) => String(participant.user_id))
+        { id: currentUserId, name: deleterDoc.data()?.name || "Someone" },
+        (participants || []).map((participant: any) => String(participant.user_id || ""))
       );
     } catch (notifError) {
       console.error("Failed to send notifications:", notifError);
     }
 
-    const affectedUserIds = Array.from(
-      new Set([
-        currentUserId,
-        ...(participants || []).map((participant: any) => String(participant.user_id)),
-      ])
-    );
-
-    await invalidateUsersCache(affectedUserIds, [
-      "expenses",
-      "friends",
-      "groups",
-      "activities",
-      "dashboard-activity",
-      "friend-transactions",
-      "friend-details",
-      "user-balance",
-      "analytics",
+    const affectedUserIds = uniqueStrings([
+      currentUserId,
+      ...(participants || []).map((participant: any) => String(participant.user_id || "")),
     ]);
 
+    await invalidateUsersCache(affectedUserIds, [...EXPENSE_MUTATION_CACHE_SCOPES]);
+
+    const routeMs = logSlowRoute("/api/expenses/[id]#DELETE", routeStart);
     return NextResponse.json(
       { message: "Expense deleted successfully" },
-      { status: 200 }
+      {
+        status: 200,
+        headers: {
+          "X-Doosplit-Route-Ms": String(routeMs),
+        },
+      }
     );
   } catch (error: any) {
     console.error("Delete expense error:", error);
@@ -583,3 +512,4 @@ export async function DELETE(
     );
   }
 }
+

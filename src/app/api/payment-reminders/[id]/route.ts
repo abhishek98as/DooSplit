@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth/require-user";
-import { requireSupabaseAdmin } from "@/lib/supabase/app";
+import { FieldValue, getAdminDb } from "@/lib/firestore/admin";
+import { toIso } from "@/lib/firestore/route-helpers";
 
 export const dynamic = "force-dynamic";
 
@@ -9,6 +10,7 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const routeStart = Date.now();
     const { id } = await params;
     const auth = await requireUser(request);
     if (auth.response || !auth.user) {
@@ -24,33 +26,27 @@ export async function PUT(
       );
     }
 
-    const supabase = requireSupabaseAdmin();
-    const { data: reminder, error } = await supabase
-      .from("payment_reminders")
-      .select("*")
-      .eq("id", id)
-      .maybeSingle();
-
-    if (error) {
-      throw error;
-    }
-    if (!reminder) {
+    const db = getAdminDb();
+    const ref = db.collection("payment_reminders").doc(id);
+    const snap = await ref.get();
+    if (!snap.exists) {
       return NextResponse.json(
         { error: "Payment reminder not found" },
         { status: 404 }
       );
     }
+    const reminder: any = { id: snap.id, ...((snap.data() as any) || {}) };
 
     if (action === "mark_read") {
-      if (String(reminder.to_user_id) !== auth.user.id) {
+      if (String(reminder.to_user_id || "") !== auth.user.id) {
         return NextResponse.json(
           { error: "Only the recipient can mark reminders as read" },
           { status: 403 }
         );
       }
     } else if (
-      String(reminder.from_user_id) !== auth.user.id &&
-      String(reminder.to_user_id) !== auth.user.id
+      String(reminder.from_user_id || "") !== auth.user.id &&
+      String(reminder.to_user_id || "") !== auth.user.id
     ) {
       return NextResponse.json(
         { error: "Only sender or recipient can mark reminders as paid" },
@@ -59,38 +55,41 @@ export async function PUT(
     }
 
     const nowIso = new Date().toISOString();
-    const updatePayload: Record<string, any> =
+    const patch =
       action === "mark_read"
         ? { status: "read", read_at: nowIso }
         : { status: "paid", paid_at: nowIso };
 
-    const { data: updated, error: updateError } = await supabase
-      .from("payment_reminders")
-      .update(updatePayload)
-      .eq("id", id)
-      .select("*")
-      .maybeSingle();
-
-    if (updateError) {
-      throw updateError;
-    }
-    if (!updated) {
-      return NextResponse.json(
-        { error: "Payment reminder not found" },
-        { status: 404 }
-      );
-    }
-
-    return NextResponse.json({
-      reminder: {
-        id: updated.id,
-        status: updated.status,
-        readAt: updated.read_at,
-        paidAt: updated.paid_at,
-        updatedAt: updated.updated_at,
+    await ref.set(
+      {
+        ...patch,
+        updated_at: nowIso,
+        _updated_at: FieldValue.serverTimestamp(),
       },
-      message: `Payment reminder ${action === "mark_read" ? "marked as read" : "marked as paid"}`,
-    });
+      { merge: true }
+    );
+
+    const updatedSnap = await ref.get();
+    const updated: any = { id: updatedSnap.id, ...((updatedSnap.data() as any) || {}) };
+
+    return NextResponse.json(
+      {
+        reminder: {
+          id: updated.id,
+          status: updated.status,
+          readAt: toIso(updated.read_at),
+          paidAt: toIso(updated.paid_at),
+          updatedAt: toIso(updated.updated_at || updated._updated_at),
+        },
+        message: `Payment reminder ${action === "mark_read" ? "marked as read" : "marked as paid"}`,
+      },
+      {
+        status: 200,
+        headers: {
+          "X-Doosplit-Route-Ms": String(Date.now() - routeStart),
+        },
+      }
+    );
   } catch (error: any) {
     console.error("Update payment reminder error:", error);
     return NextResponse.json(
@@ -99,4 +98,3 @@ export async function PUT(
     );
   }
 }
-

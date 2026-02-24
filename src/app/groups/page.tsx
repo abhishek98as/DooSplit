@@ -59,6 +59,31 @@ export default function GroupsPage() {
     }
   }, [status]);
 
+  useEffect(() => {
+    if (status !== "authenticated") {
+      return;
+    }
+
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ domains?: string[] }>).detail;
+      const domains = detail?.domains || [];
+      if (
+        domains.includes("groups") ||
+        domains.includes("friends") ||
+        domains.includes("expenses") ||
+        domains.includes("activity")
+      ) {
+        fetchGroups(true);
+        fetchFriends();
+      }
+    };
+
+    window.addEventListener("doosplit:data-updated", handler as EventListener);
+    return () => {
+      window.removeEventListener("doosplit:data-updated", handler as EventListener);
+    };
+  }, [status]);
+
   const fetchGroups = async (forceFresh = false) => {
     try {
       const res = await fetch(`/api/groups${forceFresh ? `?refresh=${Date.now()}` : ""}`, {

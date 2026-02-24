@@ -71,7 +71,7 @@ async function searchUsers(query: string, limit = 10): Promise<any[]> {
       .where("email_normalized", "<=", max)
       .limit(limit)
       .get();
-    return snap.docs.map((doc) => ({ id: doc.id, ...(doc.data() || {}) }));
+    return snap.docs.map((doc) => ({ id: doc.id, ...((doc.data() as any) || {}) }));
   }
 
   const [nameSnap, emailSnap] = await Promise.all([
@@ -91,7 +91,7 @@ async function searchUsers(query: string, limit = 10): Promise<any[]> {
 
   const dedup = new Map<string, any>();
   for (const doc of [...nameSnap.docs, ...emailSnap.docs]) {
-    dedup.set(doc.id, { id: doc.id, ...(doc.data() || {}) });
+    dedup.set(doc.id, { id: doc.id, ...((doc.data() as any) || {}) });
   }
 
   return Array.from(dedup.values()).slice(0, limit);
@@ -143,3 +143,4 @@ export async function GET(request: NextRequest) {
     );
   }
 }
+

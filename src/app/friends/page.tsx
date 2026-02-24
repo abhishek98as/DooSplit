@@ -106,6 +106,33 @@ export default function FriendsPage() {
     }
   }, [status]);
 
+  useEffect(() => {
+    if (status !== "authenticated") {
+      return;
+    }
+
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ domains?: string[] }>).detail;
+      const domains = detail?.domains || [];
+      if (
+        domains.includes("friends") ||
+        domains.includes("expenses") ||
+        domains.includes("settlements") ||
+        domains.includes("groups") ||
+        domains.includes("activity")
+      ) {
+        fetchFriends();
+        fetchRequests();
+        fetchInvitations();
+      }
+    };
+
+    window.addEventListener("doosplit:data-updated", handler as EventListener);
+    return () => {
+      window.removeEventListener("doosplit:data-updated", handler as EventListener);
+    };
+  }, [status]);
+
   const fetchFriends = async () => {
     try {
       const offlineStore = getOfflineStore();

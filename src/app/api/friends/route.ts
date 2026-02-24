@@ -45,7 +45,7 @@ async function findUserByEmail(email: string) {
     .get();
   if (!snap.empty) {
     const doc = snap.docs[0];
-    return { id: doc.id, ...(doc.data() || {}) };
+    return { id: doc.id, ...((doc.data() as any) || {}) };
   }
 
   const fallback = await db
@@ -58,7 +58,7 @@ async function findUserByEmail(email: string) {
   }
 
   const doc = fallback.docs[0];
-  return { id: doc.id, ...(doc.data() || {}) };
+  return { id: doc.id, ...((doc.data() as any) || {}) };
 }
 
 export async function GET(request: NextRequest) {
@@ -284,3 +284,4 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+

@@ -5,13 +5,19 @@ import {
   getOrSetCacheJson,
 } from "@/lib/cache";
 import { requireUser } from "@/lib/auth/require-user";
-import { requireSupabaseAdmin } from "@/lib/supabase/app";
+import { getAdminDb } from "@/lib/firestore/admin";
+import {
+  fetchDocsByIds,
+  logSlowRoute,
+  mapUser,
+  toIso,
+  toNum,
+  uniqueStrings,
+} from "@/lib/firestore/route-helpers";
+import { getFriendshipStatus } from "@/lib/social/friendship-store";
 
 export const dynamic = "force-dynamic";
-
-function toNum(value: any): number {
-  return Number(value || 0);
-}
+export const preferredRegion = "iad1";
 
 export async function GET(
   request: NextRequest,
@@ -19,26 +25,16 @@ export async function GET(
 ) {
   const { id } = await params;
   try {
+    const routeStart = Date.now();
     const auth = await requireUser(request);
     if (auth.response || !auth.user) {
       return auth.response as NextResponse;
     }
     const userId = auth.user.id;
     const friendId = id;
-    const supabase = requireSupabaseAdmin();
 
-    const { data: friendship, error: friendshipError } = await supabase
-      .from("friendships")
-      .select("id")
-      .or(
-        `and(user_id.eq.${userId},friend_id.eq.${friendId},status.eq.accepted),and(user_id.eq.${friendId},friend_id.eq.${userId},status.eq.accepted)`
-      )
-      .limit(1)
-      .maybeSingle();
-    if (friendshipError) {
-      throw friendshipError;
-    }
-    if (!friendship) {
+    const friendship = await getFriendshipStatus(userId, friendId);
+    if (friendship.status !== "accepted") {
       return NextResponse.json({ error: "Friend not found" }, { status: 404 });
     }
 
@@ -49,19 +45,22 @@ export async function GET(
     );
 
     const payload = await getOrSetCacheJson(cacheKey, CACHE_TTL.activities, async () => {
+      const db = getAdminDb();
       const transactions: any[] = [];
 
-      const { data: pairParticipants, error: pairError } = await supabase
-        .from("expense_participants")
-        .select("expense_id,user_id,paid_amount,owed_amount")
-        .in("user_id", [userId, friendId]);
-      if (pairError) {
-        throw pairError;
-      }
+      const [userParticipantsSnap, friendParticipantsSnap] = await Promise.all([
+        db.collection("expense_participants").where("user_id", "==", userId).get(),
+        db.collection("expense_participants").where("user_id", "==", friendId).get(),
+      ]);
+
+      const pairParticipants = [
+        ...userParticipantsSnap.docs.map((doc) => ({ id: doc.id, ...((doc.data() as any) || {}) })),
+        ...friendParticipantsSnap.docs.map((doc) => ({ id: doc.id, ...((doc.data() as any) || {}) })),
+      ];
 
       const pairByExpense = new Map<string, any[]>();
       for (const participant of pairParticipants || []) {
-        const key = String(participant.expense_id);
+        const key = String(participant.expense_id || "");
         const list = pairByExpense.get(key) || [];
         list.push(participant);
         pairByExpense.set(key, list);
@@ -69,31 +68,30 @@ export async function GET(
 
       const expenseIds = Array.from(pairByExpense.entries())
         .filter(([, participants]) => {
-          const users = new Set(participants.map((participant) => String(participant.user_id)));
+          const users = new Set(participants.map((participant) => String(participant.user_id || "")));
           return users.has(userId) && users.has(friendId);
         })
         .map(([expenseId]) => expenseId);
 
       if (expenseIds.length > 0) {
-        const { data: expenses, error: expensesError } = await supabase
-          .from("expenses")
-          .select("id,description,currency,created_at,created_by,group_id,is_deleted")
-          .in("id", expenseIds)
-          .eq("is_deleted", false);
-        if (expensesError) {
-          throw expensesError;
-        }
+        const [expensesById, allParticipants] = await Promise.all([
+          fetchDocsByIds("expenses", expenseIds),
+          Promise.all(
+            expenseIds.map(async (expenseId) => {
+              const snap = await db
+                .collection("expense_participants")
+                .where("expense_id", "==", expenseId)
+                .get();
+              return snap.docs.map((doc) => ({ id: doc.id, ...((doc.data() as any) || {}) }));
+            })
+          ).then((chunks) => chunks.flat()),
+        ]);
 
-        const { data: allParticipants, error: participantsError } = await supabase
-          .from("expense_participants")
-          .select("expense_id,is_settled")
-          .in("expense_id", expenseIds);
-        if (participantsError) {
-          throw participantsError;
-        }
+        const expenses = Array.from(expensesById.values()).filter((row: any) => !row.is_deleted);
+
         const settledByExpense = new Map<string, boolean>();
         for (const participant of allParticipants || []) {
-          const key = String(participant.expense_id);
+          const key = String(participant.expense_id || "");
           if (!settledByExpense.has(key)) {
             settledByExpense.set(key, true);
           }
@@ -102,31 +100,21 @@ export async function GET(
           }
         }
 
-        const userIds = Array.from(new Set((expenses || []).map((e: any) => String(e.created_by))));
-        const groupIds = Array.from(
-          new Set(
-            (expenses || [])
-              .map((e: any) => (e.group_id ? String(e.group_id) : ""))
-              .filter(Boolean)
+        const userIds = uniqueStrings((expenses || []).map((expense: any) => String(expense.created_by || "")));
+        const groupIds = uniqueStrings(
+          (expenses || []).map((expense: any) =>
+            expense.group_id ? String(expense.group_id) : ""
           )
         );
-
-        const { data: users } = await supabase
-          .from("users")
-          .select("id,name,profile_picture")
-          .in("id", userIds.length > 0 ? userIds : ["__none__"]);
-        const usersMap = new Map<string, any>((users || []).map((u: any) => [String(u.id), u]));
-
-        const { data: groups } = await supabase
-          .from("groups")
-          .select("id,name")
-          .in("id", groupIds.length > 0 ? groupIds : ["__none__"]);
-        const groupsMap = new Map<string, any>((groups || []).map((g: any) => [String(g.id), g]));
+        const [usersMap, groupsMap] = await Promise.all([
+          fetchDocsByIds("users", userIds),
+          fetchDocsByIds("groups", groupIds),
+        ]);
 
         for (const expense of expenses || []) {
-          const participants = pairByExpense.get(String(expense.id)) || [];
+          const participants = pairByExpense.get(String(expense.id || "")) || [];
           const userParticipant = participants.find(
-            (participant: any) => String(participant.user_id) === userId
+            (participant: any) => String(participant.user_id || "") === userId
           );
           if (!userParticipant) {
             continue;
@@ -135,88 +123,78 @@ export async function GET(
           const netAmount = toNum(userParticipant.owed_amount);
           const isPositive =
             toNum(userParticipant.paid_amount) > toNum(userParticipant.owed_amount);
-          const creator = usersMap.get(String(expense.created_by));
+          const creator = usersMap.get(String(expense.created_by || ""));
           const group = expense.group_id
-            ? groupsMap.get(String(expense.group_id))
+            ? groupsMap.get(String(expense.group_id || ""))
             : null;
 
           transactions.push({
-            id: expense.id,
+            id: String(expense.id || ""),
             type: "expense",
-            description: expense.description,
+            description: String(expense.description || ""),
             amount: Math.abs(netAmount),
-            currency: expense.currency,
-            createdAt: expense.created_at,
+            currency: String(expense.currency || "INR"),
+            createdAt: toIso(expense.created_at || expense._created_at),
             isSettlement: false,
-            settled: settledByExpense.get(String(expense.id)) ?? false,
+            settled: settledByExpense.get(String(expense.id || "")) ?? false,
             group: group
               ? {
-                  id: group.id,
-                  name: group.name,
+                  id: String(group.id || ""),
+                  name: String(group.name || "Group"),
                 }
               : null,
             isPositive,
-            user: creator
-              ? {
-                  id: creator.id,
-                  name: creator.name,
-                  profilePicture: creator.profile_picture || null,
-                }
-              : null,
+            user: creator ? mapUser(creator) : null,
           });
         }
       }
 
-      const { data: settlements, error: settlementsError } = await supabase
-        .from("settlements")
-        .select("id,from_user_id,to_user_id,amount,currency,created_at")
-        .or(
-          `and(from_user_id.eq.${userId},to_user_id.eq.${friendId}),and(from_user_id.eq.${friendId},to_user_id.eq.${userId})`
-        )
-        .order("created_at", { ascending: false });
-      if (settlementsError) {
-        throw settlementsError;
-      }
+      const [outgoingSettlementsSnap, incomingSettlementsSnap] = await Promise.all([
+        db
+          .collection("settlements")
+          .where("from_user_id", "==", userId)
+          .where("to_user_id", "==", friendId)
+          .get(),
+        db
+          .collection("settlements")
+          .where("from_user_id", "==", friendId)
+          .where("to_user_id", "==", userId)
+          .get(),
+      ]);
+      const settlements = [
+        ...outgoingSettlementsSnap.docs.map((doc) => ({ id: doc.id, ...((doc.data() as any) || {}) })),
+        ...incomingSettlementsSnap.docs.map((doc) => ({ id: doc.id, ...((doc.data() as any) || {}) })),
+      ].sort((a, b) => {
+        const aMs = new Date(toIso(a.created_at || a._created_at || a.date)).getTime();
+        const bMs = new Date(toIso(b.created_at || b._created_at || b.date)).getTime();
+        return bMs - aMs;
+      });
 
-      const settlementUserIds = Array.from(
-        new Set(
-          (settlements || []).flatMap((settlement: any) => [
-            String(settlement.from_user_id),
-            String(settlement.to_user_id),
-          ])
-        )
+      const settlementUserIds = uniqueStrings(
+        settlements.flatMap((settlement: any) => [
+          String(settlement.from_user_id || ""),
+          String(settlement.to_user_id || ""),
+        ])
       );
-      const { data: settlementUsers } = await supabase
-        .from("users")
-        .select("id,name,profile_picture")
-        .in("id", settlementUserIds.length > 0 ? settlementUserIds : ["__none__"]);
-      const settlementUsersMap = new Map<string, any>(
-        (settlementUsers || []).map((u: any) => [String(u.id), u])
-      );
+      const settlementUsersMap = await fetchDocsByIds("users", settlementUserIds);
 
       for (const settlement of settlements || []) {
-        const isFromUser = String(settlement.from_user_id) === userId;
+        const isFromUser = String(settlement.from_user_id || "") === userId;
         const otherUser = isFromUser
-          ? settlementUsersMap.get(String(settlement.to_user_id))
-          : settlementUsersMap.get(String(settlement.from_user_id));
+          ? settlementUsersMap.get(String(settlement.to_user_id || ""))
+          : settlementUsersMap.get(String(settlement.from_user_id || ""));
         const action = isFromUser ? "paid" : "received payment from";
 
         transactions.push({
-          id: settlement.id,
+          id: String(settlement.id || ""),
           type: "settlement",
           description: `You ${action} ${otherUser?.name || "Unknown"}`,
           amount: toNum(settlement.amount),
-          currency: settlement.currency,
-          createdAt: settlement.created_at,
+          currency: String(settlement.currency || "INR"),
+          createdAt: toIso(settlement.created_at || settlement._created_at || settlement.date),
           isSettlement: true,
           settled: true,
-          user: otherUser
-            ? {
-                id: otherUser.id,
-                name: otherUser.name,
-                profilePicture: otherUser.profile_picture || null,
-              }
-            : null,
+          user: otherUser ? mapUser(otherUser) : null,
         });
       }
 
@@ -230,7 +208,13 @@ export async function GET(
       };
     });
 
-    return NextResponse.json(payload);
+    const routeMs = logSlowRoute("/api/friends/[id]/transactions", routeStart);
+    return NextResponse.json(payload, {
+      status: 200,
+      headers: {
+        "X-Doosplit-Route-Ms": String(routeMs),
+      },
+    });
   } catch (error: any) {
     console.error("Get friend transactions error:", error);
     return NextResponse.json(

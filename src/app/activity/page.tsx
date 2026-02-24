@@ -45,6 +45,31 @@ export default function ActivityPage() {
     }
   }, [status]);
 
+  useEffect(() => {
+    if (status !== "authenticated") {
+      return;
+    }
+
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ domains?: string[] }>).detail;
+      const domains = detail?.domains || [];
+      if (
+        domains.includes("activity") ||
+        domains.includes("expenses") ||
+        domains.includes("friends") ||
+        domains.includes("groups") ||
+        domains.includes("settlements")
+      ) {
+        fetchActivities();
+      }
+    };
+
+    window.addEventListener("doosplit:data-updated", handler as EventListener);
+    return () => {
+      window.removeEventListener("doosplit:data-updated", handler as EventListener);
+    };
+  }, [status]);
+
   const fetchActivities = async () => {
     try {
       const res = await fetch("/api/dashboard/activity");

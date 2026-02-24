@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth/require-user";
-import { requireSupabaseAdmin } from "@/lib/supabase/app";
+import { getAdminDb } from "@/lib/firestore/admin";
+import { fetchDocsByIds, toIso, toNum, uniqueStrings } from "@/lib/firestore/route-helpers";
+import { getFriendshipStatus } from "@/lib/social/friendship-store";
 
 export const dynamic = "force-dynamic";
 
@@ -16,40 +18,39 @@ export async function GET(
 ) {
   const { id } = await params;
   try {
+    const routeStart = Date.now();
     const auth = await requireUser(request);
     if (auth.response || !auth.user) {
       return auth.response as NextResponse;
     }
     const userId = auth.user.id;
     const friendId = id;
-    const supabase = requireSupabaseAdmin();
 
-    const { data: friendship, error: friendshipError } = await supabase
-      .from("friendships")
-      .select("id")
-      .or(
-        `and(user_id.eq.${userId},friend_id.eq.${friendId},status.eq.accepted),and(user_id.eq.${friendId},friend_id.eq.${userId},status.eq.accepted)`
-      )
-      .limit(1)
-      .maybeSingle();
-    if (friendshipError) {
-      throw friendshipError;
-    }
-    if (!friendship) {
+    const friendship = await getFriendshipStatus(userId, friendId);
+    if (friendship.status !== "accepted") {
       return NextResponse.json({ error: "Friend not found" }, { status: 404 });
     }
 
-    const { data: pairParticipants, error: pairParticipantsError } = await supabase
-      .from("expense_participants")
-      .select("expense_id,user_id,paid_amount,owed_amount,is_settled")
-      .in("user_id", [userId, friendId]);
-    if (pairParticipantsError) {
-      throw pairParticipantsError;
-    }
+    const db = getAdminDb();
+    const [userParticipantsSnap, friendParticipantsSnap] = await Promise.all([
+      db.collection("expense_participants").where("user_id", "==", userId).get(),
+      db.collection("expense_participants").where("user_id", "==", friendId).get(),
+    ]);
+
+    const pairParticipants: any[] = [
+      ...userParticipantsSnap.docs.map((doc) => ({
+        id: doc.id,
+        ...((doc.data() as any) || {}),
+      })),
+      ...friendParticipantsSnap.docs.map((doc) => ({
+        id: doc.id,
+        ...((doc.data() as any) || {}),
+      })),
+    ];
 
     const pairByExpense = new Map<string, any[]>();
     for (const participant of pairParticipants || []) {
-      const expenseId = String(participant.expense_id);
+      const expenseId = String(participant.expense_id || "");
       const list = pairByExpense.get(expenseId) || [];
       list.push(participant);
       pairByExpense.set(expenseId, list);
@@ -57,81 +58,73 @@ export async function GET(
 
     const expenseIds = Array.from(pairByExpense.entries())
       .filter(([, participants]) => {
-        const users = new Set(participants.map((participant) => String(participant.user_id)));
+        const users = new Set(participants.map((participant) => String(participant.user_id || "")));
         return users.has(userId) && users.has(friendId);
       })
       .map(([expenseId]) => expenseId);
 
-    let expenses: any[] = [];
-    let groupsMap = new Map<string, any>();
-    let settledByExpense = new Map<string, boolean>();
-    if (expenseIds.length > 0) {
-      const { data: expenseRows, error: expensesError } = await supabase
-        .from("expenses")
-        .select("id,date,description,category,amount,currency,group_id,is_deleted")
-        .in("id", expenseIds)
-        .eq("is_deleted", false)
-        .order("date", { ascending: false });
-      if (expensesError) {
-        throw expensesError;
-      }
-      expenses = expenseRows || [];
+    const expensesById = await fetchDocsByIds("expenses", expenseIds);
+    const expenses = Array.from(expensesById.values())
+      .filter((row: any) => !row.is_deleted)
+      .sort((a, b) => {
+        const aMs = new Date(toIso(a.date || a.created_at || a._created_at)).getTime();
+        const bMs = new Date(toIso(b.date || b.created_at || b._created_at)).getTime();
+        return bMs - aMs;
+      });
 
-      const { data: allParticipants, error: allParticipantsError } = await supabase
-        .from("expense_participants")
-        .select("expense_id,is_settled")
-        .in("expense_id", expenseIds);
-      if (allParticipantsError) {
-        throw allParticipantsError;
-      }
-      for (const participant of allParticipants || []) {
-        const key = String(participant.expense_id);
+    const settledByExpense = new Map<string, boolean>();
+    for (const expenseId of expenseIds) {
+      const snap = await db
+        .collection("expense_participants")
+        .where("expense_id", "==", expenseId)
+        .get();
+      for (const doc of snap.docs) {
+        const row = doc.data() || {};
+        const key = String(row.expense_id || "");
         if (!settledByExpense.has(key)) {
           settledByExpense.set(key, true);
         }
-        if (!participant.is_settled) {
+        if (!row.is_settled) {
           settledByExpense.set(key, false);
         }
       }
-
-      const groupIds = Array.from(
-        new Set(
-          expenses
-            .map((expense: any) => (expense.group_id ? String(expense.group_id) : ""))
-            .filter(Boolean)
-        )
-      );
-      if (groupIds.length > 0) {
-        const { data: groups, error: groupsError } = await supabase
-          .from("groups")
-          .select("id,name")
-          .in("id", groupIds);
-        if (groupsError) {
-          throw groupsError;
-        }
-        groupsMap = new Map<string, any>((groups || []).map((group: any) => [String(group.id), group]));
-      }
     }
 
-    const { data: settlementRows, error: settlementsError } = await supabase
-      .from("settlements")
-      .select("id,from_user_id,to_user_id,amount,currency,date")
-      .or(
-        `and(from_user_id.eq.${userId},to_user_id.eq.${friendId}),and(from_user_id.eq.${friendId},to_user_id.eq.${userId})`
-      )
-      .order("date", { ascending: false });
-    if (settlementsError) {
-      throw settlementsError;
-    }
+    const groupIds = uniqueStrings(
+      expenses
+        .map((expense: any) => (expense.group_id ? String(expense.group_id) : ""))
+        .filter(Boolean)
+    );
+    const groupsMap = await fetchDocsByIds("groups", groupIds);
 
-    const { data: users, error: usersError } = await supabase
-      .from("users")
-      .select("id,name")
-      .in("id", [userId, friendId]);
-    if (usersError) {
-      throw usersError;
-    }
-    const usersMap = new Map<string, any>((users || []).map((u: any) => [String(u.id), u]));
+    const [outgoingSettlementsSnap, incomingSettlementsSnap] = await Promise.all([
+      db
+        .collection("settlements")
+        .where("from_user_id", "==", userId)
+        .where("to_user_id", "==", friendId)
+        .get(),
+      db
+        .collection("settlements")
+        .where("from_user_id", "==", friendId)
+        .where("to_user_id", "==", userId)
+        .get(),
+    ]);
+    const settlementRows: any[] = [
+      ...outgoingSettlementsSnap.docs.map((doc) => ({
+        id: doc.id,
+        ...((doc.data() as any) || {}),
+      })),
+      ...incomingSettlementsSnap.docs.map((doc) => ({
+        id: doc.id,
+        ...((doc.data() as any) || {}),
+      })),
+    ].sort((a: any, b: any) => {
+      const aMs = new Date(toIso(a.date || a.created_at || a._created_at)).getTime();
+      const bMs = new Date(toIso(b.date || b.created_at || b._created_at)).getTime();
+      return bMs - aMs;
+    });
+
+    const usersMap = await fetchDocsByIds("users", [userId, friendId]);
 
     const expenseRows: string[][] = [];
     expenseRows.push([
@@ -146,31 +139,33 @@ export async function GET(
     ]);
 
     for (const expense of expenses) {
-      const participants = pairByExpense.get(String(expense.id)) || [];
+      const participants = pairByExpense.get(String(expense.id || "")) || [];
       const userParticipant = participants.find(
-        (participant: any) => String(participant.user_id) === userId
+        (participant: any) => String(participant.user_id || "") === userId
       );
       const friendParticipant = participants.find(
-        (participant: any) => String(participant.user_id) === friendId
+        (participant: any) => String(participant.user_id || "") === friendId
       );
       if (!userParticipant || !friendParticipant) {
         continue;
       }
 
-      const isSettled = settledByExpense.get(String(expense.id)) ?? false;
-      const userShare = Number(userParticipant.owed_amount || 0);
-      const amount = Number(expense.amount || 0);
-      const symbol = expense.currency === "INR" ? "INR " : `${expense.currency} `;
+      const isSettled = settledByExpense.get(String(expense.id || "")) ?? false;
+      const userShare = toNum(userParticipant.owed_amount);
+      const amount = toNum(expense.amount);
+      const currency = String(expense.currency || "INR");
+      const symbol = currency === "INR" ? "INR " : `${currency} `;
+      const dateIso = toIso(expense.date || expense.created_at || expense._created_at);
 
       expenseRows.push([
-        new Date(expense.date).toLocaleDateString(),
+        dateIso ? new Date(dateIso).toLocaleDateString() : "",
         String(expense.description || ""),
         String(expense.category || "other").charAt(0).toUpperCase() +
           String(expense.category || "other").slice(1),
         `${symbol}${amount.toFixed(2)}`,
         `${symbol}${userShare.toFixed(2)}`,
         expense.group_id ? groupsMap.get(String(expense.group_id))?.name || "Group" : "Non-Group",
-        Number(userParticipant.paid_amount || 0) > 0 ? "Paid" : "Owed",
+        toNum(userParticipant.paid_amount) > 0 ? "Paid" : "Owed",
         isSettled ? "Settled" : "Outstanding",
       ]);
     }
@@ -179,17 +174,19 @@ export async function GET(
     settlementRowsCsv.push(["Date", "Description", "Amount", "Type"]);
 
     for (const settlement of settlementRows || []) {
-      const isFromUser = String(settlement.from_user_id) === userId;
+      const isFromUser = String(settlement.from_user_id || "") === userId;
       const otherUser = isFromUser
-        ? usersMap.get(String(settlement.to_user_id))
-        : usersMap.get(String(settlement.from_user_id));
+        ? usersMap.get(String(settlement.to_user_id || ""))
+        : usersMap.get(String(settlement.from_user_id || ""));
       const action = isFromUser ? "Paid" : "Received";
-      const symbol = settlement.currency === "INR" ? "INR " : `${settlement.currency} `;
+      const currency = String(settlement.currency || "INR");
+      const symbol = currency === "INR" ? "INR " : `${currency} `;
+      const dateIso = toIso(settlement.date || settlement.created_at || settlement._created_at);
 
       settlementRowsCsv.push([
-        new Date(settlement.date).toLocaleDateString(),
+        dateIso ? new Date(dateIso).toLocaleDateString() : "",
         `Settlement - ${action} ${otherUser?.name || "Unknown"}`,
-        `${symbol}${Number(settlement.amount || 0).toFixed(2)}`,
+        `${symbol}${toNum(settlement.amount).toFixed(2)}`,
         action,
       ]);
     }
@@ -207,6 +204,7 @@ export async function GET(
       headers: {
         "Content-Type": "text/csv",
         "Content-Disposition": `attachment; filename="friend-expenses-${friendId}.csv"`,
+        "X-Doosplit-Route-Ms": String(Date.now() - routeStart),
       },
     });
   } catch (error: any) {
@@ -217,4 +215,3 @@ export async function GET(
     );
   }
 }
-

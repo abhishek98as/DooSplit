@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth/require-user";
-import { requireSupabaseAdmin } from "@/lib/supabase/app";
+import { getAdminDb } from "@/lib/firestore/admin";
+import { fetchDocsByIds, toIso, uniqueStrings } from "@/lib/firestore/route-helpers";
 
 export const dynamic = "force-dynamic";
 
@@ -10,43 +11,42 @@ function csvCell(value: unknown): string {
 
 export async function GET(request: NextRequest) {
   try {
+    const routeStart = Date.now();
     const auth = await requireUser(request);
     if (auth.response || !auth.user) {
       return auth.response as NextResponse;
     }
 
     const userId = auth.user.id;
-    const supabase = requireSupabaseAdmin();
+    const db = getAdminDb();
 
-    const { data: settlements, error } = await supabase
-      .from("settlements")
-      .select("*")
-      .or(`from_user_id.eq.${userId},to_user_id.eq.${userId}`)
-      .order("date", { ascending: false })
-      .order("created_at", { ascending: false });
-    if (error) {
-      throw error;
+    const [fromSnap, toSnap] = await Promise.all([
+      db.collection("settlements").where("from_user_id", "==", userId).get(),
+      db.collection("settlements").where("to_user_id", "==", userId).get(),
+    ]);
+
+    const dedup = new Map<string, any>();
+    for (const doc of [...fromSnap.docs, ...toSnap.docs]) {
+      dedup.set(doc.id, { id: doc.id, ...((doc.data() as any) || {}) });
     }
+
+    const settlements = Array.from(dedup.values()).sort((a, b) => {
+      const aMs = new Date(toIso(a.date || a.created_at || a._created_at)).getTime();
+      const bMs = new Date(toIso(b.date || b.created_at || b._created_at)).getTime();
+      return bMs - aMs;
+    });
+
     if (!settlements || settlements.length === 0) {
       return new NextResponse("No settlements found", { status: 404 });
     }
 
-    const userIds = Array.from(
-      new Set(
-        settlements.flatMap((settlement: any) => [
-          String(settlement.from_user_id),
-          String(settlement.to_user_id),
-        ])
-      )
+    const userIds = uniqueStrings(
+      settlements.flatMap((settlement: any) => [
+        String(settlement.from_user_id || ""),
+        String(settlement.to_user_id || ""),
+      ])
     );
-    const { data: users, error: usersError } = await supabase
-      .from("users")
-      .select("id,name,email")
-      .in("id", userIds);
-    if (usersError) {
-      throw usersError;
-    }
-    const usersMap = new Map<string, any>((users || []).map((u: any) => [String(u.id), u]));
+    const usersMap = await fetchDocsByIds("users", userIds);
 
     const rows: string[] = [];
     rows.push(
@@ -69,10 +69,12 @@ export async function GET(request: NextRequest) {
       const description = isOutgoing
         ? `Payment to ${toUser?.name || "Unknown"}`
         : `Payment from ${fromUser?.name || "Unknown"}`;
+      const dateIso = toIso(settlement.date || settlement.created_at || settlement._created_at);
+      const dateLabel = dateIso ? new Date(dateIso).toLocaleDateString() : "";
 
       rows.push(
         [
-          csvCell(new Date(settlement.date).toLocaleDateString()),
+          csvCell(dateLabel),
           csvCell(description),
           csvCell(fromUser?.name || ""),
           csvCell(toUser?.name || ""),
@@ -88,6 +90,7 @@ export async function GET(request: NextRequest) {
       headers: {
         "Content-Type": "text/csv",
         "Content-Disposition": `attachment; filename="settlements_${new Date().toISOString().split("T")[0]}.csv"`,
+        "X-Doosplit-Route-Ms": String(Date.now() - routeStart),
       },
     });
   } catch (error: any) {
@@ -98,4 +101,5 @@ export async function GET(request: NextRequest) {
     );
   }
 }
+
 

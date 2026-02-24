@@ -107,7 +107,7 @@ async function findUserByEmailNormalized(
 
   return {
     id: doc.id,
-    ...(doc.data() || {}),
+    ...((doc.data() as any) || {}),
   };
 }
 
@@ -145,7 +145,7 @@ async function getLatestInvitationForInviterEmail(invitedBy: string, emailNormal
   for (const doc of [...normalizedSnap.docs, ...legacySnap.docs]) {
     rows.set(doc.id, {
       id: doc.id,
-      ...(doc.data() || {}),
+      ...((doc.data() as any) || {}),
     });
     refs.set(doc.id, doc.ref);
   }
@@ -181,7 +181,7 @@ export async function GET(request: NextRequest) {
 
     const invitations = invitationsSnap.docs.map((doc) => ({
       id: doc.id,
-      ...(doc.data() || {}),
+      ...((doc.data() as any) || {}),
     }));
 
     return NextResponse.json(
@@ -482,3 +482,4 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+

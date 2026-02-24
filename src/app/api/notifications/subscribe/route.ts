@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth/require-user";
-import { requireSupabaseAdmin } from "@/lib/supabase/app";
 import { getAdminDb, FieldValue } from "@/lib/firestore/admin";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
   try {
+    const routeStart = Date.now();
     const auth = await requireUser(request);
     if (auth.response || !auth.user) {
       return auth.response as NextResponse;
@@ -41,23 +41,14 @@ export async function POST(request: NextRequest) {
 
     await db.collection("users").doc(auth.user.id).set(updatePayload, { merge: true });
 
-    const supabase = requireSupabaseAdmin();
-    const legacyPayload: Record<string, any> = {
-      push_notifications_enabled: true,
-    };
-    if (subscription?.endpoint) {
-      legacyPayload.push_subscription = subscription;
-    }
-
-    const { error } = await supabase.from("users").update(legacyPayload).eq("id", auth.user.id);
-
-    if (error) {
-      throw error;
-    }
-
     return NextResponse.json({
       message: "Successfully subscribed to push notifications",
       fcmRegistered: Boolean(fcmToken),
+    }, {
+      status: 200,
+      headers: {
+        "X-Doosplit-Route-Ms": String(Date.now() - routeStart),
+      },
     });
   } catch (error: any) {
     console.error("Subscribe to notifications error:", error);
@@ -70,6 +61,7 @@ export async function POST(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   try {
+    const routeStart = Date.now();
     const auth = await requireUser(request);
     if (auth.response || !auth.user) {
       return auth.response as NextResponse;
@@ -95,18 +87,13 @@ export async function DELETE(request: NextRequest) {
 
     await db.collection("users").doc(auth.user.id).set(firestorePayload, { merge: true });
 
-    const supabase = requireSupabaseAdmin();
-    const { error } = await supabase.from("users").update({
-      push_subscription: null,
-      push_notifications_enabled: false,
-    }).eq("id", auth.user.id);
-
-    if (error) {
-      throw error;
-    }
-
     return NextResponse.json({
       message: "Successfully unsubscribed from push notifications",
+    }, {
+      status: 200,
+      headers: {
+        "X-Doosplit-Route-Ms": String(Date.now() - routeStart),
+      },
     });
   } catch (error: any) {
     console.error("Unsubscribe from notifications error:", error);

@@ -118,6 +118,31 @@ export default function ExpensesPage() {
     }
   }, [status, page, selectedCategory, selectedGroup, startDate, endDate]);
 
+  useEffect(() => {
+    if (status !== "authenticated") {
+      return;
+    }
+
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ domains?: string[] }>).detail;
+      const domains = detail?.domains || [];
+      if (
+        domains.includes("expenses") ||
+        domains.includes("friends") ||
+        domains.includes("groups") ||
+        domains.includes("settlements") ||
+        domains.includes("analytics")
+      ) {
+        fetchExpenses();
+      }
+    };
+
+    window.addEventListener("doosplit:data-updated", handler as EventListener);
+    return () => {
+      window.removeEventListener("doosplit:data-updated", handler as EventListener);
+    };
+  }, [status, page, selectedCategory, selectedGroup, startDate, endDate]);
+
   const fetchExpenses = async () => {
     setLoading(true);
     try {

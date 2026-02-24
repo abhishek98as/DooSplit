@@ -36,7 +36,7 @@ async function getUsersByIds(userIds: string[]): Promise<Map<string, any>> {
       if (doc.exists) {
         users.set(doc.id, {
           id: doc.id,
-          ...(doc.data() || {}),
+          ...((doc.data() as any) || {}),
         });
       }
     }
@@ -84,4 +84,5 @@ export async function GET(request: NextRequest) {
     );
   }
 }
+
 

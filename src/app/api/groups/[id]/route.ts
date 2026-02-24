@@ -6,88 +6,63 @@ import {
   invalidateUsersCache,
 } from "@/lib/cache";
 import { requireUser } from "@/lib/auth/require-user";
-import { requireSupabaseAdmin } from "@/lib/supabase/app";
+import { FieldValue, getAdminDb } from "@/lib/firestore/admin";
 import { computeGroupMemberNetBalances } from "@/lib/data/balance-service";
+import { fetchDocsByIds, mapUser, round2, toIso, uniqueStrings } from "@/lib/firestore/route-helpers";
+import { GROUP_MUTATION_CACHE_SCOPES } from "@/lib/cache-scopes";
 
 export const dynamic = "force-dynamic";
+export const preferredRegion = "iad1";
 
 async function loadGroupPayload(
   groupId: string,
   userId: string
 ): Promise<{ group: any; memberIds: string[] }> {
-  const supabase = requireSupabaseAdmin();
-
-  const { data: membership, error: membershipError } = await supabase
-    .from("group_members")
-    .select("role")
-    .eq("group_id", groupId)
-    .eq("user_id", userId)
-    .maybeSingle();
-  if (membershipError) {
-    throw membershipError;
-  }
-  if (!membership) {
+  const db = getAdminDb();
+  const membershipSnap = await db
+    .collection("group_members")
+    .where("group_id", "==", groupId)
+    .where("user_id", "==", userId)
+    .limit(1)
+    .get();
+  if (membershipSnap.empty) {
     throw new Error("Forbidden");
   }
+  const membership = membershipSnap.docs[0].data() || {};
 
-  const { data: group, error: groupError } = await supabase
-    .from("groups")
-    .select("*")
-    .eq("id", groupId)
-    .eq("is_active", true)
-    .maybeSingle();
-  if (groupError) {
-    throw groupError;
-  }
-  if (!group) {
+  const groupDoc = await db.collection("groups").doc(groupId).get();
+  if (!groupDoc.exists || groupDoc.data()?.is_active === false) {
     throw new Error("Group not found");
   }
+  const group: any = { id: groupDoc.id, ...((groupDoc.data() as any) || {}) };
 
-  const { data: members, error: membersError } = await supabase
-    .from("group_members")
-    .select("*")
-    .eq("group_id", groupId);
-  if (membersError) {
-    throw membersError;
-  }
+  const membersSnap = await db
+    .collection("group_members")
+    .where("group_id", "==", groupId)
+    .get();
+  const members = membersSnap.docs.map((doc) => ({ id: doc.id, ...((doc.data() as any) || {}) }));
 
-  const userIds = Array.from(
-    new Set([
-      String(group.created_by),
-      ...(members || []).map((member: any) => String(member.user_id)),
-    ])
-  );
-  const { data: users, error: usersError } = await supabase
-    .from("users")
-    .select("id,name,email,profile_picture")
-    .in("id", userIds);
-  if (usersError) {
-    throw usersError;
-  }
-  const usersMap = new Map<string, any>((users || []).map((u: any) => [String(u.id), u]));
+  const userIds = uniqueStrings([
+    String(group.created_by || ""),
+    ...members.map((member: any) => String(member.user_id || "")),
+  ]);
+  const usersMap = await fetchDocsByIds("users", userIds);
 
-  const payloadMembers = (members || []).map((member: any) => {
-    const user = usersMap.get(String(member.user_id));
+  const payloadMembers = members.map((member: any) => {
+    const user = usersMap.get(String(member.user_id || ""));
     return {
-      _id: member.id,
-      groupId: member.group_id,
-      userId: user
-        ? {
-            _id: user.id,
-            name: user.name,
-            email: user.email,
-            profilePicture: user.profile_picture || null,
-          }
-        : null,
-      role: member.role,
-      joinedAt: member.joined_at,
-      createdAt: member.created_at,
-      updatedAt: member.updated_at,
+      _id: String(member.id || ""),
+      groupId: String(member.group_id || ""),
+      userId: user ? mapUser(user) : null,
+      role: String(member.role || "member"),
+      joinedAt: toIso(member.joined_at || member.created_at || member._created_at),
+      createdAt: toIso(member.created_at || member._created_at),
+      updatedAt: toIso(member.updated_at || member._updated_at),
     };
   });
 
-  const memberIds: string[] = Array.from(
-    new Set(payloadMembers.map((member: any) => String(member.userId?._id)).filter(Boolean))
+  const memberIds = uniqueStrings(
+    payloadMembers.map((member: any) => String(member.userId?._id || ""))
   );
 
   let balances: Array<{ userId: string; userName: string; balance: number }> = [];
@@ -103,7 +78,7 @@ async function loadGroupPayload(
       return {
         userId: memberId,
         userName: memberName,
-        balance: Number((balanceMap.get(memberId) || 0).toFixed(2)),
+        balance: round2(balanceMap.get(memberId) || 0),
       };
     });
   } catch (balanceError) {
@@ -118,29 +93,22 @@ async function loadGroupPayload(
     });
   }
 
-  const creator = usersMap.get(String(group.created_by));
+  const creator = usersMap.get(String(group.created_by || ""));
   return {
     group: {
-      _id: group.id,
-      name: group.name,
-      description: group.description,
-      image: group.image,
-      type: group.type,
-      currency: group.currency,
-      createdBy: creator
-        ? {
-            _id: creator.id,
-            name: creator.name,
-            email: creator.email,
-            profilePicture: creator.profile_picture || null,
-          }
-        : null,
-      isActive: group.is_active,
-      createdAt: group.created_at,
-      updatedAt: group.updated_at,
+      _id: String(group.id || ""),
+      name: String(group.name || ""),
+      description: String(group.description || ""),
+      image: group.image || null,
+      type: String(group.type || "trip"),
+      currency: String(group.currency || "INR"),
+      createdBy: creator ? mapUser(creator) : null,
+      isActive: group.is_active !== false,
+      createdAt: toIso(group.created_at || group._created_at),
+      updatedAt: toIso(group.updated_at || group._updated_at),
       members: payloadMembers,
       memberCount: payloadMembers.length,
-      userRole: membership.role,
+      userRole: String(membership.role || "member"),
       balances,
     },
     memberIds,
@@ -152,6 +120,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const routeStart = Date.now();
     const { id } = await params;
     const auth = await requireUser(request);
     if (auth.response || !auth.user) {
@@ -165,7 +134,12 @@ export async function GET(
       return { group };
     });
 
-    return NextResponse.json(payload, { status: 200 });
+    return NextResponse.json(payload, {
+      status: 200,
+      headers: {
+        "X-Doosplit-Route-Ms": String(Date.now() - routeStart),
+      },
+    });
   } catch (error: any) {
     if (error.message === "Forbidden") {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -186,24 +160,23 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const routeStart = Date.now();
     const { id } = await params;
     const auth = await requireUser(request);
     if (auth.response || !auth.user) {
       return auth.response as NextResponse;
     }
     const userId = auth.user.id;
-    const supabase = requireSupabaseAdmin();
+    const db = getAdminDb();
 
-    const { data: membership, error: membershipError } = await supabase
-      .from("group_members")
-      .select("role")
-      .eq("group_id", id)
-      .eq("user_id", userId)
-      .maybeSingle();
-    if (membershipError) {
-      throw membershipError;
-    }
-    if (!membership || membership.role !== "admin") {
+    const membershipSnap = await db
+      .collection("group_members")
+      .where("group_id", "==", id)
+      .where("user_id", "==", userId)
+      .where("role", "==", "admin")
+      .limit(1)
+      .get();
+    if (membershipSnap.empty) {
       return NextResponse.json(
         { error: "Only group admins can update group details" },
         { status: 403 }
@@ -227,26 +200,21 @@ export async function PUT(
     if (body?.currency !== undefined) {
       updatePayload.currency = String(body.currency);
     }
+    updatePayload.updated_at = new Date().toISOString();
+    updatePayload._updated_at = FieldValue.serverTimestamp();
 
-    const { data: updatedRow, error: updateError } = await supabase
-      .from("groups")
-      .update(updatePayload)
-      .eq("id", id)
-      .eq("is_active", true)
-      .select("id")
-      .maybeSingle();
-    if (updateError) {
-      throw updateError;
-    }
-    if (!updatedRow) {
+    const groupRef = db.collection("groups").doc(id);
+    const groupDoc = await groupRef.get();
+    if (!groupDoc.exists || groupDoc.data()?.is_active === false) {
       return NextResponse.json({ error: "Group not found" }, { status: 404 });
     }
 
+    await groupRef.set(updatePayload, { merge: true });
     const { group, memberIds } = await loadGroupPayload(id, userId);
 
     await invalidateUsersCache(
       Array.from(new Set([userId, ...memberIds])),
-      ["groups", "activities", "dashboard-activity", "analytics"]
+      [...GROUP_MUTATION_CACHE_SCOPES]
     );
 
     return NextResponse.json(
@@ -254,7 +222,12 @@ export async function PUT(
         message: "Group updated successfully",
         group,
       },
-      { status: 200 }
+      {
+        status: 200,
+        headers: {
+          "X-Doosplit-Route-Ms": String(Date.now() - routeStart),
+        },
+      }
     );
   } catch (error: any) {
     console.error("Update group error:", error);
@@ -270,39 +243,36 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const routeStart = Date.now();
     const { id } = await params;
     const auth = await requireUser(request);
     if (auth.response || !auth.user) {
       return auth.response as NextResponse;
     }
     const userId = auth.user.id;
-    const supabase = requireSupabaseAdmin();
+    const db = getAdminDb();
 
-    const { data: membership, error: membershipError } = await supabase
-      .from("group_members")
-      .select("role")
-      .eq("group_id", id)
-      .eq("user_id", userId)
-      .maybeSingle();
-    if (membershipError) {
-      throw membershipError;
-    }
-    if (!membership || membership.role !== "admin") {
+    const membershipSnap = await db
+      .collection("group_members")
+      .where("group_id", "==", id)
+      .where("user_id", "==", userId)
+      .where("role", "==", "admin")
+      .limit(1)
+      .get();
+    if (membershipSnap.empty) {
       return NextResponse.json(
         { error: "Only group admins can delete the group" },
         { status: 403 }
       );
     }
 
-    const { count: unsettledExpenses, error: expenseCountError } = await supabase
-      .from("expenses")
-      .select("id", { count: "exact", head: true })
-      .eq("group_id", id)
-      .eq("is_deleted", false);
-    if (expenseCountError) {
-      throw expenseCountError;
-    }
-    if ((unsettledExpenses || 0) > 0) {
+    const unsettledExpensesSnap = await db
+      .collection("expenses")
+      .where("group_id", "==", id)
+      .where("is_deleted", "==", false)
+      .limit(1)
+      .get();
+    if (!unsettledExpensesSnap.empty) {
       return NextResponse.json(
         {
           error:
@@ -312,39 +282,33 @@ export async function DELETE(
       );
     }
 
-    const { data: members, error: memberError } = await supabase
-      .from("group_members")
-      .select("user_id")
-      .eq("group_id", id);
-    if (memberError) {
-      throw memberError;
-    }
+    const membersSnap = await db
+      .collection("group_members")
+      .where("group_id", "==", id)
+      .get();
+    const memberIds = membersSnap.docs.map((doc) => String(doc.data()?.user_id || ""));
 
-    const { error: deactivateError } = await supabase
-      .from("groups")
-      .update({ is_active: false })
-      .eq("id", id);
-    if (deactivateError) {
-      throw deactivateError;
-    }
-
-    const affectedUserIds = Array.from(
-      new Set([userId, ...(members || []).map((member: any) => String(member.user_id))])
+    await db.collection("groups").doc(id).set(
+      {
+        is_active: false,
+        updated_at: new Date().toISOString(),
+        _updated_at: FieldValue.serverTimestamp(),
+      },
+      { merge: true }
     );
 
-    await invalidateUsersCache(affectedUserIds, [
-      "groups",
-      "expenses",
-      "activities",
-      "dashboard-activity",
-      "friend-details",
-      "user-balance",
-      "analytics",
-    ]);
+    const affectedUserIds = Array.from(new Set([userId, ...memberIds]));
+
+    await invalidateUsersCache(affectedUserIds, [...GROUP_MUTATION_CACHE_SCOPES]);
 
     return NextResponse.json(
       { message: "Group deleted successfully" },
-      { status: 200 }
+      {
+        status: 200,
+        headers: {
+          "X-Doosplit-Route-Ms": String(Date.now() - routeStart),
+        },
+      }
     );
   } catch (error: any) {
     console.error("Delete group error:", error);

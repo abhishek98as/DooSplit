@@ -13,6 +13,7 @@ import { notifySettlement } from "@/lib/notificationService";
 import { getAdminDb } from "@/lib/firestore/admin";
 
 export const dynamic = "force-dynamic";
+export const preferredRegion = "iad1";
 
 export async function GET(request: NextRequest) {
   try {

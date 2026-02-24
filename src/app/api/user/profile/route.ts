@@ -1,35 +1,62 @@
 import { NextRequest, NextResponse } from "next/server";
 import { invalidateUsersCache } from "@/lib/cache";
 import { requireUser } from "@/lib/auth/require-user";
-import { mapUserRow, requireSupabaseAdmin } from "@/lib/supabase/app";
+import { FieldValue, getAdminDb } from "@/lib/firestore/admin";
 import { normalizeName } from "@/lib/social/keys";
 
 export const dynamic = "force-dynamic";
 
+function mapUserRow(row: any) {
+  if (!row) {
+    return null;
+  }
+  return {
+    _id: row.id,
+    id: row.id,
+    name: row.name,
+    email: row.email,
+    phone: row.phone ?? undefined,
+    profilePicture: row.profile_picture ?? null,
+    defaultCurrency: row.default_currency ?? "INR",
+    language: row.language ?? "en",
+    timezone: row.timezone ?? "Asia/Kolkata",
+    pushNotificationsEnabled: !!row.push_notifications_enabled,
+    emailNotificationsEnabled: row.email_notifications_enabled !== false,
+    pushSubscription: row.push_subscription ?? null,
+    role: row.role ?? "user",
+    isActive: row.is_active !== false,
+    isDummy: !!row.is_dummy,
+    authProvider: row.auth_provider ?? "email",
+    emailVerified: !!row.email_verified,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 export async function GET(request: NextRequest) {
   try {
+    const routeStart = Date.now();
     const auth = await requireUser(request);
     if (auth.response || !auth.user) {
       return auth.response as NextResponse;
     }
 
-    const supabase = requireSupabaseAdmin();
-    const { data: row, error } = await supabase
-      .from("users")
-      .select(
-        "id,email,name,phone,profile_picture,default_currency,language,timezone,push_notifications_enabled,email_notifications_enabled,push_subscription,role,is_active,is_dummy,auth_provider,email_verified,created_at,updated_at"
-      )
-      .eq("id", auth.user.id)
-      .maybeSingle();
-
-    if (error) {
-      throw error;
-    }
-    if (!row) {
+    const db = getAdminDb();
+    const doc = await db.collection("users").doc(auth.user.id).get();
+    if (!doc.exists) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
+    const row = { id: doc.id, ...((doc.data() as any) || {}) };
 
-    return NextResponse.json({ user: mapUserRow(row) }, { status: 200 });
+    return NextResponse.json(
+      { user: mapUserRow(row) },
+      {
+        status: 200,
+        headers: {
+          "X-Doosplit-Route-Ms": String(Date.now() - routeStart),
+        },
+      }
+    );
   } catch (error: any) {
     console.error("Get profile error:", error);
     return NextResponse.json(
@@ -41,6 +68,7 @@ export async function GET(request: NextRequest) {
 
 export async function PUT(request: NextRequest) {
   try {
+    const routeStart = Date.now();
     const auth = await requireUser(request);
     if (auth.response || !auth.user) {
       return auth.response as NextResponse;
@@ -79,23 +107,17 @@ export async function PUT(request: NextRequest) {
     if (pushSubscription !== undefined) {
       updatePayload.push_subscription = pushSubscription || null;
     }
+    updatePayload.updated_at = new Date().toISOString();
+    updatePayload._updated_at = FieldValue.serverTimestamp();
 
-    const supabase = requireSupabaseAdmin();
-    const { data: row, error } = await supabase
-      .from("users")
-      .update(updatePayload)
-      .eq("id", auth.user.id)
-      .select(
-        "id,email,name,phone,profile_picture,default_currency,language,timezone,push_notifications_enabled,email_notifications_enabled,push_subscription,role,is_active,is_dummy,auth_provider,email_verified,created_at,updated_at"
-      )
-      .maybeSingle();
-
-    if (error) {
-      throw error;
-    }
-    if (!row) {
+    const db = getAdminDb();
+    const ref = db.collection("users").doc(auth.user.id);
+    await ref.set(updatePayload, { merge: true });
+    const updatedDoc = await ref.get();
+    if (!updatedDoc.exists) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
+    const row = { id: updatedDoc.id, ...(updatedDoc.data() || {}) };
 
     await invalidateUsersCache(
       [auth.user.id],
@@ -107,7 +129,12 @@ export async function PUT(request: NextRequest) {
         message: "Profile updated successfully",
         user: mapUserRow(row),
       },
-      { status: 200 }
+      {
+        status: 200,
+        headers: {
+          "X-Doosplit-Route-Ms": String(Date.now() - routeStart),
+        },
+      }
     );
   } catch (error: any) {
     console.error("Update profile error:", error);
@@ -117,3 +144,4 @@ export async function PUT(request: NextRequest) {
     );
   }
 }
+

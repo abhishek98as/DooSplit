@@ -54,6 +54,17 @@ class OfflineStore {
   private inFlightRequests = new Map<string, Promise<any>>();
   private revalidateInFlight = new Set<string>();
   private readonly requestTimeoutMs = 25000;
+  private readonly staticCacheTimeMs = 5 * 60 * 1000;
+  private readonly dynamicCacheTimeMs = 10 * 1000;
+  private readonly dynamicRoutePrefixes = [
+    "/api/expenses",
+    "/api/friends",
+    "/api/groups",
+    "/api/settlements",
+    "/api/dashboard/activity",
+    "/api/activities",
+    "/api/analytics",
+  ];
   private indexedDbUnavailableLogged = false;
 
   constructor() {
@@ -166,13 +177,93 @@ class OfflineStore {
     }
   }
 
+  private isDynamicRoute(url: string): boolean {
+    return this.dynamicRoutePrefixes.some((prefix) => url.startsWith(prefix));
+  }
+
+  private getCacheMaxAgeMs(url: string): number {
+    return this.isDynamicRoute(url) ? this.dynamicCacheTimeMs : this.staticCacheTimeMs;
+  }
+
+  private async invalidateCacheEntries(prefixes: string[]): Promise<void> {
+    if (prefixes.length === 0) {
+      return;
+    }
+
+    try {
+      const metadataRecords = await this.indexedDB.getAll<{
+        key: string;
+      }>("metadata");
+      const keysToDelete = metadataRecords
+        .map((record) => String(record?.key || ""))
+        .filter(
+          (key) =>
+            key.startsWith("cache_") &&
+            prefixes.some((prefix) => key.includes(prefix))
+        );
+
+      await Promise.all(
+        keysToDelete.map((key) => this.indexedDB.delete("metadata", key))
+      );
+    } catch (error) {
+      console.warn("Failed to invalidate local cache metadata:", error);
+    }
+  }
+
+  private async invalidateEntityCaches(
+    entityType: "expense" | "settlement" | "friend" | "group"
+  ): Promise<void> {
+    switch (entityType) {
+      case "expense":
+        await this.invalidateCacheEntries([
+          "expenses_",
+          "friends_",
+          "groups_",
+          "settlements",
+          "analytics",
+          "dashboard",
+        ]);
+        break;
+      case "settlement":
+        await this.invalidateCacheEntries([
+          "settlements",
+          "friends_",
+          "expenses_",
+          "groups_",
+          "analytics",
+          "dashboard",
+        ]);
+        break;
+      case "friend":
+        await this.invalidateCacheEntries([
+          "friends_",
+          "groups_",
+          "expenses_",
+          "settlements",
+          "analytics",
+          "dashboard",
+        ]);
+        break;
+      case "group":
+        await this.invalidateCacheEntries([
+          "groups_",
+          "expenses_",
+          "friends_",
+          "analytics",
+          "dashboard",
+        ]);
+        break;
+    }
+  }
+
   // Generic API fetch with caching
   private async fetchWithCache<T>(
     url: string,
     options: RequestInit = {},
     cacheKey?: string
   ): Promise<T> {
-    const cacheTime = 5 * 60 * 1000; // 5 minutes cache
+    const cacheTime = this.getCacheMaxAgeMs(url);
+    const dynamicRoute = this.isDynamicRoute(url);
     const requestKey = this.buildRequestKey(url, options, cacheKey);
     const existing = this.inFlightRequests.get(requestKey);
     if (existing) {
@@ -194,6 +285,28 @@ class OfflineStore {
         !!cached && Date.now() - cached.timestamp < cacheTime;
 
       if (this.isOnline()) {
+        if (dynamicRoute) {
+          try {
+            const data = await this.fetchFromNetwork<T>(url, options);
+
+            if (cacheKey) {
+              await this.indexedDB.putMetadata(`cache_${cacheKey}`, {
+                data,
+                timestamp: Date.now(),
+              });
+            }
+
+            return data;
+          } catch (error) {
+            console.error(`API call failed for dynamic route ${url}:`, error);
+            if (cached) {
+              console.log("Using cached data for", url);
+              return cached.data;
+            }
+            throw error;
+          }
+        }
+
         if (hasFreshCache && cached) {
           void this.revalidateInBackground<T>(url, options, cacheKey, requestKey);
           return cached.data;
@@ -312,6 +425,7 @@ class OfflineStore {
           try {
             await this.indexedDB.delete('expenses', tempId);
             await this.indexedDB.putExpense(data.expense);
+            await this.invalidateEntityCaches("expense");
           } catch (dbError) {
             this.logIndexedDbUnavailable("expense cache update");
           }
@@ -382,6 +496,7 @@ class OfflineStore {
           const data = await response.json();
           try {
             await this.indexedDB.putExpense(data.expense);
+            await this.invalidateEntityCaches("expense");
           } catch (dbError) {
             this.logIndexedDbUnavailable("expense cache update after PUT");
           }
@@ -418,6 +533,7 @@ class OfflineStore {
 
         if (response.ok) {
           await this.indexedDB.delete('expenses', expenseId);
+          await this.invalidateEntityCaches("expense");
           return;
         }
       } catch (error) {
@@ -500,6 +616,7 @@ class OfflineStore {
           const data = await response.json();
           await this.indexedDB.delete('settlements', tempId);
           await this.indexedDB.putSettlement(data.settlement);
+          await this.invalidateEntityCaches("settlement");
           return data.settlement;
         }
       } catch (error) {

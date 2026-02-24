@@ -1,51 +1,35 @@
 import { NextRequest, NextResponse } from "next/server";
 import { invalidateUsersCache } from "@/lib/cache";
 import { requireUser } from "@/lib/auth/require-user";
-import { requireSupabaseAdmin } from "@/lib/supabase/app";
+import { FieldValue, getAdminDb } from "@/lib/firestore/admin";
 import { groupMemberDocId } from "@/lib/social/keys";
+import { fetchDocsByIds, mapUser, toIso, uniqueStrings } from "@/lib/firestore/route-helpers";
+import { GROUP_MUTATION_CACHE_SCOPES } from "@/lib/cache-scopes";
 
 function mapMembers(members: any[], usersMap: Map<string, any>) {
   return members.map((member: any) => {
-    const user = usersMap.get(String(member.user_id));
+    const user = usersMap.get(String(member.user_id || ""));
     return {
-      _id: member.id,
-      groupId: member.group_id,
-      userId: user
-        ? {
-            _id: user.id,
-            name: user.name,
-            email: user.email,
-            profilePicture: user.profile_picture || null,
-          }
-        : null,
-      role: member.role,
-      joinedAt: member.joined_at,
-      createdAt: member.created_at,
-      updatedAt: member.updated_at,
+      _id: String(member.id || ""),
+      groupId: String(member.group_id || ""),
+      userId: user ? mapUser(user) : null,
+      role: String(member.role || "member"),
+      joinedAt: toIso(member.joined_at || member.created_at || member._created_at),
+      createdAt: toIso(member.created_at || member._created_at),
+      updatedAt: toIso(member.updated_at || member._updated_at),
     };
   });
 }
 
 async function loadGroupMembers(groupId: string) {
-  const supabase = requireSupabaseAdmin();
-  const { data: members, error } = await supabase
-    .from("group_members")
-    .select("*")
-    .eq("group_id", groupId);
-  if (error) {
-    throw error;
-  }
-  const userIds = Array.from(
-    new Set((members || []).map((member: any) => String(member.user_id)))
-  );
-  const { data: users, error: usersError } = await supabase
-    .from("users")
-    .select("id,name,email,profile_picture")
-    .in("id", userIds.length > 0 ? userIds : ["__none__"]);
-  if (usersError) {
-    throw usersError;
-  }
-  const usersMap = new Map<string, any>((users || []).map((user: any) => [String(user.id), user]));
+  const db = getAdminDb();
+  const membersSnap = await db
+    .collection("group_members")
+    .where("group_id", "==", groupId)
+    .get();
+  const members = membersSnap.docs.map((doc) => ({ id: doc.id, ...((doc.data() as any) || {}) }));
+  const userIds = uniqueStrings((members || []).map((member: any) => String(member.user_id || "")));
+  const usersMap = await fetchDocsByIds("users", userIds);
   return mapMembers(members || [], usersMap);
 }
 
@@ -54,6 +38,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const routeStart = Date.now();
     const { id } = await params;
     const auth = await requireUser(request);
     if (auth.response || !auth.user) {
@@ -70,45 +55,33 @@ export async function POST(
       );
     }
 
-    const supabase = requireSupabaseAdmin();
-    const { data: membership, error: membershipError } = await supabase
-      .from("group_members")
-      .select("role")
-      .eq("group_id", id)
-      .eq("user_id", currentUserId)
-      .maybeSingle();
-    if (membershipError) {
-      throw membershipError;
-    }
-    if (!membership || membership.role !== "admin") {
+    const db = getAdminDb();
+    const adminMembershipSnap = await db
+      .collection("group_members")
+      .where("group_id", "==", id)
+      .where("user_id", "==", currentUserId)
+      .where("role", "==", "admin")
+      .limit(1)
+      .get();
+    if (adminMembershipSnap.empty) {
       return NextResponse.json(
         { error: "Only group admins can add members" },
         { status: 403 }
       );
     }
 
-    const { data: userExists, error: userError } = await supabase
-      .from("users")
-      .select("id")
-      .eq("id", newMemberId)
-      .maybeSingle();
-    if (userError) {
-      throw userError;
-    }
-    if (!userExists) {
+    const userExists = await db.collection("users").doc(newMemberId).get();
+    if (!userExists.exists) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
-    const { data: existingMember, error: existingError } = await supabase
-      .from("group_members")
-      .select("id")
-      .eq("group_id", id)
-      .eq("user_id", newMemberId)
-      .maybeSingle();
-    if (existingError) {
-      throw existingError;
-    }
-    if (existingMember?.id) {
+    const existingMemberSnap = await db
+      .collection("group_members")
+      .where("group_id", "==", id)
+      .where("user_id", "==", newMemberId)
+      .limit(1)
+      .get();
+    if (!existingMemberSnap.empty) {
       return NextResponse.json(
         { error: "User is already a member" },
         { status: 400 }
@@ -116,18 +89,18 @@ export async function POST(
     }
 
     const nowIso = new Date().toISOString();
-    const { error: insertError } = await supabase.from("group_members").insert({
-      id: groupMemberDocId(id, newMemberId),
+    const memberId = groupMemberDocId(id, newMemberId);
+    await db.collection("group_members").doc(memberId).set({
+      id: memberId,
       group_id: id,
       user_id: newMemberId,
       role: "member",
       joined_at: nowIso,
       created_at: nowIso,
       updated_at: nowIso,
+      _created_at: FieldValue.serverTimestamp(),
+      _updated_at: FieldValue.serverTimestamp(),
     });
-    if (insertError) {
-      throw insertError;
-    }
 
     const members = await loadGroupMembers(id);
     const affectedUserIds = Array.from(
@@ -138,22 +111,19 @@ export async function POST(
       ])
     );
 
-    await invalidateUsersCache(affectedUserIds, [
-      "groups",
-      "expenses",
-      "activities",
-      "dashboard-activity",
-      "friend-details",
-      "user-balance",
-      "analytics",
-    ]);
+    await invalidateUsersCache(affectedUserIds, [...GROUP_MUTATION_CACHE_SCOPES]);
 
     return NextResponse.json(
       {
         message: "Member added successfully",
         members,
       },
-      { status: 201 }
+      {
+        status: 201,
+        headers: {
+          "X-Doosplit-Route-Ms": String(Date.now() - routeStart),
+        },
+      }
     );
   } catch (error: any) {
     console.error("Add member error:", error);
@@ -169,6 +139,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const routeStart = Date.now();
     const { id } = await params;
     const auth = await requireUser(request);
     if (auth.response || !auth.user) {
@@ -192,22 +163,20 @@ export async function DELETE(
       );
     }
 
-    const supabase = requireSupabaseAdmin();
-    const { data: membership, error: membershipError } = await supabase
-      .from("group_members")
-      .select("role")
-      .eq("group_id", id)
-      .eq("user_id", currentUserId)
-      .maybeSingle();
-    if (membershipError) {
-      throw membershipError;
-    }
-    if (!membership) {
+    const db = getAdminDb();
+    const membershipSnap = await db
+      .collection("group_members")
+      .where("group_id", "==", id)
+      .where("user_id", "==", currentUserId)
+      .limit(1)
+      .get();
+    if (membershipSnap.empty) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
+    const membership = membershipSnap.docs[0].data() || {};
 
     const isSelfRemoval = memberIdToRemove === currentUserId;
-    const isAdmin = membership.role === "admin";
+    const isAdmin = String(membership.role || "") === "admin";
     if (!isSelfRemoval && !isAdmin) {
       return NextResponse.json(
         { error: "Only admins can remove other members" },
@@ -216,15 +185,12 @@ export async function DELETE(
     }
 
     if (isAdmin && isSelfRemoval) {
-      const { count: adminCount, error: adminCountError } = await supabase
-        .from("group_members")
-        .select("id", { count: "exact", head: true })
-        .eq("group_id", id)
-        .eq("role", "admin");
-      if (adminCountError) {
-        throw adminCountError;
-      }
-      if ((adminCount || 0) <= 1) {
+      const adminCountSnap = await db
+        .collection("group_members")
+        .where("group_id", "==", id)
+        .where("role", "==", "admin")
+        .get();
+      if (adminCountSnap.size <= 1) {
         return NextResponse.json(
           {
             error:
@@ -235,13 +201,14 @@ export async function DELETE(
       }
     }
 
-    const { error: deleteError } = await supabase
-      .from("group_members")
-      .delete()
-      .eq("group_id", id)
-      .eq("user_id", memberIdToRemove);
-    if (deleteError) {
-      throw deleteError;
+    const targetMembershipSnap = await db
+      .collection("group_members")
+      .where("group_id", "==", id)
+      .where("user_id", "==", memberIdToRemove)
+      .limit(1)
+      .get();
+    if (!targetMembershipSnap.empty) {
+      await targetMembershipSnap.docs[0].ref.delete();
     }
 
     const members = await loadGroupMembers(id);
@@ -253,22 +220,19 @@ export async function DELETE(
       ])
     );
 
-    await invalidateUsersCache(affectedUserIds, [
-      "groups",
-      "expenses",
-      "activities",
-      "dashboard-activity",
-      "friend-details",
-      "user-balance",
-      "analytics",
-    ]);
+    await invalidateUsersCache(affectedUserIds, [...GROUP_MUTATION_CACHE_SCOPES]);
 
     return NextResponse.json(
       {
         message: "Member removed successfully",
         members,
       },
-      { status: 200 }
+      {
+        status: 200,
+        headers: {
+          "X-Doosplit-Route-Ms": String(Date.now() - routeStart),
+        },
+      }
     );
   } catch (error: any) {
     console.error("Remove member error:", error);
