@@ -305,6 +305,17 @@ export default function AddExpensePage() {
         if (finalImageRefs.length > 0) {
           await offlineStore.updateExpense(expense._id, { images: finalImageRefs });
         }
+        // Notify in-page listeners on this window (e.g. other components or
+        // tabs) that expenses data changed so they refetch immediately.
+        window.dispatchEvent(
+          new CustomEvent("doosplit:data-updated", {
+            detail: {
+              domains: ["expenses", "friends", "analytics", "activity"],
+              reason: "expense-created",
+              at: Date.now(),
+            },
+          })
+        );
         router.push("/dashboard");
         router.refresh();
       } else {

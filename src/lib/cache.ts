@@ -3,6 +3,16 @@ import { getRedisClient } from "@/lib/redis";
 
 const CACHE_PREFIX = process.env.CACHE_PREFIX || "doosplit:v1";
 
+// Registry must outlive all cached data. If the registry expires before a data key,
+// invalidateUsersCache silently misses that key and stale data survives.
+const REGISTRY_TTL_SECONDS = 1800; // 30 min — safely above max data TTL (600s)
+
+// Cap process-local memory cache tightly. Multiple serverless instances don't share
+// memory, so a mutation in instance A can't clear instance B's memory cache.
+// Short cap (15s) prevents cross-instance stale reads while still deduplicating
+// burst requests within the same Lambda invocation.
+const MEMORY_CACHE_MAX_TTL_SECONDS = 15;
+
 export const CACHE_TTL = {
   expenses: 300,        // 5 minutes (was 180s) - moderately dynamic
   friends: 600,         // 10 minutes (was 180s) - rarely changes
@@ -96,9 +106,10 @@ function memoryGet<T>(key: string): T | null {
 }
 
 function memorySet(key: string, value: unknown, ttlSeconds: number): void {
+  const cappedTtl = Math.min(ttlSeconds, MEMORY_CACHE_MAX_TTL_SECONDS);
   memoryCache.set(key, {
     value: JSON.stringify(value),
-    expiresAt: Date.now() + ttlSeconds * 1000,
+    expiresAt: Date.now() + cappedTtl * 1000,
   });
 
   const parsed = parseKeyParts(key);
@@ -169,8 +180,9 @@ export async function getOrSetCacheJsonWithMeta<T>(
       if (parsed) {
         const regKey = registryKey(parsed.scope, parsed.userId);
         await redis.sAdd(regKey, key);
-        // Registry TTL slightly longer than max data TTL so it auto-cleans
-        await redis.expire(regKey, 180);
+        // Registry TTL must exceed max data TTL so keys are still discoverable
+        // when invalidation runs after a mutation.
+        await redis.expire(regKey, REGISTRY_TTL_SECONDS);
       }
     } catch (error: any) {
       console.warn("Redis write failed, continuing without cache:", error.message);

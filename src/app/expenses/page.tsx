@@ -207,6 +207,17 @@ export default function ExpensesPage() {
       setExpenses(expenses.filter((e) => e._id !== expenseToDelete._id));
       setShowDeleteModal(false);
       setExpenseToDelete(null);
+
+      // Notify dashboard, activity, and other pages that expenses changed.
+      window.dispatchEvent(
+        new CustomEvent("doosplit:data-updated", {
+          detail: {
+            domains: ["expenses", "friends", "analytics", "activity"],
+            reason: "expense-deleted",
+            at: Date.now(),
+          },
+        })
+      );
     } catch (error) {
       console.error("Error deleting expense:", error);
       alert("Failed to delete expense");

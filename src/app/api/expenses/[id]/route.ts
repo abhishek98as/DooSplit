@@ -476,6 +476,21 @@ export async function DELETE(
       { merge: true }
     );
 
+    // Touch expense_participants so the Firestore realtime listener fires
+    // for every participant. Without this, soft-delete only updates the `expenses`
+    // doc which is not watched by the client's onSnapshot queries.
+    if (participants.length > 0) {
+      const participantBatch = db.batch();
+      for (const participant of participants) {
+        const pRef = db.collection("expense_participants").doc(participant.id);
+        participantBatch.update(pRef, {
+          updated_at: nowIso,
+          _updated_at: FieldValue.serverTimestamp(),
+        });
+      }
+      await participantBatch.commit();
+    }
+
     try {
       const deleterDoc = await db.collection("users").doc(currentUserId).get();
       await notifyExpenseDeleted(
