@@ -174,12 +174,19 @@ export default function SettlementsPage() {
       const friend = friends.find((f) => f._id === selectedFriend);
       if (!friend) return;
 
+      // Bug 2 fix: determine settlement direction based on who actually owes whom
+      // balance < 0 means user owes friend → user pays friend (user is "from")
+      // balance > 0 means friend owes user → friend pays user (friend is "from")
+      const balance = friend.balance;
+      const fromUserId = balance <= 0 ? session?.user?.id : selectedFriend;
+      const toUserId = balance <= 0 ? selectedFriend : session?.user?.id;
+
       const res = await fetch("/api/settlements", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          fromUserId: session?.user?.id,
-          toUserId: selectedFriend,
+          fromUserId,
+          toUserId,
           amount: parseFloat(amount),
           method,
           note,
@@ -263,21 +270,19 @@ export default function SettlementsPage() {
           <nav className="flex space-x-8">
             <button
               onClick={() => setActiveTab("settlements")}
-              className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
-                activeTab === "settlements"
-                  ? "border-primary text-primary"
-                  : "border-transparent text-neutral-500 hover:text-neutral-700 hover:border-neutral-300 dark:hover:border-dark-border"
-              }`}
+              className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${activeTab === "settlements"
+                ? "border-primary text-primary"
+                : "border-transparent text-neutral-500 hover:text-neutral-700 hover:border-neutral-300 dark:hover:border-dark-border"
+                }`}
             >
               Settlements
             </button>
             <button
               onClick={() => setActiveTab("reminders")}
-              className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
-                activeTab === "reminders"
-                  ? "border-primary text-primary"
-                  : "border-transparent text-neutral-500 hover:text-neutral-700 hover:border-neutral-300 dark:hover:border-dark-border"
-              }`}
+              className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${activeTab === "reminders"
+                ? "border-primary text-primary"
+                : "border-transparent text-neutral-500 hover:text-neutral-700 hover:border-neutral-300 dark:hover:border-dark-border"
+                }`}
             >
               Payment Reminders
               {reminders.filter(r => r.status === "sent" && !r.readAt).length > 0 && (
@@ -295,65 +300,62 @@ export default function SettlementsPage() {
             <CardHeader>
               <CardTitle>Payment History</CardTitle>
             </CardHeader>
-          <CardContent>
-            {settlements.length === 0 ? (
-              <div className="text-center py-12">
-                <Wallet className="h-16 w-16 mx-auto text-neutral-300 mb-4" />
-                <p className="text-body text-neutral-500 dark:text-dark-text-secondary">
-                  No settlements yet
-                </p>
-                <p className="text-sm text-neutral-400 dark:text-dark-text-tertiary mt-2">
-                  Record a payment when you settle up with friends
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {settlements.map((settlement) => {
-                  const isOutgoing =
-                    settlement.fromUserId._id === session?.user?.id;
-                  return (
-                    <div
-                      key={settlement._id}
-                      className="flex items-center justify-between py-3 border-b border-neutral-200 dark:border-dark-border last:border-0"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div
-                          className={`h-10 w-10 rounded-full flex items-center justify-center ${
-                            isOutgoing ? "bg-coral/20" : "bg-success/20"
-                          }`}
-                        >
-                          <ArrowRight
-                            className={`h-5 w-5 ${
-                              isOutgoing ? "text-coral" : "text-success rotate-180"
-                            }`}
-                          />
-                        </div>
-                        <div>
-                          <p className="font-medium text-neutral-900 dark:text-dark-text">
-                            {isOutgoing
-                              ? `You paid ${settlement.toUserId.name}`
-                              : `${settlement.fromUserId.name} paid you`}
-                          </p>
-                          <p className="text-sm text-neutral-500">
-                            {formatDate(settlement.date)} • {settlement.method}
-                            {settlement.note && ` • ${settlement.note}`}
-                          </p>
-                        </div>
-                      </div>
+            <CardContent>
+              {settlements.length === 0 ? (
+                <div className="text-center py-12">
+                  <Wallet className="h-16 w-16 mx-auto text-neutral-300 mb-4" />
+                  <p className="text-body text-neutral-500 dark:text-dark-text-secondary">
+                    No settlements yet
+                  </p>
+                  <p className="text-sm text-neutral-400 dark:text-dark-text-tertiary mt-2">
+                    Record a payment when you settle up with friends
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {settlements.map((settlement) => {
+                    const isOutgoing =
+                      settlement.fromUserId._id === session?.user?.id;
+                    return (
                       <div
-                        className={`text-lg font-semibold ${
-                          isOutgoing ? "text-coral" : "text-success"
-                        }`}
+                        key={settlement._id}
+                        className="flex items-center justify-between py-3 border-b border-neutral-200 dark:border-dark-border last:border-0"
                       >
-                        {formatCurrency(settlement.amount)}
+                        <div className="flex items-center gap-3">
+                          <div
+                            className={`h-10 w-10 rounded-full flex items-center justify-center ${isOutgoing ? "bg-coral/20" : "bg-success/20"
+                              }`}
+                          >
+                            <ArrowRight
+                              className={`h-5 w-5 ${isOutgoing ? "text-coral" : "text-success rotate-180"
+                                }`}
+                            />
+                          </div>
+                          <div>
+                            <p className="font-medium text-neutral-900 dark:text-dark-text">
+                              {isOutgoing
+                                ? `You paid ${settlement.toUserId.name}`
+                                : `${settlement.fromUserId.name} paid you`}
+                            </p>
+                            <p className="text-sm text-neutral-500">
+                              {formatDate(settlement.date)} • {settlement.method}
+                              {settlement.note && ` • ${settlement.note}`}
+                            </p>
+                          </div>
+                        </div>
+                        <div
+                          className={`text-lg font-semibold ${isOutgoing ? "text-coral" : "text-success"
+                            }`}
+                        >
+                          {formatCurrency(settlement.amount)}
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+                    );
+                  })}
+                </div>
+              )}
+            </CardContent>
+          </Card>
         ) : (
           <Card>
             <CardHeader>
@@ -419,13 +421,12 @@ export default function SettlementsPage() {
                           </div>
                         </div>
                         <div className="text-right">
-                          <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                            reminder.status === "paid"
-                              ? "bg-success/10 text-success"
-                              : reminder.status === "read"
+                          <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${reminder.status === "paid"
+                            ? "bg-success/10 text-success"
+                            : reminder.status === "read"
                               ? "bg-info/10 text-info"
                               : "bg-warning/10 text-warning"
-                          }`}>
+                            }`}>
                             {reminder.status === "paid" ? "Paid" : reminder.status === "read" ? "Read" : "Sent"}
                           </span>
                         </div>

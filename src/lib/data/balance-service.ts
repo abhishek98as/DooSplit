@@ -1,27 +1,10 @@
 import { getAdminDb } from "@/lib/firestore/admin";
-
-function toNumber(value: unknown): number {
-  return Number(value || 0);
-}
-
-function round2(value: number): number {
-  return Number(value.toFixed(2));
-}
-
-function uniqueStrings(values: Array<string | null | undefined>): string[] {
-  return Array.from(new Set(values.map((value) => String(value || "")).filter(Boolean)));
-}
-
-function chunk<T>(values: T[], size: number): T[][] {
-  if (values.length === 0) {
-    return [];
-  }
-  const chunks: T[][] = [];
-  for (let i = 0; i < values.length; i += size) {
-    chunks.push(values.slice(i, i + size));
-  }
-  return chunks;
-}
+import {
+  chunk,
+  round2,
+  toNum as toNumber,
+  uniqueStrings,
+} from "@/lib/firestore/route-helpers";
 
 interface Transfer {
   from: string;
@@ -199,11 +182,11 @@ export async function computePairwiseBalancesForUser(
 
     if (fromUserId === userId && toUserId) {
       if (!friendFilter || friendFilter.has(toUserId)) {
-        balances.set(toUserId, round2((balances.get(toUserId) || 0) - amount));
+        balances.set(toUserId, round2((balances.get(toUserId) || 0) + amount));
       }
     } else if (toUserId === userId && fromUserId) {
       if (!friendFilter || friendFilter.has(fromUserId)) {
-        balances.set(fromUserId, round2((balances.get(fromUserId) || 0) + amount));
+        balances.set(fromUserId, round2((balances.get(fromUserId) || 0) - amount));
       }
     }
   }
@@ -261,10 +244,10 @@ export async function computeGroupMemberNetBalances(
     }
 
     if (fromUserId) {
-      balances.set(fromUserId, round2((balances.get(fromUserId) || 0) - amount));
+      balances.set(fromUserId, round2((balances.get(fromUserId) || 0) + amount));
     }
     if (toUserId) {
-      balances.set(toUserId, round2((balances.get(toUserId) || 0) + amount));
+      balances.set(toUserId, round2((balances.get(toUserId) || 0) - amount));
     }
   }
 

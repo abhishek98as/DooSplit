@@ -70,20 +70,20 @@ export default function AddExpensePage() {
   const [notes, setNotes] = useState("");
   const [images, setImages] = useState<string[]>([]);
   const [currency, setCurrency] = useState("INR");
-  
+
   // Participants and split
   const [splitMethod, setSplitMethod] = useState<SplitMethod>("equally");
   const [selectedFriends, setSelectedFriends] = useState<Friend[]>([]);
   const [selectedGroup, setSelectedGroup] = useState<Group | null>(null);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [paidBy, setPaidBy] = useState<string>("");
-  
+
   // Modal states
   const [showFriendModal, setShowFriendModal] = useState(false);
   const [showSplitModal, setShowSplitModal] = useState(false);
   const [showGroupModal, setShowGroupModal] = useState(false);
   const [showCreateGroupModal, setShowCreateGroupModal] = useState(false);
-  
+
   // Data
   const [friends, setFriends] = useState<Friend[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
@@ -149,35 +149,42 @@ export default function AddExpensePage() {
     }
   };
 
+  // Helper: round to 2 decimal places
+  const round2 = (num: number) => Math.round(num * 100) / 100;
+
+  // Bug 7 fix: compute correct owedAmount per participant on client side
   const calculateSplit = () => {
     const totalAmount = parseFloat(amount) || 0;
     if (totalAmount === 0 || selectedFriends.length === 0) return;
 
     const numPeople = selectedFriends.length + 1; // +1 for current user
+    const equalShare = round2(totalAmount / numPeople);
+    // Handle rounding: give remainder to first person (current user)
+    const remainder = round2(totalAmount - equalShare * numPeople);
     const newParticipants: Participant[] = [];
 
     // Add current user
+    const userShare = splitMethod === "equally" ? round2(equalShare + remainder) : 0;
     newParticipants.push({
       userId: session?.user?.id || "",
       name: "You",
-      owedAmount: 0, // Will be calculated by backend
+      owedAmount: splitMethod === "equally" ? userShare : 0,
       paidAmount: paidBy === session?.user?.id ? totalAmount : 0,
-      // Initialize split-specific fields with default values
-      exactAmount: splitMethod === "exact" ? totalAmount / numPeople : undefined,
-      percentage: splitMethod === "percentage" ? 100 / numPeople : undefined,
+      exactAmount: splitMethod === "exact" ? round2(totalAmount / numPeople) : undefined,
+      percentage: splitMethod === "percentage" ? round2(100 / numPeople) : undefined,
       shares: splitMethod === "shares" ? 1 : undefined,
     });
 
     // Add selected friends
     selectedFriends.forEach(friend => {
+      const friendShare = splitMethod === "equally" ? equalShare : 0;
       newParticipants.push({
         userId: friend.friend.id,
         name: friend.friend.name,
-        owedAmount: 0, // Will be calculated by backend
+        owedAmount: splitMethod === "equally" ? friendShare : 0,
         paidAmount: paidBy === friend.friend.id ? totalAmount : 0,
-        // Initialize split-specific fields with default values
-        exactAmount: splitMethod === "exact" ? totalAmount / numPeople : undefined,
-        percentage: splitMethod === "percentage" ? 100 / numPeople : undefined,
+        exactAmount: splitMethod === "exact" ? round2(totalAmount / numPeople) : undefined,
+        percentage: splitMethod === "percentage" ? round2(100 / numPeople) : undefined,
         shares: splitMethod === "shares" ? 1 : undefined,
       });
     });
@@ -232,7 +239,7 @@ export default function AddExpensePage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!amount || !description || selectedFriends.length === 0) {
       alert("Please fill in all required fields and select at least one friend");
       return;
@@ -411,6 +418,7 @@ export default function AddExpensePage() {
                 <input
                   type="number"
                   step="0.01"
+                  min="0.01"
                   value={amount}
                   onChange={(e) => setAmount(e.target.value)}
                   placeholder="0.00"
@@ -445,11 +453,10 @@ export default function AddExpensePage() {
                     key={cat.value}
                     type="button"
                     onClick={() => setCategory(cat.value)}
-                    className={`p-3 rounded-lg border-2 transition-all ${
-                      category === cat.value
+                    className={`p-3 rounded-lg border-2 transition-all ${category === cat.value
                         ? "border-primary bg-primary/10"
                         : "border-neutral-200 dark:border-dark-border hover:border-primary"
-                    }`}
+                      }`}
                   >
                     <div className="text-2xl mb-1">{cat.icon}</div>
                     <div className="text-xs font-medium">{cat.label}</div>
@@ -530,12 +537,12 @@ export default function AddExpensePage() {
               </label>
               <button
                 type="button"
-                onClick={() =>setShowFriendModal(true)}
+                onClick={() => setShowFriendModal(true)}
                 className="w-full flex items-center justify-between p-3 border-2 border-neutral-200 dark:border-dark-border rounded-md hover:border-primary transition-colors bg-white dark:bg-dark-bg-secondary"
               >
                 <span className="text-sm font-medium text-neutral-700 dark:text-dark-text">
-                  {selectedFriends.length === 0 
-                    ? "Select friends" 
+                  {selectedFriends.length === 0
+                    ? "Select friends"
                     : `${selectedFriends.length} friend${selectedFriends.length > 1 ? "s" : ""} selected`}
                 </span>
                 <Users className="h-5 w-5 text-neutral-400" />
@@ -575,22 +582,20 @@ export default function AddExpensePage() {
                 <button
                   type="button"
                   onClick={() => setSplitMethod("equally")}
-                  className={`p-3 rounded-lg border-2 text-sm font-medium transition-all ${
-                    splitMethod === "equally"
+                  className={`p-3 rounded-lg border-2 text-sm font-medium transition-all ${splitMethod === "equally"
                       ? "border-primary bg-primary/10 text-primary"
                       : "border-neutral-200 dark:border-dark-border text-neutral-700 dark:text-dark-text hover:border-primary"
-                  }`}
+                    }`}
                 >
                   Split Equally
                 </button>
                 <button
                   type="button"
                   onClick={() => setSplitMethod("exact")}
-                  className={`p-3 rounded-lg border-2 text-sm font-medium transition-all ${
-                    splitMethod === "exact"
+                  className={`p-3 rounded-lg border-2 text-sm font-medium transition-all ${splitMethod === "exact"
                       ? "border-primary bg-primary/10 text-primary"
                       : "border-neutral-200 dark:border-dark-border text-neutral-700 dark:text-dark-text hover:border-primary"
-                  }`}
+                    }`}
                 >
                   Exact Amounts
                 </button>
@@ -664,11 +669,10 @@ export default function AddExpensePage() {
                     key={friend.id}
                     type="button"
                     onClick={() => toggleFriend(friend)}
-                    className={`w-full flex items-center justify-between p-3 rounded-lg border-2 transition-all ${
-                      isSelected
+                    className={`w-full flex items-center justify-between p-3 rounded-lg border-2 transition-all ${isSelected
                         ? "border-primary bg-primary/10"
                         : "border-neutral-200 dark:border-dark-border hover:border-primary"
-                    }`}
+                      }`}
                   >
                     <div className="flex items-center gap-3">
                       <div className="h-10 w-10 bg-primary/10 rounded-full flex items-center justify-center">
@@ -740,11 +744,10 @@ export default function AddExpensePage() {
                         setSelectedGroup(group);
                         setShowGroupModal(false);
                       }}
-                      className={`w-full flex items-center justify-between p-3 rounded-lg border-2 transition-all ${
-                        isSelected
+                      className={`w-full flex items-center justify-between p-3 rounded-lg border-2 transition-all ${isSelected
                           ? "border-primary bg-primary/10"
                           : "border-neutral-200 dark:border-dark-border hover:border-primary"
-                      }`}
+                        }`}
                     >
                       <div className="flex items-center gap-3">
                         <div className="h-10 w-10 bg-purple-100 dark:bg-purple-900 rounded-lg flex items-center justify-center">
@@ -888,11 +891,10 @@ export default function AddExpensePage() {
                       </div>
                       {friend.balance !== 0 && (
                         <div className="text-right">
-                          <span className={`text-xs font-medium ${
-                            friend.balance > 0
+                          <span className={`text-xs font-medium ${friend.balance > 0
                               ? 'text-green-600 dark:text-green-400'
                               : 'text-red-600 dark:text-red-400'
-                          }`}>
+                            }`}>
                             {friend.balance > 0 ? '+' : ''}₹{Math.abs(friend.balance)}
                           </span>
                         </div>
@@ -926,4 +928,3 @@ export default function AddExpensePage() {
     </AppShell>
   );
 }
-

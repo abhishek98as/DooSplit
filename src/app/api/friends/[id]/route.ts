@@ -134,6 +134,38 @@ export async function GET(
         lastActivity: string | null;
       }> = [];
 
+      // Transfer-based algorithm: build net maps per expense, then do greedy debtor-creditor matching
+      function buildTransfersForExpense(participants: any[]): Array<{ from: string; to: string; amount: number }> {
+        const netMap = new Map<string, number>();
+        for (const p of participants) {
+          const uid = String(p.user_id || "");
+          if (!uid) continue;
+          const net = toNum(p.paid_amount) - toNum(p.owed_amount);
+          netMap.set(uid, round2((netMap.get(uid) || 0) + net));
+        }
+        const debtors: Array<{ userId: string; amount: number }> = [];
+        const creditors: Array<{ userId: string; amount: number }> = [];
+        for (const [uid, net] of netMap.entries()) {
+          if (net < -0.01) debtors.push({ userId: uid, amount: round2(Math.abs(net)) });
+          else if (net > 0.01) creditors.push({ userId: uid, amount: round2(net) });
+        }
+        debtors.sort((a, b) => b.amount - a.amount);
+        creditors.sort((a, b) => b.amount - a.amount);
+        const transfers: Array<{ from: string; to: string; amount: number }> = [];
+        let i = 0, j = 0;
+        while (i < debtors.length && j < creditors.length) {
+          const debtor = debtors[i];
+          const creditor = creditors[j];
+          const settled = round2(Math.min(debtor.amount, creditor.amount));
+          if (settled > 0.01) transfers.push({ from: debtor.userId, to: creditor.userId, amount: settled });
+          debtor.amount = round2(debtor.amount - settled);
+          creditor.amount = round2(creditor.amount - settled);
+          if (debtor.amount <= 0.01) i++;
+          if (creditor.amount <= 0.01) j++;
+        }
+        return transfers;
+      }
+
       let pairExpenses: any[] = [];
       if (pairExpenseIds.length > 0) {
         const expensesById = await fetchDocsByIds("expenses", pairExpenseIds);
@@ -144,17 +176,19 @@ export async function GET(
           }
         }
 
+        // Use transfer-based algorithm (consistent with balance-service.ts)
         for (const expense of pairExpenses) {
           const participants = participantsByExpense.get(String(expense.id)) || [];
-          const friendParticipant = participants.find(
-            (participant: any) => String(participant.user_id) === friendId
-          );
-          if (!friendParticipant) {
-            continue;
+          const transfers = buildTransfersForExpense(participants);
+          for (const transfer of transfers) {
+            if (transfer.from === userId || transfer.to === userId) {
+              const otherUserId = transfer.from === userId ? transfer.to : transfer.from;
+              if (otherUserId !== friendId) continue;
+              // positive balance = friend owes user
+              const delta = transfer.to === userId ? transfer.amount : -transfer.amount;
+              balance = round2(balance + delta);
+            }
           }
-          const friendNet =
-            toNum(friendParticipant.paid_amount) - toNum(friendParticipant.owed_amount);
-          balance = round2(balance - friendNet);
         }
       }
 
@@ -175,11 +209,15 @@ export async function GET(
         ...incomingSettlementsSnap.docs.map((doc) => ({ id: doc.id, ...((doc.data() as any) || {}) })),
       ];
 
+      // Bug 1 fix: correct settlement sign convention
+      // from === userId means user paid friend → user's debt decreases → balance improves (moves positive)
+      // from === friendId means friend paid user → friend's debt decreases → balance decreases
       for (const settlement of settlements) {
+        const amount = toNum(settlement.amount);
         if (String(settlement.from_user_id) === userId) {
-          balance = round2(balance - toNum(settlement.amount));
+          balance = round2(balance + amount); // user paid friend: debt cleared, balance improves
         } else {
-          balance = round2(balance + toNum(settlement.amount));
+          balance = round2(balance - amount); // friend paid user: friend's debt cleared, balance decreases
         }
       }
 
@@ -211,40 +249,62 @@ export async function GET(
           grouped.set(key, list);
         }
 
-        groupBreakdown = commonGroupIds
-          .map((groupId) => groupsById.get(groupId))
-          .filter(Boolean)
-          .map((group: any) => {
-          const expenses = grouped.get(String(group.id)) || [];
-          let groupBalance = 0;
-          let lastActivity: string | null = null;
+        groupBreakdown = await Promise.all(
+          commonGroupIds
+            .map((groupId) => groupsById.get(groupId))
+            .filter(Boolean)
+            .map(async (group: any) => {
+              const expenses = grouped.get(String(group.id)) || [];
+              let groupBalance = 0;
+              let lastActivity: string | null = null;
 
-          for (const expense of expenses) {
-            const participants = participantsByExpense.get(String(expense.id)) || [];
-            const friendParticipant = participants.find(
-              (participant: any) => String(participant.user_id) === friendId
-            );
-            if (friendParticipant) {
-              const friendNet =
-                toNum(friendParticipant.paid_amount) - toNum(friendParticipant.owed_amount);
-              groupBalance = round2(groupBalance - friendNet);
-            }
+              // Use transfer-based algorithm for group balance breakdown (Bug 3 fix)
+              for (const expense of expenses) {
+                const participants = participantsByExpense.get(String(expense.id)) || [];
+                const transfers = buildTransfersForExpense(participants);
+                for (const transfer of transfers) {
+                  if (transfer.from === userId || transfer.to === userId) {
+                    const otherUserId = transfer.from === userId ? transfer.to : transfer.from;
+                    if (otherUserId !== friendId) continue;
+                    const delta = transfer.to === userId ? transfer.amount : -transfer.amount;
+                    groupBalance = round2(groupBalance + delta);
+                  }
+                }
 
-            const createdBy = String(expense.created_by || "");
-            if (createdBy === userId || createdBy === friendId) {
-              if (!lastActivity || new Date(expense.updated_at) > new Date(lastActivity)) {
-                lastActivity = expense.updated_at;
+                const createdBy = String(expense.created_by || "");
+                if (createdBy === userId || createdBy === friendId) {
+                  if (!lastActivity || new Date(expense.updated_at) > new Date(lastActivity)) {
+                    lastActivity = expense.updated_at;
+                  }
+                }
               }
-            }
-          }
 
-          return {
-            groupId: String(group.id),
-            groupName: String(group.name),
-            balance: round2(groupBalance),
-            lastActivity,
-          };
-        });
+              // Bug 5 fix: include group settlements in group breakdown
+              const [outGroupSnap, inGroupSnap] = await Promise.all([
+                db.collection("settlements").where("from_user_id", "==", userId).where("to_user_id", "==", friendId).where("group_id", "==", String(group.id)).get(),
+                db.collection("settlements").where("from_user_id", "==", friendId).where("to_user_id", "==", userId).where("group_id", "==", String(group.id)).get(),
+              ]);
+              const groupSettlements: any[] = [
+                ...outGroupSnap.docs.map((doc) => ({ id: doc.id, ...((doc.data() as any) || {}) })),
+                ...inGroupSnap.docs.map((doc) => ({ id: doc.id, ...((doc.data() as any) || {}) })),
+              ];
+              for (const settlement of groupSettlements) {
+                const amount = toNum(settlement.amount);
+                if (String(settlement.from_user_id) === userId) {
+                  groupBalance = round2(groupBalance + amount);
+                } else {
+                  groupBalance = round2(groupBalance - amount);
+                }
+              }
+
+              return {
+                groupId: String(group.id),
+                groupName: String(group.name),
+                balance: round2(groupBalance),
+                lastActivity,
+              };
+            })
+        );
       }
 
       return {

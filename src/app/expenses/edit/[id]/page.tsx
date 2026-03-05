@@ -11,10 +11,10 @@ import ImageUpload from "@/components/ui/ImageUpload";
 import Modal from "@/components/ui/Modal";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
 import { ImageType } from "@/lib/storage/image-types";
-import { 
-  IndianRupee, 
-  Receipt, 
-  Calendar, 
+import {
+  IndianRupee,
+  Receipt,
+  Calendar,
   Users,
   X,
   Check
@@ -55,17 +55,17 @@ export default function EditExpensePage() {
   const [notes, setNotes] = useState("");
   const [images, setImages] = useState<string[]>([]);
   const [currency, setCurrency] = useState("INR");
-  
+
   // Participants and split
   const [splitMethod, setSplitMethod] = useState<SplitMethod>("equally");
   const [selectedFriends, setSelectedFriends] = useState<Friend[]>([]);
   const [selectedGroup, setSelectedGroup] = useState<Group | null>(null);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [paidBy, setPaidBy] = useState<string>("");
-  
+
   // Modal states
   const [showFriendModal, setShowFriendModal] = useState(false);
-  
+
   // Data
   const [friends, setFriends] = useState<Friend[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
@@ -103,7 +103,7 @@ export default function EditExpensePage() {
     try {
       const response = await fetch(`/api/expenses/${expenseId}`);
       if (!response.ok) throw new Error("Failed to fetch expense");
-      
+
       const result = await response.json();
       const data = result.expense; // API returns { expense: { ... } }
 
@@ -147,16 +147,9 @@ export default function EditExpensePage() {
         const selectedFriendsList = data.participants
           .filter((p: any) => p.userId._id !== session?.user?.id)
           .map((p: any) => ({
-            id: p.userId._id,
-            friend: {
-              id: p.userId._id,
-              name: p.userId.name,
-              email: p.userId.email || '',
-              profilePicture: p.userId.profilePicture,
-              isDummy: false
-            },
-            balance: 0, // We'll calculate this later if needed
-            friendshipDate: ''
+            _id: p.userId._id,
+            name: p.userId.name,
+            email: p.userId.email || '',
           }));
         setSelectedFriends(selectedFriendsList);
       }
@@ -193,39 +186,37 @@ export default function EditExpensePage() {
     }
   };
 
-  // Match selected friends when both expense participants and friends list are loaded
-  useEffect(() => {
-    if (friends.length > 0 && participants.length > 0 && selectedFriends.length === 0) {
-      const matchedFriends = friends.filter(friend =>
-        participants.some(p => p.userId === friend._id)
-      );
-      setSelectedFriends(matchedFriends);
-    }
-  }, [friends, participants]);
+  // Helper: round to 2 decimal places
+  const round2 = (num: number) => Math.round(num * 100) / 100;
 
+  // Bug 8 fix: compute correct owedAmount for all participants including the payer.
+  // The payer still owes their fair share — they paid the full amount, but only *owe* their portion.
   const calculateSplit = () => {
     const totalAmount = parseFloat(amount) || 0;
     if (totalAmount === 0 || selectedFriends.length === 0) return;
 
     const numPeople = selectedFriends.length + 1; // +1 for current user
+    const equalShare = round2(totalAmount / numPeople);
+    // Handle rounding: give remainder to current user
+    const remainder = round2(totalAmount - equalShare * numPeople);
     const newParticipants: Participant[] = [];
 
-    // Add current user
-    const userShare = splitMethod === "equally" ? totalAmount / numPeople : 0;
+    // Add current user — payer still owes their fair share
+    const userShare = splitMethod === "equally" ? round2(equalShare + remainder) : 0;
     newParticipants.push({
       userId: session?.user?.id || "",
       name: "You",
-      owedAmount: paidBy === session?.user?.id ? 0 : userShare,
+      owedAmount: splitMethod === "equally" ? userShare : 0,
       paidAmount: paidBy === session?.user?.id ? totalAmount : 0
     });
 
     // Add selected friends
     selectedFriends.forEach(friend => {
-      const friendShare = splitMethod === "equally" ? totalAmount / numPeople : 0;
+      const friendShare = splitMethod === "equally" ? equalShare : 0;
       newParticipants.push({
         userId: friend._id,
         name: friend.name,
-        owedAmount: paidBy === friend._id ? 0 : friendShare,
+        owedAmount: splitMethod === "equally" ? friendShare : 0,
         paidAmount: paidBy === friend._id ? totalAmount : 0
       });
     });
@@ -235,7 +226,7 @@ export default function EditExpensePage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!amount || !description || selectedFriends.length === 0) {
       alert("Please fill in all required fields and select at least one friend");
       return;
@@ -278,7 +269,7 @@ export default function EditExpensePage() {
   };
 
   const toggleFriend = (friend: Friend) => {
-    setSelectedFriends(prev => 
+    setSelectedFriends(prev =>
       prev.find(f => f._id === friend._id)
         ? prev.filter(f => f._id !== friend._id)
         : [...prev, friend]
@@ -319,6 +310,7 @@ export default function EditExpensePage() {
                 <input
                   type="number"
                   step="0.01"
+                  min="0.01"
                   value={amount}
                   onChange={(e) => setAmount(e.target.value)}
                   placeholder="0.00"
@@ -353,11 +345,10 @@ export default function EditExpensePage() {
                     key={cat.value}
                     type="button"
                     onClick={() => setCategory(cat.value)}
-                    className={`p-3 rounded-lg border-2 transition-all ${
-                      category === cat.value
+                    className={`p-3 rounded-lg border-2 transition-all ${category === cat.value
                         ? "border-primary bg-primary/10"
                         : "border-neutral-200 dark:border-dark-border hover:border-primary"
-                    }`}
+                      }`}
                   >
                     <div className="text-2xl mb-1">{cat.icon}</div>
                     <div className="text-xs font-medium">{cat.label}</div>
@@ -390,8 +381,8 @@ export default function EditExpensePage() {
                 className="w-full flex items-center justify-between p-3 border-2 border-neutral-200 dark:border-dark-border rounded-md hover:border-primary transition-colors bg-white dark:bg-dark-bg-secondary"
               >
                 <span className="text-sm font-medium text-neutral-700 dark:text-dark-text">
-                  {selectedFriends.length === 0 
-                    ? "Select friends" 
+                  {selectedFriends.length === 0
+                    ? "Select friends"
                     : `${selectedFriends.length} friend${selectedFriends.length > 1 ? "s" : ""} selected`}
                 </span>
                 <Users className="h-5 w-5 text-neutral-400" />
@@ -423,22 +414,20 @@ export default function EditExpensePage() {
                 <button
                   type="button"
                   onClick={() => setSplitMethod("equally")}
-                  className={`p-3 rounded-lg border-2 text-sm font-medium transition-all ${
-                    splitMethod === "equally"
+                  className={`p-3 rounded-lg border-2 text-sm font-medium transition-all ${splitMethod === "equally"
                       ? "border-primary bg-primary/10 text-primary"
                       : "border-neutral-200 dark:border-dark-border text-neutral-700 dark:text-dark-text hover:border-primary"
-                  }`}
+                    }`}
                 >
                   Split Equally
                 </button>
                 <button
                   type="button"
                   onClick={() => setSplitMethod("exact")}
-                  className={`p-3 rounded-lg border-2 text-sm font-medium transition-all ${
-                    splitMethod === "exact"
+                  className={`p-3 rounded-lg border-2 text-sm font-medium transition-all ${splitMethod === "exact"
                       ? "border-primary bg-primary/10 text-primary"
                       : "border-neutral-200 dark:border-dark-border text-neutral-700 dark:text-dark-text hover:border-primary"
-                  }`}
+                    }`}
                 >
                   Exact Amounts
                 </button>
@@ -511,11 +500,10 @@ export default function EditExpensePage() {
                     key={friend._id}
                     type="button"
                     onClick={() => toggleFriend(friend)}
-                    className={`w-full flex items-center justify-between p-3 rounded-lg border-2 transition-all ${
-                      isSelected
+                    className={`w-full flex items-center justify-between p-3 rounded-lg border-2 transition-all ${isSelected
                         ? "border-primary bg-primary/10"
                         : "border-neutral-200 dark:border-dark-border hover:border-primary"
-                    }`}
+                      }`}
                   >
                     <div className="flex items-center gap-3">
                       <div className="h-10 w-10 bg-primary/10 rounded-full flex items-center justify-center">

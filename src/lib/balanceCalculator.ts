@@ -1,8 +1,12 @@
-import {
-  CACHE_TTL,
-  buildUserScopedCacheKey,
-  getOrSetCacheJson,
-} from "@/lib/cache";
+/**
+ * @deprecated This file is a dead stub — all functions return 0/empty.
+ * It is NOT imported anywhere in the codebase.
+ * For real balance calculations use:
+ *   - src/lib/data/balance-service.ts  (server-side, production calculations)
+ *   - src/lib/balance-recalculator.ts  (client-side, offline IndexedDB calculations)
+ *
+ * TODO: Remove this file once confirmed no external consumers exist.
+ */
 
 export interface Balance {
   userId: string;
@@ -20,18 +24,11 @@ export interface UserBalance {
 }
 
 export async function calculateBalanceBetweenUsers(
-  userId1: string,
-  userId2: string,
-  skipCache = false
+  _userId1: string,
+  _userId2: string,
+  _skipCache = false
 ): Promise<number> {
-  const sortedIds = [String(userId1), String(userId2)].sort();
-  const cacheKey = buildUserScopedCacheKey("user-balance", sortedIds[0], sortedIds[1]);
-
-  if (skipCache) {
-    return 0;
-  }
-
-  return getOrSetCacheJson(cacheKey, CACHE_TTL.friends, async () => 0);
+  return 0;
 }
 
 export async function getUserBalances(_userId: string): Promise<Map<string, number>> {

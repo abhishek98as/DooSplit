@@ -156,10 +156,10 @@ export async function GET(
         const to = String(settlement.to_user_id || "");
         const amount = toNum(settlement.amount);
         if (netMap.has(from)) {
-          netMap.set(from, round2((netMap.get(from) || 0) - amount));
+          netMap.set(from, round2((netMap.get(from) || 0) + amount));
         }
         if (netMap.has(to)) {
-          netMap.set(to, round2((netMap.get(to) || 0) + amount));
+          netMap.set(to, round2((netMap.get(to) || 0) - amount));
         }
       }
 
