@@ -305,19 +305,34 @@ export default function AddExpensePage() {
         if (finalImageRefs.length > 0) {
           await offlineStore.updateExpense(expense._id, { images: finalImageRefs });
         }
-        // Notify in-page listeners on this window (e.g. other components or
-        // tabs) that expenses data changed so they refetch immediately.
-        window.dispatchEvent(
-          new CustomEvent("doosplit:data-updated", {
-            detail: {
-              domains: ["expenses", "friends", "analytics", "activity"],
-              reason: "expense-created",
-              at: Date.now(),
-            },
-          })
-        );
+
+        // Signal dashboard to force-refresh when it mounts.
+        // We use sessionStorage instead of a window event because the event
+        // would be lost if the dashboard page isn't mounted yet.
+        try {
+          sessionStorage.setItem("doosplit:force-refresh", Date.now().toString());
+        } catch {
+          // sessionStorage may be unavailable in some browsers
+        }
+
+        // Bust the service worker's API cache for critical routes so the
+        // dashboard doesn't get a stale response on the next network fetch.
+        try {
+          const criticalRoutes = [
+            "/api/friends",
+            "/api/dashboard/activity",
+          ];
+          await Promise.allSettled(
+            criticalRoutes.map((route) =>
+              fetch(route, { cache: "reload" }).catch(() => {})
+            )
+          );
+        } catch {
+          // Non-critical — ignore
+        }
+
+        // Navigate to dashboard
         router.push("/dashboard");
-        router.refresh();
       } else {
         alert("Failed to create expense");
       }

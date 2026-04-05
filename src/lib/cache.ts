@@ -11,18 +11,18 @@ const REGISTRY_TTL_SECONDS = 1800; // 30 min — safely above max data TTL (600s
 // memory, so a mutation in instance A can't clear instance B's memory cache.
 // Short cap (15s) prevents cross-instance stale reads while still deduplicating
 // burst requests within the same Lambda invocation.
-const MEMORY_CACHE_MAX_TTL_SECONDS = 15;
+const MEMORY_CACHE_MAX_TTL_SECONDS = 5;
 
 export const CACHE_TTL = {
-  expenses: 300,        // 5 minutes (was 180s) - moderately dynamic
-  friends: 600,         // 10 minutes (was 180s) - rarely changes
-  groups: 600,          // 10 minutes (was 180s) - rarely changes
-  activities: 180,      // 3 minutes (was 120s) - more dynamic
-  dashboardActivity: 180, // 3 minutes (was 120s) - more dynamic
-  settlements: 300,     // 5 minutes (was 180s) - moderately dynamic
-  settlement: 180,      // 3 minutes (was 120s) - single record
-  analytics: 600,       // 10 minutes (was 180s) - rarely changes
-  userBalance: 180,     // 3 minutes (was 120s) - moderately dynamic
+  expenses: 60,           // 1 minute - changes on every expense add
+  friends: 120,           // 2 minutes - changes when expenses affect balances
+  groups: 120,            // 2 minutes - changes less often
+  activities: 30,         // 30 seconds - must reflect new activity fast
+  dashboardActivity: 30,  // 30 seconds - must reflect new activity fast
+  settlements: 120,       // 2 minutes
+  settlement: 60,         // 1 minute - single record
+  analytics: 300,         // 5 minutes - rarely changes
+  userBalance: 30,        // 30 seconds - critical: must reflect new expenses fast
 };
 
 export type CacheStatus = "HIT" | "MISS";

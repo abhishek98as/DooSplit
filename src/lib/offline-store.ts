@@ -54,8 +54,8 @@ class OfflineStore {
   private inFlightRequests = new Map<string, Promise<any>>();
   private revalidateInFlight = new Set<string>();
   private readonly requestTimeoutMs = 25000;
-  private readonly staticCacheTimeMs = 5 * 60 * 1000;
-  private readonly dynamicCacheTimeMs = 10 * 1000;
+  private readonly staticCacheTimeMs = 30 * 1000;
+  private readonly dynamicCacheTimeMs = 0;
   private readonly dynamicRoutePrefixes = [
     "/api/expenses",
     "/api/friends",

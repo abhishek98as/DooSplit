@@ -162,8 +162,10 @@ async function handleApiRequest(request) {
   }
 
   try {
-    // Always return the real network response so server errors are not masked
-    const networkResponse = await fetch(request.clone());
+    // Always return the real network response so server errors are not masked.
+    // Use cache: 'no-store' explicitly so the underlying browser HTTP cache
+    // doesn't serve stale responses to the service worker's own fetch.
+    const networkResponse = await fetch(request.clone(), { cache: 'no-store' });
 
     if (networkResponse.ok && shouldCacheApiRoute(url.pathname)) {
       // Cache successful responses

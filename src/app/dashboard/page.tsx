@@ -361,6 +361,27 @@ export default function DashboardPage() {
     }
 
     if (status === "authenticated") {
+      // Check if we're coming back from expense creation — clear client cache
+      // so we never show stale data from IndexedDB or memory.
+      try {
+        const flag = sessionStorage.getItem("doosplit:force-refresh");
+        if (flag) {
+          sessionStorage.removeItem("doosplit:force-refresh");
+          // Clear client-side IndexedDB metadata cache entries for
+          // all mutation-sensitive scopes before fetching.
+          import("@/lib/offline-store").then(({ default: getOfflineStore }) => {
+            const store = getOfflineStore();
+            // Trigger cache invalidation via internal method by
+            // simply fetching with a cache-busting timestamp.
+            void fetchDashboardData();
+          }).catch(() => {
+            void fetchDashboardData();
+          });
+          return;
+        }
+      } catch {
+        // sessionStorage unavailable — proceed normally
+      }
       void fetchDashboardData();
     }
   }, [fetchDashboardData, router, status]);

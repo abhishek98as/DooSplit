@@ -8,15 +8,20 @@ const nextConfig = {
     // Enable PWA features
   },
 
-  // PWA Configuration
+  // Headers configuration
   headers: async () => [
     {
-      // Apply to all API routes
+      // API routes: never cache in browser/CDN — data is user-specific
+      // and must always be fresh after mutations
       source: '/api/:path*',
       headers: [
         {
           key: 'Cache-Control',
-          value: 'public, max-age=300, s-maxage=600, stale-while-revalidate=86400',
+          value: 'private, no-cache, no-store, must-revalidate',
+        },
+        {
+          key: 'Pragma',
+          value: 'no-cache',
         },
       ],
     },
@@ -46,7 +51,6 @@ const nextConfig = {
     deviceSizes: [640, 750, 828, 1080, 1200, 1920, 2048, 3840],
     imageSizes: [16, 32, 48, 64, 96, 128, 256, 384],
   },
-
 
   // Webpack configuration for PWA
   webpack: (config, { dev, isServer }) => {
