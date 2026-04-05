@@ -1,28 +1,37 @@
 import { createHash } from "crypto";
-import { getRedisClient } from "@/lib/redis";
+
+/**
+ * Lightweight in-process cache for DooSplit.
+ *
+ * Redis has been intentionally removed for this deployment scale (5-10 users).
+ * Reasons:
+ *  - Direct Firestore reads are 10-50ms; Redis added 50-120ms of network overhead.
+ *  - Free-tier Redis (100 ops/sec) was a bottleneck, not a benefit.
+ *  - Serverless instances don't share memory anyway, so Redis was the only
+ *    cross-instance cache — but with only 5-10 users it's not needed.
+ *
+ * What we keep:
+ *  - A short-lived in-process memory cache (5s) to deduplicate rapid burst
+ *    requests within the same serverless invocation (e.g. dashboard parallel fetches).
+ *  - On mutation (invalidateUsersCache), affected keys are cleared immediately.
+ */
 
 const CACHE_PREFIX = process.env.CACHE_PREFIX || "doosplit:v1";
 
-// Registry must outlive all cached data. If the registry expires before a data key,
-// invalidateUsersCache silently misses that key and stale data survives.
-const REGISTRY_TTL_SECONDS = 1800; // 30 min — safely above max data TTL (600s)
-
-// Cap process-local memory cache tightly. Multiple serverless instances don't share
-// memory, so a mutation in instance A can't clear instance B's memory cache.
-// Short cap (15s) prevents cross-instance stale reads while still deduplicating
-// burst requests within the same Lambda invocation.
+// 5 seconds: deduplicates burst requests in the same invocation,
+// but data is never more than 5s stale even if invalidation is skipped.
 const MEMORY_CACHE_MAX_TTL_SECONDS = 5;
 
 export const CACHE_TTL = {
-  expenses: 60,           // 1 minute - changes on every expense add
-  friends: 120,           // 2 minutes - changes when expenses affect balances
-  groups: 120,            // 2 minutes - changes less often
-  activities: 30,         // 30 seconds - must reflect new activity fast
-  dashboardActivity: 30,  // 30 seconds - must reflect new activity fast
-  settlements: 120,       // 2 minutes
-  settlement: 60,         // 1 minute - single record
-  analytics: 300,         // 5 minutes - rarely changes
-  userBalance: 30,        // 30 seconds - critical: must reflect new expenses fast
+  expenses: 5,            // 5 seconds — always fetch fresh from Firestore
+  friends: 5,             // 5 seconds
+  groups: 5,              // 5 seconds
+  activities: 5,          // 5 seconds
+  dashboardActivity: 5,   // 5 seconds
+  settlements: 5,         // 5 seconds
+  settlement: 5,          // 5 seconds
+  analytics: 30,          // 30 seconds — less critical
+  userBalance: 5,         // 5 seconds
 };
 
 export type CacheStatus = "HIT" | "MISS";
@@ -69,18 +78,10 @@ export function buildUserScopedCacheKey(
   return `${CACHE_PREFIX}:${scope}:user:${userId}:${digest}`;
 }
 
-/**
- * Registry key that holds all cache keys for a given user + scope.
- * This avoids expensive SCAN operations on Redis free tier (100 ops/sec).
- */
 function registryKey(scope: string, userId: string): string {
   return `${CACHE_PREFIX}:reg:${scope}:${userId}`;
 }
 
-/**
- * Extract scope and userId from a cache key.
- * Key format: PREFIX:scope:user:userId:digest
- */
 function parseKeyParts(key: string): { scope: string; userId: string } | null {
   const prefixParts = CACHE_PREFIX.split(":");
   const parts = key.split(":");
@@ -124,7 +125,6 @@ function memorySet(key: string, value: unknown, ttlSeconds: number): void {
 
 /**
  * Get cached JSON or load fresh data and cache it.
- * Fail-open: if Redis is down, falls back to the loader directly.
  */
 export async function getOrSetCacheJson<T>(
   key: string,
@@ -144,6 +144,7 @@ export async function getOrSetCacheJsonWithMeta<T>(
   ttlSeconds: number,
   loader: () => Promise<T>
 ): Promise<CacheResult<T>> {
+  // Check in-process memory cache first (deduplicates burst requests)
   const memoryCached = memoryGet<T>(key);
   if (memoryCached !== null) {
     return {
@@ -152,44 +153,10 @@ export async function getOrSetCacheJsonWithMeta<T>(
     };
   }
 
-  const redis = await getRedisClient();
-
-  if (redis) {
-    try {
-      const cached = await redis.get(key);
-      if (cached) {
-        return {
-          data: JSON.parse(cached) as T,
-          cacheStatus: "HIT",
-        };
-      }
-    } catch (error: any) {
-      console.warn("Redis read failed, falling back to DB:", error.message);
-    }
-  }
-
+  // Always fetch fresh from Firestore
   const fresh = await loader();
 
-  if (redis) {
-    try {
-      // Store the value
-      await redis.setEx(key, ttlSeconds, JSON.stringify(fresh));
-
-      // Register this key for fast invalidation (avoids SCAN)
-      const parsed = parseKeyParts(key);
-      if (parsed) {
-        const regKey = registryKey(parsed.scope, parsed.userId);
-        await redis.sAdd(regKey, key);
-        // Registry TTL must exceed max data TTL so keys are still discoverable
-        // when invalidation runs after a mutation.
-        await redis.expire(regKey, REGISTRY_TTL_SECONDS);
-      }
-    } catch (error: any) {
-      console.warn("Redis write failed, continuing without cache:", error.message);
-    }
-  }
-
-  // Keep a process-local fallback cache for Redis-disabled environments.
+  // Store briefly to deduplicate simultaneous requests
   memorySet(key, fresh, ttlSeconds);
 
   return {
@@ -199,15 +166,8 @@ export async function getOrSetCacheJsonWithMeta<T>(
 }
 
 /**
- * Invalidate all cache entries for the given users and scopes.
- *
- * Uses a registry-based approach instead of SCAN:
- * - Each cached key is tracked in a Redis Set (reg:scope:userId)
- * - On invalidation we read the set, then batch-delete everything
- * - Total Redis ops: 1 SMEMBERS + 1 DEL per user/scope pair
- *   (vs unlimited SCAN iterations before)
- *
- * This is critical for your Redis free tier (100 ops/sec limit).
+ * Invalidate all in-process cache entries for the given users and scopes.
+ * Instant — no network hop needed.
  */
 export async function invalidateUsersCache(
   userIds: Array<string>,
@@ -217,45 +177,20 @@ export async function invalidateUsersCache(
     return;
   }
 
-  const redis = await getRedisClient();
-
   const uniqueUsers = Array.from(
     new Set(userIds.map((id) => id.toString()).filter(Boolean))
   );
 
-  try {
-    const keysToDelete: string[] = [];
-
-    for (const userId of uniqueUsers) {
-      for (const scope of scopes) {
-        const regKey = registryKey(scope, userId);
-        if (redis) {
-          // Get all tracked keys for this user+scope (1 op)
-          const trackedKeys = await redis.sMembers(regKey);
-
-          if (trackedKeys.length > 0) {
-            keysToDelete.push(...trackedKeys);
-          }
-          // Always delete the registry key itself
-          keysToDelete.push(regKey);
+  for (const userId of uniqueUsers) {
+    for (const scope of scopes) {
+      const regKey = registryKey(scope, userId);
+      const trackedMemoryKeys = memoryRegistry.get(regKey);
+      if (trackedMemoryKeys) {
+        for (const key of trackedMemoryKeys) {
+          memoryCache.delete(key);
         }
-
-        // Clear process-local fallback keys.
-        const trackedMemoryKeys = memoryRegistry.get(regKey);
-        if (trackedMemoryKeys) {
-          for (const key of trackedMemoryKeys) {
-            memoryCache.delete(key);
-          }
-          memoryRegistry.delete(regKey);
-        }
+        memoryRegistry.delete(regKey);
       }
     }
-
-    if (redis && keysToDelete.length > 0) {
-      // Delete all keys in one batch (single DEL call = 1 op)
-      await redis.del(keysToDelete);
-    }
-  } catch (error: any) {
-    console.warn("Redis invalidation failed:", error.message);
   }
 }
