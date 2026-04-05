@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState } from "react";
 import { useSession } from "@/lib/auth/react-session";
@@ -78,71 +78,31 @@ export default function AnalyticsPage() {
 
   const getCategoryIcon = (category: string) => {
     const icons: Record<string, string> = {
-      food: "🍔",
-      transport: "🚗",
-      entertainment: "🎬",
-      shopping: "🛒",
-      bills: "📄",
-      healthcare: "⚕️",
-      travel: "✈️",
-      other: "📦",
+      food: "ðŸ”",
+      transport: "ðŸš—",
+      entertainment: "ðŸŽ¬",
+      shopping: "ðŸ›’",
+      bills: "ðŸ“„",
+      healthcare: "âš•ï¸",
+      travel: "âœˆï¸",
+      other: "ðŸ“¦",
     };
-    return icons[category] || "📦";
+    return icons[category] || "ðŸ“¦";
   };
 
   const handleExportAnalytics = async () => {
     if (!analytics) return;
 
     try {
-      const XLSX = await import('xlsx');
-      
-      // Create summary sheet
-      const summaryData = [
-        ['Metric', 'Value'],
-        ['Total Expenses', analytics.summary.totalExpenses],
-        ['Total Spent', `₹${analytics.summary.totalSpent.toFixed(2)}`],
-        ['Total Paid', `₹${analytics.summary.totalPaid.toFixed(2)}`],
-        ['Total Settled', `₹${analytics.summary.totalSettled.toFixed(2)}`],
-        ['Average Expense', `₹${analytics.summary.averageExpense.toFixed(2)}`],
-      ];
-
-      // Create category breakdown sheet
-      const categoryData = [
-        ['Category', 'Count', 'Total Amount', 'Percentage'],
-        ...analytics.categoryBreakdown.map(cat => [
-          cat.category,
-          cat.count,
-          `₹${cat.total.toFixed(2)}`,
-          `${((cat.total / analytics.summary.totalSpent) * 100).toFixed(1)}%`,
-        ]),
-      ];
-
-      // Create monthly trend sheet
-      const monthlyData = [
-        ['Month', 'Expenses', 'Total Amount'],
-        ...analytics.monthlyTrend.map(month => [
-          month.month,
-          month.expenses,
-          `₹${month.total.toFixed(2)}`,
-        ]),
-      ];
-
-      // Create workbook
-      const wb = XLSX.utils.book_new();
-      
-      const summaryWs = XLSX.utils.aoa_to_sheet(summaryData);
-      const categoryWs = XLSX.utils.aoa_to_sheet(categoryData);
-      const monthlyWs = XLSX.utils.aoa_to_sheet(monthlyData);
-
-      XLSX.utils.book_append_sheet(wb, summaryWs, 'Summary');
-      XLSX.utils.book_append_sheet(wb, categoryWs, 'Categories');
-      XLSX.utils.book_append_sheet(wb, monthlyWs, 'Monthly Trend');
-
-      // Download file
-      const fileName = `analytics_${timeframe}_${new Date().toISOString().split('T')[0]}.xlsx`;
-      XLSX.writeFile(wb, fileName);
+      const { exportAnalyticsToCSV } = await import("@/lib/exportUtils");
+      exportAnalyticsToCSV(
+        analytics.summary,
+        analytics.categoryBreakdown,
+        analytics.monthlyTrend,
+        timeframe
+      );
     } catch (error) {
-      console.error('Failed to export analytics:', error);
+      console.error("Failed to export analytics:", error);
     }
   };
 
@@ -296,7 +256,7 @@ export default function AnalyticsPage() {
                 </p>
               </div>
               <div className="h-12 w-12 bg-success/10 rounded-full flex items-center justify-center">
-                <span className="text-2xl">✓</span>
+                <span className="text-2xl">âœ“</span>
               </div>
             </CardContent>
           </Card>
@@ -359,10 +319,10 @@ export default function AnalyticsPage() {
                     <YAxis
                       fontSize={12}
                       tick={{ fill: 'currentColor' }}
-                      tickFormatter={(value) => `₹${value}`}
+                      tickFormatter={(value) => `â‚¹${value}`}
                     />
                     <Tooltip
-                      formatter={(value) => value ? [formatCurrency(Number(value)), 'Amount'] : ['₹0', 'Amount']}
+                      formatter={(value) => value ? [formatCurrency(Number(value)), 'Amount'] : ['â‚¹0', 'Amount']}
                       labelStyle={{ color: 'currentColor' }}
                       contentStyle={{
                         backgroundColor: 'var(--background)',
