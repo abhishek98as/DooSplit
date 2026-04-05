@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useSession, signOut } from "@/lib/auth/react-session";
 import {
   requestPushPermissionAndSync,
@@ -30,6 +31,7 @@ import {
   Users,
   Trash2,
   Loader2,
+  Smartphone,
 } from "lucide-react";
 
 interface UserProfile {
@@ -415,6 +417,19 @@ export default function SettingsPage() {
                   />
                 </div>
               </button>
+              <Link
+                href="/install"
+                className="flex items-center w-full p-3 rounded-md hover:bg-neutral-50 dark:hover:bg-dark-bg-tertiary transition-colors"
+              >
+                <Smartphone className="h-5 w-5 text-neutral-500 mr-3" />
+                <div className="flex-1 text-left">
+                  <p className="text-sm font-medium text-neutral-900 dark:text-dark-text">Install App</p>
+                  <p className="text-xs text-neutral-500 dark:text-dark-text-tertiary">
+                    Steps for Android, iPhone, and desktop
+                  </p>
+                </div>
+                <ChevronRight className="h-4 w-4 text-neutral-400" />
+              </Link>
             </div>
           </CardContent>
         </Card>

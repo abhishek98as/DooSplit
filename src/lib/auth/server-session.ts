@@ -1,7 +1,13 @@
 import type { NextRequest } from "next/server";
 import { cookies } from "next/headers";
+import { jwtVerify } from "jose";
 import { getAdminAuth, getAdminDb } from "@/lib/firestore/admin";
 import { FIREBASE_SESSION_COOKIE_NAME } from "@/lib/auth/session-cookie";
+
+function getSessionSecret(): Uint8Array {
+  const secret = process.env.SESSION_SECRET || "";
+  return new TextEncoder().encode(secret || "no-secret-configured-please-set-SESSION_SECRET");
+}
 
 export type SessionSource = "firebase";
 
@@ -75,13 +81,16 @@ async function verifyIdToken(idToken: string): Promise<ServerAppUser | null> {
 
 async function verifySessionCookie(sessionCookie: string): Promise<ServerAppUser | null> {
   try {
-    const auth = getAdminAuth();
-    const decoded = await auth.verifySessionCookie(sessionCookie, true);
+    const { payload } = await jwtVerify(sessionCookie, getSessionSecret());
+    const uid = payload.uid as string | undefined;
+    if (!uid) {
+      return null;
+    }
 
     return resolveUserFromUid({
-      uid: decoded.uid,
-      email: decoded.email || null,
-      name: (decoded.name as string | undefined) || null,
+      uid,
+      email: (payload.email as string | null | undefined) || null,
+      name: null,
     });
   } catch {
     return null;

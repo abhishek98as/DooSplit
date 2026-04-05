@@ -2,7 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { useSession } from "@/lib/auth/react-session";
-import { Download, X, Smartphone, Monitor, Star } from 'lucide-react';
+import { useRouter } from "next/navigation";
+import { Download, X, Smartphone, Monitor, Share2 } from 'lucide-react';
 import { usePWA } from './PWAProvider';
 import Button from '@/components/ui/Button';
 
@@ -19,11 +20,13 @@ export default function InstallPrompt({
   delay = 3000,
   position = 'bottom'
 }: InstallPromptProps) {
-  const { data: session, status } = useSession();
-  const { canInstall, installPrompt } = usePWA();
+  const { status } = useSession();
+  const router = useRouter();
+  const { canInstall, installPrompt, canManualInstall, isSafari } = usePWA();
   const [isVisible, setIsVisible] = useState(false);
   const [isInstalling, setIsInstalling] = useState(false);
   const [dismissed, setDismissed] = useState(false);
+  const isManualGuidePrompt = canManualInstall && !canInstall;
 
   // Check if user has already dismissed the prompt
   useEffect(() => {
@@ -42,7 +45,7 @@ export default function InstallPrompt({
 
   // Auto-show logic
   useEffect(() => {
-    if (!canInstall || dismissed || !autoShow) return;
+    if ((!canInstall && !isManualGuidePrompt) || dismissed || !autoShow) return;
 
     const timer = setTimeout(() => {
       // Only show if user has interacted with the page
@@ -52,9 +55,15 @@ export default function InstallPrompt({
     }, delay);
 
     return () => clearTimeout(timer);
-  }, [canInstall, dismissed, autoShow, delay]);
+  }, [canInstall, isManualGuidePrompt, dismissed, autoShow, delay]);
 
-  const handleInstall = async () => {
+  const handlePrimaryAction = async () => {
+    if (isManualGuidePrompt) {
+      setIsVisible(false);
+      router.push('/install');
+      return;
+    }
+
     setIsInstalling(true);
     try {
       await installPrompt();
@@ -72,8 +81,22 @@ export default function InstallPrompt({
     localStorage.setItem('install-prompt-dismissed', Date.now().toString());
   };
 
+  const title = isManualGuidePrompt
+    ? 'Add DooSplit to your iPhone'
+    : 'Install DooSplit';
+  const description = isManualGuidePrompt
+    ? isSafari
+      ? 'Open Share, choose Add to Home Screen, then Add for the full app-like experience.'
+      : 'Open DooSplit in Safari, then use Share and Add to Home Screen.'
+    : 'Get offline access, a full-screen app window, and push notifications.';
+  const primaryLabel = isManualGuidePrompt
+    ? 'View steps'
+    : isInstalling
+    ? 'Installing...'
+    : 'Install App';
+
   // Don't render if conditions not met or user is not authenticated
-  if (!canInstall || dismissed || !isVisible || status !== 'authenticated') {
+  if ((!canInstall && !isManualGuidePrompt) || dismissed || !isVisible || status !== 'authenticated') {
     return null;
   }
 
@@ -91,37 +114,40 @@ export default function InstallPrompt({
           <div className="text-center">
             {/* Icon */}
             <div className="mx-auto mb-4 h-16 w-16 bg-primary/10 rounded-2xl flex items-center justify-center">
-              <Download className="h-8 w-8 text-primary" />
+              {isManualGuidePrompt ? (
+                <Share2 className="h-8 w-8 text-primary" />
+              ) : (
+                <Download className="h-8 w-8 text-primary" />
+              )}
             </div>
 
             {/* Title */}
             <h2 className="text-xl font-bold text-neutral-900 dark:text-dark-text mb-2">
-              Install DooSplit
+              {title}
             </h2>
 
             {/* Description */}
             <p className="text-neutral-600 dark:text-dark-text-secondary mb-6">
-              Install DooSplit for a better experience. Access your expenses offline,
-              get push notifications, and enjoy app-like functionality.
+              {description}
             </p>
 
             {/* Features */}
             <div className="grid grid-cols-2 gap-3 mb-6">
               <div className="flex items-center gap-2 text-sm">
                 <div className="h-2 w-2 bg-success rounded-full"></div>
-                <span>Offline access</span>
+                <span>{isManualGuidePrompt ? 'Safari install guide' : 'Offline access'}</span>
               </div>
               <div className="flex items-center gap-2 text-sm">
                 <div className="h-2 w-2 bg-success rounded-full"></div>
-                <span>Push notifications</span>
+                <span>{isManualGuidePrompt ? 'Home Screen shortcut' : 'Push notifications'}</span>
               </div>
               <div className="flex items-center gap-2 text-sm">
                 <Monitor className="h-4 w-4 text-info" />
-                <span>Desktop app</span>
+                <span>{isManualGuidePrompt ? 'Standalone launch' : 'Desktop app'}</span>
               </div>
               <div className="flex items-center gap-2 text-sm">
                 <Smartphone className="h-4 w-4 text-info" />
-                <span>Mobile ready</span>
+                <span>{isManualGuidePrompt ? 'Notification ready' : 'Mobile ready'}</span>
               </div>
             </div>
 
@@ -136,11 +162,11 @@ export default function InstallPrompt({
                 Maybe Later
               </Button>
               <Button
-                onClick={handleInstall}
+                onClick={handlePrimaryAction}
                 className="flex-1"
                 disabled={isInstalling}
               >
-                {isInstalling ? 'Installing...' : 'Install App'}
+                {primaryLabel}
               </Button>
             </div>
           </div>
@@ -161,20 +187,24 @@ export default function InstallPrompt({
         <div className="bg-white dark:bg-dark-bg-secondary border border-neutral-200 dark:border-dark-border rounded-lg shadow-lg p-4 max-w-sm">
           <div className="flex items-start gap-3">
             <div className="h-10 w-10 bg-primary/10 rounded-lg flex items-center justify-center flex-shrink-0">
-              <Download className="h-5 w-5 text-primary" />
+              {isManualGuidePrompt ? (
+                <Share2 className="h-5 w-5 text-primary" />
+              ) : (
+                <Download className="h-5 w-5 text-primary" />
+              )}
             </div>
 
             <div className="flex-1 min-w-0">
               <h3 className="font-semibold text-neutral-900 dark:text-dark-text">
-                Install DooSplit
+                {title}
               </h3>
               <p className="text-sm text-neutral-600 dark:text-dark-text-secondary mt-1">
-                Get offline access and push notifications
+                {description}
               </p>
 
               <div className="flex gap-2 mt-3">
-                <Button size="sm" onClick={handleInstall} disabled={isInstalling}>
-                  {isInstalling ? 'Installing...' : 'Install'}
+                <Button size="sm" onClick={handlePrimaryAction} disabled={isInstalling}>
+                  {isManualGuidePrompt ? 'View steps' : primaryLabel}
                 </Button>
                 <Button size="sm" variant="secondary" onClick={handleDismiss}>
                   Later
@@ -205,15 +235,19 @@ export default function InstallPrompt({
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             <div className="h-10 w-10 bg-primary/10 rounded-lg flex items-center justify-center">
-              <Download className="h-5 w-5 text-primary" />
+              {isManualGuidePrompt ? (
+                <Share2 className="h-5 w-5 text-primary" />
+              ) : (
+                <Download className="h-5 w-5 text-primary" />
+              )}
             </div>
 
             <div>
               <h3 className="font-semibold text-neutral-900 dark:text-dark-text">
-                Install DooSplit for the best experience
+                {title}
               </h3>
               <p className="text-sm text-neutral-600 dark:text-dark-text-secondary">
-                Access your expenses offline, get notifications, and enjoy app-like functionality
+                {description}
               </p>
             </div>
           </div>
@@ -229,10 +263,10 @@ export default function InstallPrompt({
             </Button>
             <Button
               size="sm"
-              onClick={handleInstall}
+              onClick={handlePrimaryAction}
               disabled={isInstalling}
             >
-              {isInstalling ? 'Installing...' : 'Install App'}
+              {primaryLabel}
             </Button>
           </div>
         </div>
@@ -243,7 +277,7 @@ export default function InstallPrompt({
 
 // Hook for managing install prompt state
 export function useInstallPrompt() {
-  const { canInstall, installPrompt } = usePWA();
+  const { canInstall, installPrompt, canManualInstall } = usePWA();
   const [userDismissed, setUserDismissed] = useState(false);
 
   useEffect(() => {
@@ -264,7 +298,7 @@ export function useInstallPrompt() {
   };
 
   return {
-    canShow: canInstall && !userDismissed,
+    canShow: (canInstall || canManualInstall) && !userDismissed,
     install: installPrompt,
     dismiss,
     reset,

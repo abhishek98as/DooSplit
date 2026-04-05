@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { SignJWT } from "jose";
 import { getAdminAuth, getAdminDb, FieldValue } from "@/lib/firestore/admin";
 import {
   FIREBASE_SESSION_COOKIE_NAME,
@@ -7,6 +8,14 @@ import {
 } from "@/lib/auth/session-cookie";
 import { getServerAppUser } from "@/lib/auth/server-session";
 import { normalizeEmail, normalizeName } from "@/lib/social/keys";
+
+function getSessionSecret(): Uint8Array {
+  const secret = process.env.SESSION_SECRET;
+  if (!secret || secret.length < 32) {
+    throw new Error("SESSION_SECRET env var must be set and at least 32 characters");
+  }
+  return new TextEncoder().encode(secret);
+}
 
 export const dynamic = "force-dynamic";
 
@@ -54,24 +63,34 @@ export async function POST(request: NextRequest) {
     }
 
     const auth = getAdminAuth();
-    const decodedToken = await auth.verifyIdToken(idToken, true);
+    // verifyIdToken without checkRevoked to avoid Identity Platform (billing) API
+    const decodedToken = await auth.verifyIdToken(idToken);
     await ensureUserDoc({
       uid: decodedToken.uid,
       email: decodedToken.email,
       name: (decodedToken.name as string | undefined) || null,
     });
 
-    const expiresIn = FIREBASE_SESSION_MAX_AGE_SECONDS * 1000;
-    const sessionCookie = await auth.createSessionCookie(idToken, { expiresIn });
+    const expiresInMs = FIREBASE_SESSION_MAX_AGE_SECONDS * 1000;
+    const expiresAt = new Date(Date.now() + expiresInMs);
+
+    const sessionToken = await new SignJWT({
+      uid: decodedToken.uid,
+      email: decodedToken.email || null,
+    })
+      .setProtectedHeader({ alg: "HS256" })
+      .setIssuedAt()
+      .setExpirationTime(expiresAt)
+      .sign(getSessionSecret());
 
     const response = NextResponse.json({
       ok: true,
-      expiresAt: new Date(Date.now() + expiresIn).toISOString(),
+      expiresAt: expiresAt.toISOString(),
     });
 
     response.cookies.set(
       FIREBASE_SESSION_COOKIE_NAME,
-      sessionCookie,
+      sessionToken,
       getSessionCookieOptions()
     );
 

@@ -9,6 +9,13 @@ import {
   syncFcmTokenWithServer,
 } from "@/lib/firebase-messaging";
 
+type InstallPlatform = "ios" | "android" | "desktop" | "unknown";
+
+interface BeforeInstallPromptEvent extends Event {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
+}
+
 interface PWAContextType {
   // Network status
   isOnline: boolean;
@@ -26,6 +33,12 @@ interface PWAContextType {
   // Install prompt
   canInstall: boolean;
   installPrompt: () => Promise<void>;
+  isStandalone: boolean;
+  installPlatform: InstallPlatform;
+  isIOS: boolean;
+  isAndroid: boolean;
+  isSafari: boolean;
+  canManualInstall: boolean;
 
   // Service worker
   serviceWorkerRegistered: boolean;
@@ -37,6 +50,49 @@ const PWAContext = createContext<PWAContextType | undefined>(undefined);
 
 interface PWAProviderProps {
   children: ReactNode;
+}
+
+function detectInstallPlatform(userAgent: string): InstallPlatform {
+  const normalized = userAgent.toLowerCase();
+
+  if (/iphone|ipad|ipod/.test(normalized)) {
+    return "ios";
+  }
+
+  if (/android/.test(normalized)) {
+    return "android";
+  }
+
+  if (/macintosh|mac os x|windows|linux/.test(normalized)) {
+    return "desktop";
+  }
+
+  return "unknown";
+}
+
+function detectSafariBrowser(userAgent: string): boolean {
+  const normalized = userAgent.toLowerCase();
+  const isSafariEngine = normalized.includes("safari");
+  const isExcludedBrowser =
+    normalized.includes("chrome") ||
+    normalized.includes("crios") ||
+    normalized.includes("fxios") ||
+    normalized.includes("edg") ||
+    normalized.includes("opr") ||
+    normalized.includes("android");
+
+  return isSafariEngine && !isExcludedBrowser;
+}
+
+function detectStandaloneMode(): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  const isDisplayModeStandalone = window.matchMedia?.("(display-mode: standalone)").matches;
+  const isIosStandalone = Boolean((window.navigator as Navigator & { standalone?: boolean }).standalone);
+
+  return Boolean(isDisplayModeStandalone || isIosStandalone);
 }
 
 export function PWAProvider({ children }: PWAProviderProps) {
@@ -53,7 +109,10 @@ export function PWAProvider({ children }: PWAProviderProps) {
 
   // PWA install
   const [canInstall, setCanInstall] = useState(false);
-  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [isStandalone, setIsStandalone] = useState(false);
+  const [installPlatform, setInstallPlatform] = useState<InstallPlatform>("unknown");
+  const [isSafari, setIsSafari] = useState(false);
 
   // Service worker
   const [serviceWorkerRegistered, setServiceWorkerRegistered] = useState(false);
@@ -69,13 +128,19 @@ export function PWAProvider({ children }: PWAProviderProps) {
     // Only run on client side
     if (typeof window === 'undefined') return;
 
+    let cleanupPWA: (() => void) | undefined;
+
     setIsOnline(navigator.onLine);
     setIsOffline(!navigator.onLine);
-    initializePWA();
+    syncInstallEnvironment();
+    void initializePWA().then((cleanupFn) => {
+      cleanupPWA = cleanupFn;
+    });
     const cleanup = initializeNetworkListeners();
     initializeSyncStatus();
 
     return () => {
+      cleanupPWA?.();
       cleanup?.();
     };
   }, []);
@@ -105,15 +170,31 @@ export function PWAProvider({ children }: PWAProviderProps) {
     }
   }, [status, session?.user?.id]);
 
+  const syncInstallEnvironment = () => {
+    const userAgent = window.navigator.userAgent;
+    setInstallPlatform(detectInstallPlatform(userAgent));
+    setIsSafari(detectSafariBrowser(userAgent));
+    setIsStandalone(detectStandaloneMode());
+  };
+
   const initializePWA = async () => {
     // Register service worker
-    await registerServiceWorker();
+    const cleanupServiceWorker = await registerServiceWorker();
 
     // Listen for install prompt
-    listenForInstallPrompt();
+    const cleanupInstallPrompt = listenForInstallPrompt();
 
     // Listen for sync events
-    listenForSyncEvents();
+    const cleanupSyncEvents = listenForSyncEvents();
+
+    const cleanupDisplayMode = listenForDisplayModeChanges();
+
+    return () => {
+      cleanupServiceWorker?.();
+      cleanupInstallPrompt?.();
+      cleanupSyncEvents?.();
+      cleanupDisplayMode?.();
+    };
   };
 
   const initializeNetworkListeners = () => {
@@ -158,6 +239,7 @@ export function PWAProvider({ children }: PWAProviderProps) {
         const registration = await navigator.serviceWorker.register('/sw.js');
 
         setServiceWorkerRegistered(true);
+        syncInstallEnvironment();
 
         // Listen for updates
         registration.addEventListener('updatefound', () => {
@@ -174,11 +256,15 @@ export function PWAProvider({ children }: PWAProviderProps) {
         });
 
         // Check for updates periodically
-        setInterval(() => {
+        const updateInterval = window.setInterval(() => {
           registration.update();
         }, 60 * 60 * 1000); // Check every hour
 
         console.log('✅ Service Worker registered');
+
+        return () => {
+          window.clearInterval(updateInterval);
+        };
 
       } catch (error) {
         console.error('❌ Service Worker registration failed:', error);
@@ -187,28 +273,55 @@ export function PWAProvider({ children }: PWAProviderProps) {
   };
 
   const listenForInstallPrompt = () => {
-    window.addEventListener('beforeinstallprompt', (e) => {
+    const handleBeforeInstallPrompt = (event: Event) => {
+      const e = event as BeforeInstallPromptEvent;
+
       // Prevent the default prompt
       e.preventDefault();
 
       // Store the event for later use
       setDeferredPrompt(e);
       setCanInstall(true);
+      syncInstallEnvironment();
 
       console.log('📱 Install prompt available');
-    });
+    };
 
-    window.addEventListener('appinstalled', () => {
+    const handleAppInstalled = () => {
       setCanInstall(false);
       setDeferredPrompt(null);
+      syncInstallEnvironment();
       console.log('📱 App installed successfully');
-    });
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt as EventListener);
+    window.addEventListener('appinstalled', handleAppInstalled);
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt as EventListener);
+      window.removeEventListener('appinstalled', handleAppInstalled);
+    };
+  };
+
+  const listenForDisplayModeChanges = () => {
+    const mediaQuery = window.matchMedia('(display-mode: standalone)');
+    const handleDisplayModeChange = () => {
+      syncInstallEnvironment();
+    };
+
+    mediaQuery.addEventListener?.('change', handleDisplayModeChange);
+    window.addEventListener('focus', handleDisplayModeChange);
+
+    return () => {
+      mediaQuery.removeEventListener?.('change', handleDisplayModeChange);
+      window.removeEventListener('focus', handleDisplayModeChange);
+    };
   };
 
   const listenForSyncEvents = () => {
-    // Listen for custom sync events from service worker
-    window.addEventListener('sync-event', (event: any) => {
-      const { event: syncEvent, data } = event.detail;
+    const handleSyncEvent = (event: Event) => {
+      const customEvent = event as CustomEvent<{ event: string; data?: { error?: string } }>;
+      const { event: syncEvent, data } = customEvent.detail || {};
 
       switch (syncEvent) {
         case 'sync-completed':
@@ -219,14 +332,21 @@ export function PWAProvider({ children }: PWAProviderProps) {
 
         case 'sync-failed':
           setIsSyncing(false);
-          console.error('Sync failed:', data.error);
+          console.error('Sync failed:', data?.error);
           break;
 
         case 'sync-started':
           setIsSyncing(true);
           break;
       }
-    });
+    };
+
+    // Listen for custom sync events from service worker
+    window.addEventListener('sync-event', handleSyncEvent as EventListener);
+
+    return () => {
+      window.removeEventListener('sync-event', handleSyncEvent as EventListener);
+    };
   };
 
   // Sync actions
@@ -293,6 +413,7 @@ export function PWAProvider({ children }: PWAProviderProps) {
     // Reset the deferred prompt
     setDeferredPrompt(null);
     setCanInstall(false);
+    syncInstallEnvironment();
 
     if (outcome === 'accepted') {
       console.log('✅ User accepted the install prompt');
@@ -330,6 +451,12 @@ export function PWAProvider({ children }: PWAProviderProps) {
     // Install prompt
     canInstall,
     installPrompt,
+    isStandalone,
+    installPlatform,
+    isIOS: installPlatform === "ios",
+    isAndroid: installPlatform === "android",
+    isSafari,
+    canManualInstall: installPlatform === "ios" && !isStandalone,
 
     // Service worker
     serviceWorkerRegistered,
