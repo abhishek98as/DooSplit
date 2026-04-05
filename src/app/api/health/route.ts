@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { adminAuth, initError as firebaseInitError } from "@/lib/firebase-admin";
-import { getRedisClient } from "@/lib/redis";
 import { getAdminDb } from "@/lib/firestore/admin";
 
 export const dynamic = "force-dynamic";
@@ -24,30 +23,10 @@ export async function GET() {
     FIREBASE_CLIENT_EMAIL: Boolean(process.env.FIREBASE_CLIENT_EMAIL),
     FIREBASE_SERVICE_ACCOUNT_KEY: Boolean(process.env.FIREBASE_SERVICE_ACCOUNT_KEY),
     FIREBASE_SESSION_COOKIE_NAME: Boolean(process.env.FIREBASE_SESSION_COOKIE_NAME),
-    REDIS_URL: Boolean(process.env.REDIS_URL),
   };
 
-  try {
-    const startTime = Date.now();
-    const redisPromise = (async () => {
-      const redis = await getRedisClient();
-      if (redis?.isOpen) {
-        await redis.ping();
-        return { status: "connected", pingMs: Date.now() - startTime };
-      }
-      return { status: "disabled", message: "Redis not configured" };
-    })();
-    const timeout = new Promise<{ status: string; message: string }>((resolve) =>
-      setTimeout(() => resolve({ status: "timeout", message: "Redis connection timed out (8s)" }), 8000)
-    );
-    checks.redis = await Promise.race([redisPromise, timeout]);
-  } catch (error: any) {
-    checks.redis = {
-      status: "error",
-      error: error.message,
-      message: "Redis connection failed",
-    };
-  }
+  // Redis has been removed — caching is now in-process memory only.
+  checks.redis = { status: "disabled", message: "Redis removed — using in-process memory cache" };
 
   checks.firebaseAuth = {
     initialized: Boolean(adminAuth),
