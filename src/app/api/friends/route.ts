@@ -10,6 +10,7 @@ import { getServerFirebaseUser } from "@/lib/auth/firebase-session";
 import { newAppId } from "@/lib/ids";
 import { notifyFriendRequest } from "@/lib/notificationService";
 import { FieldValue, getAdminDb } from "@/lib/firestore/admin";
+import { logFriendAdded } from "@/lib/activity-logger";
 import { normalizeEmail, normalizeName } from "@/lib/social/keys";
 import {
   getFriendshipStatus,
@@ -172,6 +173,13 @@ export async function POST(request: NextRequest) {
         friendId: dummyId,
         status: "accepted",
         requestedBy: userId,
+      });
+
+      void logFriendAdded({
+        userId,
+        userName: user.name || "You",
+        friendId: dummyId,
+        friendName: trimmedName,
       });
 
       await invalidateUsersCache([userId, dummyId], FRIEND_CACHE_SCOPES);

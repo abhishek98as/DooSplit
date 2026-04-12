@@ -4,7 +4,7 @@ import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Button, Input } from "@/components/ui";
-import Image from "next/image";
+import BrandLogo from "@/components/ui/BrandLogo";
 import { Mail, Lock, User, CheckCircle } from "lucide-react";
 import {
   auth,
@@ -147,13 +147,7 @@ function RegisterPageContent() {
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary/10 to-success/10 p-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <Image
-            src="/logo.webp"
-            alt="DooSplit"
-            width={64}
-            height={64}
-            className="h-16 w-16 rounded-2xl mb-4 inline-block"
-          />
+          <BrandLogo size={64} className="h-16 w-16 rounded-2xl mb-4 inline-block" priority />
           <h1 className="text-h1 font-bold text-neutral-900">Get Started</h1>
           <p className="text-body text-neutral-500 mt-2">Create your DooSplit account</p>
         </div>

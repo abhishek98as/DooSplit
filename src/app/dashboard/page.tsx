@@ -7,15 +7,10 @@ import AppShell from "@/components/layout/AppShell";
 import Card, { CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
 import {
-  ArrowUpCircle,
-  ArrowDownCircle,
   TrendingUp,
   Users,
-  Receipt,
   AlertCircle,
-  Clock,
-  User,
-  Users as UsersIcon,
+  ChevronRight,
 } from "lucide-react";
 import Link from "next/link";
 import getOfflineStore from "@/lib/offline-store";
@@ -72,12 +67,23 @@ interface ActivityItem {
   };
 }
 
+interface NudgeItem {
+  id: string;
+  type: string;
+  severity: "low" | "medium" | "high";
+  title: string;
+  message: string;
+  actionLabel?: string;
+  actionHref?: string;
+}
+
 interface SectionLoadingState {
   friends: boolean;
   groups: boolean;
   groupBalances: boolean;
   monthly: boolean;
   activities: boolean;
+  nudges: boolean;
 }
 
 const REQUEST_TIMEOUT_MS = 25000;
@@ -89,7 +95,38 @@ const INITIAL_SECTION_LOADING: SectionLoadingState = {
   groupBalances: true,
   monthly: true,
   activities: true,
+  nudges: true,
 };
+
+function getActivityEmoji(activity: ActivityItem): string {
+  const type = activity.type;
+  const haystack = `${activity.description || ""} ${
+    activity.group?.name || ""
+  }`.toLowerCase();
+
+  if (type === "expense_added") {
+    if (activity.expenseType === "group") {
+      if (/trip|travel|goa|flight|vacation|holiday|✈/.test(haystack)) {
+        return "✈️";
+      }
+      return "👥";
+    }
+    if (activity.expenseType === "personal") {
+      return "🧾";
+    }
+    return "🧾";
+  }
+  if (type === "settlement") {
+    return "💸";
+  }
+  if (type === "friend_added") {
+    return "🤝";
+  }
+  if (type === "group_created") {
+    return "👥";
+  }
+  return "📋";
+}
 
 async function runWithConcurrency<T, R>(
   items: T[],
@@ -134,6 +171,7 @@ export default function DashboardPage() {
   const [groupBalances, setGroupBalances] = useState<GroupBalance[]>([]);
   const [monthlySpending, setMonthlySpending] = useState(0);
   const [activities, setActivities] = useState<ActivityItem[]>([]);
+  const [nudges, setNudges] = useState<NudgeItem[]>([]);
   const [loadingSections, setLoadingSections] =
     useState<SectionLoadingState>(INITIAL_SECTION_LOADING);
   const [error, setError] = useState<string | null>(null);
@@ -334,11 +372,25 @@ export default function DashboardPage() {
       }
     })();
 
+    const nudgesTask = (async () => {
+      try {
+        const data = await fetchJsonWithTimeout<{ nudges?: NudgeItem[] }>("/api/nudges");
+        setNudges(Array.isArray(data.nudges) ? data.nudges : []);
+      } catch (taskError) {
+        console.error("Failed to fetch nudges:", taskError);
+        sectionErrors.push("nudges");
+        setNudges([]);
+      } finally {
+        setSectionLoading("nudges", false);
+      }
+    })();
+
     const settled = await Promise.allSettled([
       friendsTask,
       groupsTask,
       monthlyTask,
       activitiesTask,
+      nudgesTask,
     ]);
 
     const groupsResult = settled[1];
@@ -429,11 +481,30 @@ export default function DashboardPage() {
     );
   }
 
+  const firstName =
+    session?.user?.name?.trim()?.split(/\s+/)[0] ?? "there";
+  const now = new Date();
+  const summaryLine = `Here's your expense summary for ${now.toLocaleString("en-US", {
+    month: "long",
+    year: "numeric",
+  })}.`;
+
   const isFriendsLoading = loadingSections.friends;
   const isGroupsLoading = loadingSections.groups;
   const isMonthlyLoading = loadingSections.monthly;
   const isActivitiesLoading = loadingSections.activities;
   const isGroupBalancesLoading = loadingSections.groupBalances;
+  const isNudgesLoading = loadingSections.nudges;
+
+  const getNudgeClasses = (severity: NudgeItem["severity"]) => {
+    if (severity === "high") {
+      return "border-red-200 bg-red-50 dark:bg-red-900/20 dark:border-red-900/30";
+    }
+    if (severity === "medium") {
+      return "border-amber-200 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-900/30";
+    }
+    return "border-blue-200 bg-blue-50 dark:bg-blue-900/20 dark:border-blue-900/30";
+  };
 
   return (
     <AppShell>
@@ -454,56 +525,68 @@ export default function DashboardPage() {
           </div>
         )}
 
-        <div>
-          <h1 className="text-h1 font-bold text-neutral-900 dark:text-dark-text">
-            Dashboard
+        <div className="ds-anim-0">
+          <h1 className="font-display text-h1 font-bold text-neutral-900 dark:text-dark-text">
+            Hi, {firstName} 👋
           </h1>
           <p className="text-body text-neutral-500 dark:text-dark-text-secondary mt-1">
-            Welcome back! Here&apos;s your expense summary.
+            {summaryLine}
           </p>
         </div>
 
         {isFriendsLoading ? (
-          <div className="bg-gradient-to-br from-primary/10 to-success/10 rounded-xl p-6 animate-pulse">
-            <div className="h-4 w-24 bg-neutral-200 dark:bg-dark-border rounded mb-3"></div>
-            <div className="h-10 w-48 bg-neutral-200 dark:bg-dark-border rounded"></div>
+          <div
+            className="relative rounded-2xl overflow-hidden p-6 animate-pulse bg-navy"
+            style={{
+              boxShadow:
+                "0 8px 32px rgba(0,184,169,0.15), 0 2px 8px rgba(0,0,0,0.3)",
+            }}
+          >
+            <div className="h-4 w-24 bg-white/20 rounded mb-3"></div>
+            <div className="h-10 w-48 bg-white/20 rounded"></div>
             <div className="grid grid-cols-2 gap-4 mt-6">
-              <div className="h-24 bg-white/60 dark:bg-dark-bg-secondary/60 rounded-lg"></div>
-              <div className="h-24 bg-white/60 dark:bg-dark-bg-secondary/60 rounded-lg"></div>
+              <div className="h-24 bg-white/10 rounded-xl"></div>
+              <div className="h-24 bg-white/10 rounded-xl"></div>
             </div>
           </div>
         ) : (
-          <div className="bg-gradient-to-br from-primary/10 to-success/10 rounded-xl p-6">
-            <p className="text-sm text-neutral-600 dark:text-dark-text-secondary mb-2">
-              Total Balance
-            </p>
+          <div
+            className="relative rounded-2xl overflow-hidden p-6 bg-navy"
+            style={{
+              boxShadow:
+                "0 8px 32px rgba(0,184,169,0.15), 0 2px 8px rgba(0,0,0,0.3)",
+            }}
+          >
+            <div
+              className="absolute inset-0 pointer-events-none"
+              style={{
+                background:
+                  "radial-gradient(ellipse at 20% 50%, rgba(0,184,169,0.25) 0%, transparent 60%)",
+              }}
+              aria-hidden
+            />
+            <p className="relative text-sm text-white/60 mb-1">Total Balance</p>
             <p
-              className={`text-4xl font-bold font-mono ${
+              className={`relative text-4xl font-bold font-mono tabular-nums ${
                 balance.total > 0
-                  ? "text-success"
+                  ? "text-primary"
                   : balance.total < 0
-                  ? "text-coral"
-                  : "text-neutral-900 dark:text-dark-text"
+                    ? "text-coral"
+                    : "text-white"
               }`}
             >
               {formatCurrency(balance.total)}
             </p>
-            <div className="grid grid-cols-2 gap-4 mt-6">
-              <div className="bg-white/60 dark:bg-dark-bg-secondary/60 rounded-lg p-4">
-                <div className="flex items-center text-coral mb-2">
-                  <ArrowUpCircle className="h-4 w-4 mr-1" />
-                  <span className="text-xs font-medium">You Owe</span>
-                </div>
-                <p className="text-xl font-semibold font-mono text-coral">
+            <div className="relative grid grid-cols-2 gap-4 mt-6">
+              <div className="bg-white/10 rounded-xl p-4 backdrop-blur-sm">
+                <p className="text-xs text-white/60 mb-1">You Owe</p>
+                <p className="text-xl font-semibold font-mono text-coral tabular-nums">
                   {formatCurrency(balance.youOwe)}
                 </p>
               </div>
-              <div className="bg-white/60 dark:bg-dark-bg-secondary/60 rounded-lg p-4">
-                <div className="flex items-center text-success mb-2">
-                  <ArrowDownCircle className="h-4 w-4 mr-1" />
-                  <span className="text-xs font-medium">You&apos;re Owed</span>
-                </div>
-                <p className="text-xl font-semibold font-mono text-success">
+              <div className="bg-white/10 rounded-xl p-4 backdrop-blur-sm">
+                <p className="text-xs text-white/60 mb-1">You&apos;re Owed</p>
+                <p className="text-xl font-semibold font-mono text-primary tabular-nums">
                   {formatCurrency(balance.youAreOwed)}
                 </p>
               </div>
@@ -512,60 +595,130 @@ export default function DashboardPage() {
         )}
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Card>
-            <CardContent className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-neutral-500 dark:text-dark-text-secondary">
-                  This Month
-                </p>
-                {isMonthlyLoading ? (
-                  <div className="h-8 w-28 bg-neutral-200 dark:bg-dark-border rounded mt-2 animate-pulse"></div>
-                ) : (
-                  <p className="text-2xl font-semibold mt-1 font-mono">
-                    {formatCurrency(monthlySpending)}
+          <Link href="/analytics" className="block group">
+            <Card className="h-full transition-shadow hover:shadow-md cursor-pointer">
+              <CardContent className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-neutral-500 dark:text-dark-text-secondary">
+                    This Month
                   </p>
-                )}
-              </div>
-              <div className="h-12 w-12 bg-primary/10 rounded-full flex items-center justify-center">
-                <TrendingUp className="h-6 w-6 text-primary" />
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-neutral-500 dark:text-dark-text-secondary">
-                  Active Groups
-                </p>
-                {isGroupsLoading ? (
-                  <div className="h-8 w-10 bg-neutral-200 dark:bg-dark-border rounded mt-2 animate-pulse"></div>
-                ) : (
-                  <p className="text-2xl font-semibold mt-1">{groups.length}</p>
-                )}
-              </div>
-              <div className="h-12 w-12 bg-success/10 rounded-full flex items-center justify-center">
-                <span className="text-2xl">G</span>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-neutral-500 dark:text-dark-text-secondary">
-                  Friends
-                </p>
-                {isFriendsLoading ? (
-                  <div className="h-8 w-10 bg-neutral-200 dark:bg-dark-border rounded mt-2 animate-pulse"></div>
-                ) : (
-                  <p className="text-2xl font-semibold mt-1">{friends.length}</p>
-                )}
-              </div>
-              <div className="h-12 w-12 bg-info/10 rounded-full flex items-center justify-center">
-                <span className="text-2xl">F</span>
-              </div>
-            </CardContent>
-          </Card>
+                  {isMonthlyLoading ? (
+                    <div className="h-8 w-28 bg-neutral-200 dark:bg-dark-border rounded mt-2 animate-pulse"></div>
+                  ) : (
+                    <p className="text-2xl font-semibold mt-1 font-mono tabular-nums">
+                      {formatCurrency(monthlySpending)}
+                    </p>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="h-12 w-12 bg-primary/10 rounded-full flex items-center justify-center">
+                    <TrendingUp className="h-6 w-6 text-primary" />
+                  </div>
+                  <ChevronRight className="h-4 w-4 text-neutral-400 group-hover:text-primary transition-colors shrink-0" />
+                </div>
+              </CardContent>
+            </Card>
+          </Link>
+          <Link href="/groups" className="block group">
+            <Card className="h-full transition-shadow hover:shadow-md cursor-pointer">
+              <CardContent className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-neutral-500 dark:text-dark-text-secondary">
+                    Active Groups
+                  </p>
+                  {isGroupsLoading ? (
+                    <div className="h-8 w-10 bg-neutral-200 dark:bg-dark-border rounded mt-2 animate-pulse"></div>
+                  ) : (
+                    <p className="text-2xl font-semibold mt-1 tabular-nums">
+                      {groups.length}
+                    </p>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="h-12 w-12 bg-success/10 rounded-full flex items-center justify-center">
+                    <span className="text-2xl" aria-hidden>
+                      👥
+                    </span>
+                  </div>
+                  <ChevronRight className="h-4 w-4 text-neutral-400 group-hover:text-primary transition-colors shrink-0" />
+                </div>
+              </CardContent>
+            </Card>
+          </Link>
+          <Link href="/friends" className="block group">
+            <Card className="h-full transition-shadow hover:shadow-md cursor-pointer">
+              <CardContent className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-neutral-500 dark:text-dark-text-secondary">
+                    Friends
+                  </p>
+                  {isFriendsLoading ? (
+                    <div className="h-8 w-10 bg-neutral-200 dark:bg-dark-border rounded mt-2 animate-pulse"></div>
+                  ) : (
+                    <p className="text-2xl font-semibold mt-1 tabular-nums">
+                      {friends.length}
+                    </p>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="h-12 w-12 bg-info/10 rounded-full flex items-center justify-center">
+                    <span className="text-2xl" aria-hidden>
+                      🤝
+                    </span>
+                  </div>
+                  <ChevronRight className="h-4 w-4 text-neutral-400 group-hover:text-primary transition-colors shrink-0" />
+                </div>
+              </CardContent>
+            </Card>
+          </Link>
         </div>
+
+        {isNudgesLoading ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>Smart Nudges</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                <div className="h-16 rounded bg-neutral-100 dark:bg-dark-bg-secondary animate-pulse"></div>
+                <div className="h-16 rounded bg-neutral-100 dark:bg-dark-bg-secondary animate-pulse"></div>
+              </div>
+            </CardContent>
+          </Card>
+        ) : (
+          nudges.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Smart Nudges</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3">
+                  {nudges.slice(0, 4).map((nudge) => (
+                    <div
+                      key={nudge.id}
+                      className={`rounded-lg border p-3 ${getNudgeClasses(nudge.severity)}`}
+                    >
+                      <p className="text-sm font-semibold text-neutral-900 dark:text-dark-text">
+                        {nudge.title}
+                      </p>
+                      <p className="text-sm text-neutral-700 dark:text-dark-text-secondary mt-1">
+                        {nudge.message}
+                      </p>
+                      {nudge.actionLabel && nudge.actionHref && (
+                        <Link href={nudge.actionHref} className="inline-block mt-2 text-xs font-medium text-primary hover:underline">
+                          {nudge.actionLabel}
+                        </Link>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )
+        )}
+
+        {/* ── 2-column bottom grid: Top Balances | Recent Activity ──── */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5 ds-anim-4">
 
         {isFriendsLoading ? (
           <Card>
@@ -698,7 +851,7 @@ export default function DashboardPage() {
         )}
 
         {isActivitiesLoading ? (
-          <Card>
+          <Card className="h-full">
             <CardHeader>
               <CardTitle>Recent Activity</CardTitle>
             </CardHeader>
@@ -723,27 +876,13 @@ export default function DashboardPage() {
                       key={activity.id}
                       className="flex items-start gap-3 p-3 rounded-lg border border-neutral-200 dark:border-dark-border hover:bg-neutral-50 dark:hover:bg-dark-bg-secondary transition-colors"
                     >
-                      <div className="flex-shrink-0">
-                        {activity.type === "expense_added" && (
-                          <Receipt className="h-5 w-5 text-primary" />
-                        )}
-                        {activity.type === "settlement" && (
-                          <ArrowUpCircle className="h-5 w-5 text-success" />
-                        )}
-                        {activity.type === "friend_added" && (
-                          <User className="h-5 w-5 text-info" />
-                        )}
-                        {activity.type === "group_created" && (
-                          <UsersIcon className="h-5 w-5 text-warning" />
-                        )}
-                        {![
-                          "expense_added",
-                          "settlement",
-                          "friend_added",
-                          "group_created",
-                        ].includes(activity.type) && (
-                          <Clock className="h-5 w-5 text-neutral-400" />
-                        )}
+                      <div
+                        className="flex-shrink-0 flex h-11 w-11 items-center justify-center rounded-xl bg-neutral-100 dark:bg-dark-bg-tertiary text-xl"
+                        aria-hidden
+                      >
+                        <span role="img" aria-label="">
+                          {getActivityEmoji(activity)}
+                        </span>
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm text-neutral-900 dark:text-dark-text">
@@ -798,6 +937,8 @@ export default function DashboardPage() {
             </Card>
           )
         )}
+
+        </div>{/* end 2-col grid */}
 
         {!isFriendsLoading && friends.length === 0 && (
           <Card>

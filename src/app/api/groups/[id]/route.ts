@@ -10,6 +10,7 @@ import { FieldValue, getAdminDb } from "@/lib/firestore/admin";
 import { computeGroupMemberNetBalances } from "@/lib/data/balance-service";
 import { fetchDocsByIds, mapUser, round2, toIso, uniqueStrings } from "@/lib/firestore/route-helpers";
 import { GROUP_MUTATION_CACHE_SCOPES } from "@/lib/cache-scopes";
+import { logGroupDeleted } from "@/lib/activity-logger";
 
 export const dynamic = "force-dynamic";
 export const preferredRegion = "iad1";
@@ -266,6 +267,13 @@ export async function DELETE(
       );
     }
 
+    const groupDoc = await db.collection("groups").doc(id).get();
+    if (!groupDoc.exists || groupDoc.data()?.is_active === false) {
+      return NextResponse.json({ error: "Group not found" }, { status: 404 });
+    }
+    const groupName =
+      String(groupDoc.data()?.name || "").trim() || "Untitled Group";
+
     const unsettledExpensesSnap = await db
       .collection("expenses")
       .where("group_id", "==", id)
@@ -298,6 +306,14 @@ export async function DELETE(
     );
 
     const affectedUserIds = Array.from(new Set([userId, ...memberIds]));
+
+    void logGroupDeleted({
+      actorId: userId,
+      actorName: auth.user.name || "Someone",
+      groupId: id,
+      groupName,
+      memberIds: affectedUserIds,
+    });
 
     await invalidateUsersCache(affectedUserIds, [...GROUP_MUTATION_CACHE_SCOPES]);
 

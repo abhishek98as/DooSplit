@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSession } from "@/lib/auth/react-session";
 import { useRouter } from "next/navigation";
 import AppShell from "@/components/layout/AppShell";
@@ -11,7 +11,8 @@ import Modal from "@/components/ui/Modal";
 import { useAnalytics } from "@/components/analytics/AnalyticsProvider";
 import { AnalyticsEvents } from "@/lib/firebase-analytics";
 import getOfflineStore from "@/lib/offline-store";
-import { Users, Plus, Settings } from "lucide-react";
+import Link from "next/link";
+import { Users, Plus, ChevronRight } from "lucide-react";
 
 interface Group {
   _id: string;
@@ -32,6 +33,70 @@ interface Friend {
   balance: number;
 }
 
+interface ExpenseParticipant {
+  userId: string | { _id?: string; id?: string; uid?: string; userId?: string };
+  paidAmount: number;
+  owedAmount: number;
+}
+
+interface ExpenseRecord {
+  _id: string;
+  participants?: ExpenseParticipant[];
+}
+
+function extractUserId(value: unknown): string {
+  if (!value) {
+    return "";
+  }
+
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (typeof value === "object") {
+    const typed = value as { _id?: string; id?: string; uid?: string; userId?: unknown };
+    if (typed.userId) {
+      return extractUserId(typed.userId);
+    }
+    if (typed._id) {
+      return String(typed._id);
+    }
+    if (typed.id) {
+      return String(typed.id);
+    }
+    if (typed.uid) {
+      return String(typed.uid);
+    }
+  }
+
+  return "";
+}
+
+function toNumber(value: unknown): number {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : 0;
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
+
+function groupTypeEmoji(type: string): string {
+  if (type === "trip") return "✈️";
+  if (type === "home") return "🏠";
+  if (type === "couple") return "💑";
+  return "👥";
+}
+
+function groupTypeColor(type: string): string {
+  if (type === "trip") return "bg-primary/15";
+  if (type === "home") return "bg-info/15";
+  if (type === "couple") return "bg-coral/15";
+  return "bg-neutral-200 dark:bg-dark-bg-tertiary";
+}
+
 export default function GroupsPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
@@ -41,6 +106,10 @@ export default function GroupsPage() {
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [groupBalances, setGroupBalances] = useState<Record<string, number>>({});
+  const [showSettledGroups, setShowSettledGroups] = useState(false);
+  const [balanceLoading, setBalanceLoading] = useState(false);
+  const [isReady, setIsReady] = useState(false);
   
   const [formData, setFormData] = useState({
     name: "",
@@ -58,6 +127,11 @@ export default function GroupsPage() {
       fetchFriends();
     }
   }, [status]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setIsReady(true), 20);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     if (status !== "authenticated") {
@@ -123,6 +197,77 @@ export default function GroupsPage() {
     }
   };
 
+  useEffect(() => {
+    let active = true;
+
+    const computeGroupBalances = async () => {
+      if (status !== "authenticated" || !session?.user?.id || groups.length === 0) {
+        if (active) {
+          setGroupBalances({});
+        }
+        return;
+      }
+
+      setBalanceLoading(true);
+      const offlineStore = getOfflineStore();
+      const computed: Record<string, number> = {};
+
+      try {
+        await Promise.all(
+          groups.map(async (group) => {
+            let totalForGroup = 0;
+            let page = 1;
+
+            while (page <= 20) {
+              const expenses = (await offlineStore.getExpenses({
+                groupId: group._id,
+                page,
+                limit: 100,
+              })) as ExpenseRecord[];
+
+              if (!Array.isArray(expenses) || expenses.length === 0) {
+                break;
+              }
+
+              for (const expense of expenses) {
+                const myParticipant = (expense.participants || []).find(
+                  (participant) =>
+                    extractUserId(participant.userId) === String(session.user.id)
+                );
+                if (!myParticipant) {
+                  continue;
+                }
+
+                totalForGroup +=
+                  toNumber(myParticipant.paidAmount) - toNumber(myParticipant.owedAmount);
+              }
+
+              if (expenses.length < 100) {
+                break;
+              }
+              page += 1;
+            }
+
+            computed[group._id] = totalForGroup;
+          })
+        );
+      } catch (error) {
+        console.error("Failed to compute group balances:", error);
+      } finally {
+        if (active) {
+          setGroupBalances(computed);
+          setBalanceLoading(false);
+        }
+      }
+    };
+
+    void computeGroupBalances();
+
+    return () => {
+      active = false;
+    };
+  }, [groups, session?.user?.id, status]);
+
   const createGroup = async () => {
     if (!formData.name) return;
 
@@ -173,6 +318,34 @@ export default function GroupsPage() {
     }));
   };
 
+  const formatCurrency = (amount: number, currency = "INR") => {
+    return new Intl.NumberFormat("en-IN", {
+      style: "currency",
+      currency,
+      maximumFractionDigits: 2,
+    }).format(amount);
+  };
+
+  const activeAndSettled = useMemo(() => {
+    const active: Group[] = [];
+    const settled: Group[] = [];
+
+    for (const group of groups) {
+      const balance = groupBalances[group._id] ?? 0;
+      if (Math.abs(balance) <= 0.01) {
+        settled.push(group);
+      } else {
+        active.push(group);
+      }
+    }
+
+    return { active, settled };
+  }, [groupBalances, groups]);
+
+  const overallBalance = useMemo(() => {
+    return groups.reduce((sum, group) => sum + (groupBalances[group._id] ?? 0), 0);
+  }, [groupBalances, groups]);
+
   if (status === "loading" || loading) {
     return (
       <AppShell>
@@ -186,14 +359,13 @@ export default function GroupsPage() {
   return (
     <AppShell>
       <div className="p-4 md:p-8 space-y-6">
-        {/* Header */}
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-h1 font-bold text-neutral-900 dark:text-dark-text">
               Groups
             </h1>
             <p className="text-body text-neutral-500 dark:text-dark-text-secondary mt-1">
-              Manage group expenses with multiple people
+              Your circles, totals, and what is left to settle
             </p>
           </div>
           <Button onClick={() => setShowCreateModal(true)}>
@@ -202,10 +374,39 @@ export default function GroupsPage() {
           </Button>
         </div>
 
-        {/* Groups Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div
+          className={`rounded-2xl bg-navy p-5 transition-all duration-300 ${
+            isReady ? "opacity-100 translate-y-0" : "opacity-0 translate-y-1"
+          }`}
+          style={{
+            boxShadow:
+              "0 18px 45px rgba(17, 24, 39, 0.22), inset 0 1px 0 rgba(255,255,255,0.05)",
+          }}
+        >
+          <p className="text-sm text-white/65">Overall balance</p>
+          <p
+            className={`mt-1 text-2xl md:text-3xl font-bold font-mono ${
+              overallBalance < 0
+                ? "text-coral"
+                : overallBalance > 0
+                ? "text-primary"
+                : "text-white"
+            }`}
+          >
+            {overallBalance < -0.01
+              ? `Overall, you owe ${formatCurrency(Math.abs(overallBalance))}`
+              : overallBalance > 0.01
+              ? `Overall, you are owed ${formatCurrency(overallBalance)}`
+              : "Overall, you are settled up"}
+          </p>
+          {balanceLoading && (
+            <p className="mt-2 text-xs text-white/55">Refreshing group balances...</p>
+          )}
+        </div>
+
+        <div className="space-y-3">
           {groups.length === 0 ? (
-            <Card className="col-span-full">
+            <Card>
               <CardContent>
                 <div className="text-center py-12">
                   <Users className="h-16 w-16 mx-auto text-neutral-300 mb-4" />
@@ -219,41 +420,94 @@ export default function GroupsPage() {
               </CardContent>
             </Card>
           ) : (
-            groups.map((group) => (
-              <Card
-                key={group._id}
-                className="cursor-pointer hover:shadow-lg transition-shadow"
-                onClick={() => router.push(`/groups/${group._id}`)}
-              >
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="text-lg">{group.name}</CardTitle>
-                    {group.userRole === "admin" && (
-                      <Settings className="h-4 w-4 text-neutral-400" />
-                    )}
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  {group.description && (
-                    <p className="text-sm text-neutral-500 mb-3">
-                      {group.description}
-                    </p>
-                  )}
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-neutral-600 dark:text-dark-text-secondary">
-                      {group.memberCount} member{group.memberCount !== 1 ? "s" : ""}
-                    </span>
-                    <span className="text-xs bg-primary/10 text-primary px-2 py-1 rounded-full">
-                      {group.type}
-                    </span>
-                  </div>
-                </CardContent>
-              </Card>
-            ))
+            <>
+              {activeAndSettled.active.map((group, index) => {
+                const balance = groupBalances[group._id] ?? 0;
+                return (
+                  <Link key={group._id} href={`/groups/${group._id}`}>
+                    <div
+                      className={`flex items-center gap-4 rounded-2xl border border-neutral-200 bg-white p-4 transition-all duration-300 hover:shadow-md hover:-translate-y-0.5 dark:border-dark-border dark:bg-dark-bg-secondary ${
+                        isReady ? "opacity-100 translate-y-0" : "opacity-0 translate-y-1"
+                      }`}
+                      style={{ transitionDelay: `${Math.min(index * 40, 240)}ms` }}
+                    >
+                      <div
+                        className={`h-14 w-14 shrink-0 rounded-xl text-2xl flex items-center justify-center ${groupTypeColor(
+                          group.type
+                        )}`}
+                      >
+                        {groupTypeEmoji(group.type)}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate font-semibold text-neutral-900 dark:text-dark-text">
+                          {group.name}
+                        </p>
+                        <p
+                          className={`text-sm font-medium ${
+                            balance < 0
+                              ? "text-coral"
+                              : balance > 0
+                              ? "text-primary"
+                              : "text-neutral-500 dark:text-dark-text-secondary"
+                          }`}
+                        >
+                          {balance < -0.01
+                            ? `you owe ${formatCurrency(Math.abs(balance), group.currency || "INR")}`
+                            : balance > 0.01
+                            ? `you are owed ${formatCurrency(balance, group.currency || "INR")}`
+                            : "you are settled"}
+                        </p>
+                      </div>
+                      <ChevronRight className="h-4 w-4 shrink-0 text-neutral-400" />
+                    </div>
+                  </Link>
+                );
+              })}
+
+              {activeAndSettled.settled.length > 0 && (
+                <div className="pt-1">
+                  <button
+                    onClick={() => setShowSettledGroups((prev) => !prev)}
+                    className="text-sm font-medium text-neutral-600 underline-offset-4 hover:underline dark:text-dark-text-secondary"
+                  >
+                    {showSettledGroups
+                      ? `Hide ${activeAndSettled.settled.length} settled group${
+                          activeAndSettled.settled.length === 1 ? "" : "s"
+                        }`
+                      : `Show ${activeAndSettled.settled.length} settled group${
+                          activeAndSettled.settled.length === 1 ? "" : "s"
+                        }`}
+                  </button>
+                </div>
+              )}
+
+              {showSettledGroups &&
+                activeAndSettled.settled.map((group) => (
+                  <Link key={`settled-${group._id}`} href={`/groups/${group._id}`}>
+                    <div className="flex items-center gap-4 rounded-2xl border border-neutral-200 bg-white/75 p-4 transition-all duration-300 hover:shadow-md hover:-translate-y-0.5 dark:border-dark-border dark:bg-dark-bg-secondary/80">
+                      <div
+                        className={`h-14 w-14 shrink-0 rounded-xl text-2xl flex items-center justify-center ${groupTypeColor(
+                          group.type
+                        )}`}
+                      >
+                        {groupTypeEmoji(group.type)}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate font-semibold text-neutral-900 dark:text-dark-text">
+                          {group.name}
+                        </p>
+                        <p className="text-sm font-medium text-neutral-500 dark:text-dark-text-secondary">
+                          you are settled
+                        </p>
+                      </div>
+                      <ChevronRight className="h-4 w-4 shrink-0 text-neutral-400" />
+                    </div>
+                  </Link>
+                ))}
+            </>
           )}
         </div>
 
-        {/* Create Group Modal */}
         <Modal
           isOpen={showCreateModal}
           onClose={() => {
@@ -339,15 +593,17 @@ export default function GroupsPage() {
                       </div>
                       {friend.balance !== 0 && (
                         <div className="text-right">
-                          <span className={`text-xs font-medium ${
-                            friend.balance > 0
-                              ? 'text-green-600 dark:text-green-400'
-                              : 'text-red-600 dark:text-red-400'
-                          }`}>
-                            {friend.balance > 0 ? '+' : ''}₹{Math.abs(friend.balance)}
+                          <span
+                            className={`text-xs font-medium ${
+                              friend.balance > 0
+                                ? "text-green-600 dark:text-green-400"
+                                : "text-red-600 dark:text-red-400"
+                            }`}
+                          >
+                            {friend.balance > 0 ? "+" : ""}₹{Math.abs(friend.balance)}
                           </span>
                           <p className="text-xs text-neutral-500">
-                            {friend.balance > 0 ? 'Owes you' : 'You owe'}
+                            {friend.balance > 0 ? "Owes you" : "You owe"}
                           </p>
                         </div>
                       )}
@@ -365,10 +621,7 @@ export default function GroupsPage() {
               >
                 Cancel
               </Button>
-              <Button
-                onClick={createGroup}
-                disabled={!formData.name || submitting}
-              >
+              <Button onClick={createGroup} disabled={!formData.name || submitting}>
                 {submitting ? "Creating..." : "Create Group"}
               </Button>
             </div>

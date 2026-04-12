@@ -44,6 +44,14 @@ function buildInviteEmailTemplate(
   const preheader =
     "Join DooSplit and start splitting expenses with your friends in seconds.";
   const subjectName = sanitizeHeaderValue(inviterName || "Your friend");
+  let inviteOrigin = "";
+  try {
+    inviteOrigin = new URL(inviteLink).origin;
+  } catch {
+    inviteOrigin = "";
+  }
+  const logoUrl = inviteOrigin ? `${inviteOrigin}/api/pwa/icon?size=96` : "";
+  const safeLogoUrl = escapeHtml(logoUrl);
 
   return {
     subject: `${subjectName} invited you to join DooSplit`,
@@ -66,9 +74,9 @@ function buildInviteEmailTemplate(
         <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:600px;background-color:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #dbe5eb;">
           <tr>
             <td style="background:linear-gradient(135deg,#0f766e,#0f766e 55%,#115e59);padding:36px 32px;text-align:center;">
-              <div style="height:46px;width:46px;border-radius:12px;background-color:rgba(255,255,255,0.16);display:inline-block;line-height:46px;text-align:center;color:#ffffff;font-size:20px;font-weight:700;margin-bottom:12px;">
-                DS
-              </div>
+              ${safeLogoUrl
+                ? `<img src="${safeLogoUrl}" alt="DooSplit" width="46" height="46" style="display:inline-block;width:46px;height:46px;border-radius:12px;margin-bottom:12px;background-color:rgba(255,255,255,0.16);" />`
+                : `<div style="height:46px;width:46px;border-radius:12px;background-color:rgba(255,255,255,0.16);display:inline-block;line-height:46px;text-align:center;color:#ffffff;font-size:20px;font-weight:700;margin-bottom:12px;">DS</div>`}
               <h1 style="margin:0;color:#ffffff;font-size:30px;line-height:1.2;font-weight:700;">You are invited</h1>
               <p style="margin:10px 0 0 0;color:#d6f5f1;font-size:15px;line-height:1.5;">
                 Split expenses clearly, settle faster, stay organized.

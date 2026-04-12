@@ -154,7 +154,7 @@ export function PWAProvider({ children }: PWAProviderProps) {
       if (Notification.permission === "granted" && document.visibilityState !== "visible") {
         new Notification(title, {
           body,
-          icon: "/logo.webp",
+          icon: "/api/pwa/icon?size=192",
         });
       }
     });

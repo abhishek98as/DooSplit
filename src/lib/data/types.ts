@@ -71,8 +71,12 @@ export interface ExpensesReadInput {
   userId: string;
   page: number;
   limit: number;
+  friendId?: string | null;
   category?: string | null;
   groupId?: string | null;
+  status?: string | null;
+  minAmount?: number | null;
+  maxAmount?: number | null;
   startDate?: string | null;
   endDate?: string | null;
 }

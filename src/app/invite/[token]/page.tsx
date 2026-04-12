@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import Image from "next/image";
+import BrandLogo from "@/components/ui/BrandLogo";
 import { Button, Input } from "@/components/ui";
 import {
   Mail,
@@ -244,13 +244,7 @@ export default function AcceptInvitePage() {
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary/10 to-success/10 p-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <Image
-            src="/logo.webp"
-            alt="DooSplit"
-            width={64}
-            height={64}
-            className="h-16 w-16 rounded-2xl mb-4 inline-block shadow-lg"
-          />
+          <BrandLogo size={64} className="h-16 w-16 rounded-2xl mb-4 inline-block shadow-lg" priority />
           <h1 className="text-2xl font-bold text-neutral-900">You&apos;re Invited</h1>
           {inviter && (
             <p className="text-neutral-600 mt-2">

@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, Suspense } from "react";
 import { useSession } from "@/lib/auth/react-session";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import AppShell from "@/components/layout/AppShell";
 import getOfflineStore from "@/lib/offline-store";
 import Card from "@/components/ui/Card";
@@ -26,6 +26,11 @@ import {
   Plus,
   Download
 } from "lucide-react";
+import {
+  PaymentStatus,
+  PAYMENT_STATUS_VALUES,
+  getPaymentStatusLabel,
+} from "@/lib/expenses/payment-status";
 
 interface Expense {
   _id: string;
@@ -36,6 +41,7 @@ interface Expense {
   currency: string;
   images?: string[];
   notes?: string;
+  paymentStatus: PaymentStatus;
   groupId?: {
     _id: string;
     name: string;
@@ -63,22 +69,70 @@ interface Group {
   name: string;
 }
 
+interface FriendFilterOption {
+  id: string;
+  name: string;
+}
+
+interface SavedExpenseView {
+  id: string;
+  name: string;
+  filters: {
+    category: string;
+    group: string;
+    status: string;
+    friendId: string;
+    minAmount: string;
+    maxAmount: string;
+    startDate: string;
+    endDate: string;
+    searchQuery: string;
+  };
+}
+
+const SAVED_VIEWS_STORAGE_KEY = "doosplit:expense-saved-views:v1";
+
+function ExpenseSearchFocus({
+  inputRef,
+}: {
+  inputRef: React.RefObject<HTMLInputElement | null>;
+}) {
+  const searchParams = useSearchParams();
+  useEffect(() => {
+    if (searchParams.get("focus") === "search") {
+      const id = window.setTimeout(() => {
+        inputRef.current?.focus();
+      }, 50);
+      return () => clearTimeout(id);
+    }
+  }, [searchParams, inputRef]);
+  return null;
+}
+
 export default function ExpensesPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
+  const [friends, setFriends] = useState<FriendFilterOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [statusUpdating, setStatusUpdating] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
 
   // Filters
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [selectedGroup, setSelectedGroup] = useState("all");
+  const [selectedStatus, setSelectedStatus] = useState("all");
+  const [selectedFriend, setSelectedFriend] = useState("all");
+  const [minAmount, setMinAmount] = useState("");
+  const [maxAmount, setMaxAmount] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  const [savedViews, setSavedViews] = useState<SavedExpenseView[]>([]);
   const [showFilters, setShowFilters] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
   const [showSettled, setShowSettled] = useState(() => {
@@ -112,11 +166,49 @@ export default function ExpensesPage() {
   useEffect(() => {
     if (status === "unauthenticated") {
       router.push("/auth/login");
-    } else if (status === "authenticated") {
-      fetchExpenses();
-      fetchGroups();
     }
-  }, [status, page, selectedCategory, selectedGroup, startDate, endDate]);
+  }, [status, router]);
+
+  useEffect(() => {
+    if (status === "authenticated") {
+      fetchExpenses();
+    }
+  }, [
+    status,
+    page,
+    selectedCategory,
+    selectedGroup,
+    selectedStatus,
+    selectedFriend,
+    minAmount,
+    maxAmount,
+    startDate,
+    endDate,
+  ]);
+
+  useEffect(() => {
+    if (status !== "authenticated") {
+      return;
+    }
+
+    fetchGroups();
+    fetchFriends();
+
+    try {
+      const stored = localStorage.getItem(SAVED_VIEWS_STORAGE_KEY);
+      if (!stored) {
+        setSavedViews([]);
+        return;
+      }
+      const parsed = JSON.parse(stored);
+      if (Array.isArray(parsed)) {
+        setSavedViews(parsed as SavedExpenseView[]);
+      }
+    } catch (error) {
+      console.warn("Failed to load saved expense views", error);
+      setSavedViews([]);
+    }
+  }, [status]);
 
   useEffect(() => {
     if (status !== "authenticated") {
@@ -141,7 +233,18 @@ export default function ExpensesPage() {
     return () => {
       window.removeEventListener("doosplit:data-updated", handler as EventListener);
     };
-  }, [status, page, selectedCategory, selectedGroup, startDate, endDate]);
+  }, [
+    status,
+    page,
+    selectedCategory,
+    selectedGroup,
+    selectedStatus,
+    selectedFriend,
+    minAmount,
+    maxAmount,
+    startDate,
+    endDate,
+  ]);
 
   const fetchExpenses = async () => {
     setLoading(true);
@@ -156,6 +259,18 @@ export default function ExpensesPage() {
       }
       if (selectedGroup !== "all") {
         params.append("groupId", selectedGroup);
+      }
+      if (selectedStatus !== "all") {
+        params.append("status", selectedStatus);
+      }
+      if (selectedFriend !== "all") {
+        params.append("friendId", selectedFriend);
+      }
+      if (minAmount.trim()) {
+        params.append("minAmount", minAmount.trim());
+      }
+      if (maxAmount.trim()) {
+        params.append("maxAmount", maxAmount.trim());
       }
       if (startDate) {
         params.append("startDate", startDate);
@@ -177,6 +292,87 @@ export default function ExpensesPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const fetchFriends = async () => {
+    try {
+      const response = await fetch("/api/friends");
+      if (!response.ok) {
+        return;
+      }
+      const data = await response.json();
+      const list = Array.isArray(data?.friends) ? data.friends : [];
+      const mapped: FriendFilterOption[] = list
+        .map((item: any) => {
+          const id = String(item?.friend?.id || item?.friend?._id || "");
+          const name = String(item?.friend?.name || "").trim();
+          if (!id || !name) {
+            return null;
+          }
+          return { id, name };
+        })
+        .filter(Boolean) as FriendFilterOption[];
+
+      setFriends(mapped);
+    } catch (error) {
+      console.error("Error fetching friends:", error);
+    }
+  };
+
+  const persistSavedViews = (views: SavedExpenseView[]) => {
+    setSavedViews(views);
+    try {
+      localStorage.setItem(SAVED_VIEWS_STORAGE_KEY, JSON.stringify(views));
+    } catch (error) {
+      console.warn("Failed to persist saved expense views", error);
+    }
+  };
+
+  const saveCurrentView = () => {
+    const viewName = window.prompt("Name this filter view:");
+    if (!viewName || !viewName.trim()) {
+      return;
+    }
+
+    const trimmedName = viewName.trim();
+    const nextView: SavedExpenseView = {
+      id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      name: trimmedName,
+      filters: {
+        category: selectedCategory,
+        group: selectedGroup,
+        status: selectedStatus,
+        friendId: selectedFriend,
+        minAmount,
+        maxAmount,
+        startDate,
+        endDate,
+        searchQuery,
+      },
+    };
+
+    const withoutSameName = savedViews.filter(
+      (view) => view.name.toLowerCase() !== trimmedName.toLowerCase()
+    );
+    persistSavedViews([nextView, ...withoutSameName].slice(0, 12));
+  };
+
+  const applySavedView = (view: SavedExpenseView) => {
+    setSelectedCategory(view.filters.category || "all");
+    setSelectedGroup(view.filters.group || "all");
+    setSelectedStatus(view.filters.status || "all");
+    setSelectedFriend(view.filters.friendId || "all");
+    setMinAmount(view.filters.minAmount || "");
+    setMaxAmount(view.filters.maxAmount || "");
+    setStartDate(view.filters.startDate || "");
+    setEndDate(view.filters.endDate || "");
+    setSearchQuery(view.filters.searchQuery || "");
+    setPage(1);
+    setShowFilters(false);
+  };
+
+  const deleteSavedView = (viewId: string) => {
+    persistSavedViews(savedViews.filter((view) => view.id !== viewId));
   };
 
   const fetchGroups = async () => {
@@ -261,6 +457,67 @@ export default function ExpensesPage() {
     }
   };
 
+  const getPaymentStatusBadgeClasses = (paymentStatus: PaymentStatus) => {
+    switch (paymentStatus) {
+      case "paid":
+        return "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300";
+      case "partially_paid":
+        return "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300";
+      case "disputed":
+        return "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300";
+      case "unpaid":
+      default:
+        return "bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-300";
+    }
+  };
+
+  const handleUpdatePaymentStatus = async (
+    expenseId: string,
+    nextStatus: PaymentStatus
+  ) => {
+    setStatusUpdating(expenseId);
+    try {
+      const response = await fetch(`/api/expenses/${expenseId}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ paymentStatus: nextStatus }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to update payment status");
+      }
+
+      const data = await response.json();
+      const updatedExpense = data?.expense;
+      if (updatedExpense?._id) {
+        setExpenses((prev) =>
+          prev.map((expense) =>
+            expense._id === updatedExpense._id
+              ? { ...expense, paymentStatus: updatedExpense.paymentStatus || nextStatus }
+              : expense
+          )
+        );
+      }
+
+      window.dispatchEvent(
+        new CustomEvent("doosplit:data-updated", {
+          detail: {
+            domains: ["expenses", "friends", "analytics", "activity"],
+            reason: "expense-payment-status-updated",
+            at: Date.now(),
+          },
+        })
+      );
+    } catch (error) {
+      console.error("Error updating payment status:", error);
+      alert("Failed to update payment status");
+    } finally {
+      setStatusUpdating(null);
+    }
+  };
+
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
     return new Intl.DateTimeFormat("en-IN", {
@@ -306,7 +563,7 @@ export default function ExpensesPage() {
 
     // Filter by settled status
     if (!showSettled) {
-      const allSettled = expense.participants?.every(p => p.isSettled);
+      const allSettled = expense.paymentStatus === "paid";
       if (allSettled) return false;
     }
 
@@ -322,6 +579,10 @@ export default function ExpensesPage() {
   const clearFilters = () => {
     setSelectedCategory("all");
     setSelectedGroup("all");
+    setSelectedStatus("all");
+    setSelectedFriend("all");
+    setMinAmount("");
+    setMaxAmount("");
     setStartDate("");
     setEndDate("");
     setPage(1);
@@ -340,6 +601,9 @@ export default function ExpensesPage() {
 
   return (
     <AppShell>
+      <Suspense fallback={null}>
+        <ExpenseSearchFocus inputRef={searchInputRef} />
+      </Suspense>
       <div className="p-4 md:p-6 max-w-7xl mx-auto">
         {/* Header */}
         <div className="mb-6">
@@ -356,6 +620,7 @@ export default function ExpensesPage() {
           <div className="flex gap-3">
             <div className="flex-1">
               <Input
+                ref={searchInputRef}
                 icon={<Search className="w-4 h-4" />}
                 placeholder="Search expenses..."
                 value={searchQuery}
@@ -380,6 +645,13 @@ export default function ExpensesPage() {
               Export
             </Button>
             <Button
+              variant="secondary"
+              onClick={saveCurrentView}
+              className="flex items-center gap-2"
+            >
+              Save View
+            </Button>
+            <Button
               variant={showSettled ? "secondary" : "outline"}
               onClick={() => {
                 setShowSettled(!showSettled);
@@ -399,10 +671,37 @@ export default function ExpensesPage() {
             </Button>
           </div>
 
+          {savedViews.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {savedViews.map((view) => (
+                <div
+                  key={view.id}
+                  className="inline-flex items-center rounded-full border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800"
+                >
+                  <button
+                    type="button"
+                    onClick={() => applySavedView(view)}
+                    className="px-3 py-1.5 text-xs font-medium text-gray-700 dark:text-gray-200"
+                  >
+                    {view.name}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => deleteSavedView(view.id)}
+                    className="px-2 py-1.5 text-gray-500 hover:text-red-500"
+                    aria-label={`Delete saved view ${view.name}`}
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* Filter Panel */}
           {showFilters && (
             <Card className="p-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                     Category
@@ -422,6 +721,54 @@ export default function ExpensesPage() {
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Friend
+                  </label>
+                  <select
+                    value={selectedFriend}
+                    onChange={(e) => setSelectedFriend(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
+                  >
+                    <option value="all">All Friends</option>
+                    {friends.map((friend) => (
+                      <option key={friend.id} value={friend.id}>
+                        {friend.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Min Amount
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={minAmount}
+                    onChange={(e) => setMinAmount(e.target.value)}
+                    placeholder="0"
+                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Max Amount
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={maxAmount}
+                    onChange={(e) => setMaxAmount(e.target.value)}
+                    placeholder="No limit"
+                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                     Group
                   </label>
                   <select
@@ -434,6 +781,24 @@ export default function ExpensesPage() {
                     {groups.map((group) => (
                       <option key={group._id} value={group._id}>
                         {group.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Payment Status
+                  </label>
+                  <select
+                    value={selectedStatus}
+                    onChange={(e) => setSelectedStatus(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
+                  >
+                    <option value="all">All Statuses</option>
+                    {PAYMENT_STATUS_VALUES.map((paymentStatus) => (
+                      <option key={paymentStatus} value={paymentStatus}>
+                        {getPaymentStatusLabel(paymentStatus)}
                       </option>
                     ))}
                   </select>
@@ -484,7 +849,7 @@ export default function ExpensesPage() {
               No expenses found
             </h3>
             <p className="text-gray-600 dark:text-gray-400 mb-6">
-              {searchQuery || selectedCategory !== "all" || selectedGroup !== "all" || startDate || endDate
+              {searchQuery || selectedCategory !== "all" || selectedGroup !== "all" || selectedStatus !== "all" || selectedFriend !== "all" || minAmount || maxAmount || startDate || endDate
                 ? "Try adjusting your filters or search query"
                 : "Start by adding your first expense"}
             </p>
@@ -517,6 +882,12 @@ export default function ExpensesPage() {
                             <span>{expense.createdBy?.name || "Unknown"} paid</span>
                             <span>•</span>
                             <span>{formatDate(expense.date)}</span>
+                            <span>•</span>
+                            <span
+                              className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${getPaymentStatusBadgeClasses(expense.paymentStatus || "unpaid")}`}
+                            >
+                              {getPaymentStatusLabel(expense.paymentStatus || "unpaid")}
+                            </span>
                             {expense.groupId ? (
                               <>
                                 <span>•</span>
@@ -549,6 +920,23 @@ export default function ExpensesPage() {
 
                       {/* Actions */}
                       <div className="flex items-center gap-2 mt-3">
+                        <select
+                          value={expense.paymentStatus || "unpaid"}
+                          onChange={(e) =>
+                            handleUpdatePaymentStatus(
+                              expense._id,
+                              e.target.value as PaymentStatus
+                            )
+                          }
+                          disabled={statusUpdating === expense._id}
+                          className="h-8 px-2 text-xs border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
+                        >
+                          {PAYMENT_STATUS_VALUES.map((paymentStatus) => (
+                            <option key={paymentStatus} value={paymentStatus}>
+                              {getPaymentStatusLabel(paymentStatus)}
+                            </option>
+                          ))}
+                        </select>
                         <Button
                           size="sm"
                           variant="secondary"

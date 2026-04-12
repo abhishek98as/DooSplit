@@ -1,11 +1,18 @@
 import type { Metadata, Viewport } from "next";
-import { Inter } from "next/font/google";
+import { DM_Sans, Syne } from "next/font/google";
 import "./globals.css";
 import { Providers } from "@/components/Providers";
 
-const inter = Inter({ 
+const syne = Syne({
   subsets: ["latin"],
-  variable: "--font-inter",
+  variable: "--font-syne",
+  weight: ["700", "800"],
+});
+
+const dmSans = DM_Sans({
+  subsets: ["latin"],
+  variable: "--font-dm-sans",
+  weight: ["400", "500", "600", "700"],
 });
 
 export const viewport: Viewport = {
@@ -134,7 +141,10 @@ export default function RootLayout({
         <meta name="msapplication-TileColor" content="#00B8A9" />
         <meta name="msapplication-tap-highlight" content="no" />
       </head>
-      <body className={`${inter.variable} font-sans`} suppressHydrationWarning>
+      <body
+        className={`${syne.variable} ${dmSans.variable} font-sans`}
+        suppressHydrationWarning
+      >
         <Providers>{children}</Providers>
       </body>
     </html>

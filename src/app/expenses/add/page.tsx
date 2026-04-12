@@ -55,6 +55,13 @@ interface Participant {
   shares?: number; // For shares split method
 }
 
+interface SimulatorRow {
+  userId: string;
+  name: string;
+  owedAmount: number;
+  percentage?: number;
+}
+
 type SplitMethod = "equally" | "exact" | "percentage" | "shares";
 
 export default function AddExpensePage() {
@@ -77,6 +84,9 @@ export default function AddExpensePage() {
   const [selectedGroup, setSelectedGroup] = useState<Group | null>(null);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [paidBy, setPaidBy] = useState<string>("");
+  const [simulatorMethod, setSimulatorMethod] = useState<"equally" | "exact" | "percentage">("equally");
+  const [simPercentageByUser, setSimPercentageByUser] = useState<Record<string, string>>({});
+  const [simExactByUser, setSimExactByUser] = useState<Record<string, string>>({});
 
   // Modal states
   const [showFriendModal, setShowFriendModal] = useState(false);
@@ -124,6 +134,38 @@ export default function AddExpensePage() {
       calculateSplit();
     }
   }, [amount, selectedFriends, splitMethod]);
+
+  useEffect(() => {
+    if (!session?.user?.id) {
+      return;
+    }
+
+    const peopleIds = [
+      session.user.id,
+      ...selectedFriends.map((friend) => String(friend.friend.id || "")).filter(Boolean),
+    ];
+
+    const totalPeople = Math.max(1, peopleIds.length);
+    const totalAmount = parseFloat(amount) || 0;
+    const equalPercentage = (100 / totalPeople).toFixed(2);
+    const equalExact = (totalAmount / totalPeople).toFixed(2);
+
+    setSimPercentageByUser((prev) => {
+      const next: Record<string, string> = {};
+      for (const id of peopleIds) {
+        next[id] = prev[id] ?? equalPercentage;
+      }
+      return next;
+    });
+
+    setSimExactByUser((prev) => {
+      const next: Record<string, string> = {};
+      for (const id of peopleIds) {
+        next[id] = prev[id] ?? equalExact;
+      }
+      return next;
+    });
+  }, [amount, selectedFriends, session?.user?.id]);
 
   const fetchFriends = async () => {
     try {
@@ -420,6 +462,70 @@ export default function AddExpensePage() {
     }));
   };
 
+  const simulatorPeople = [
+    ...(session?.user?.id
+      ? [{ id: session.user.id, name: "You" }]
+      : []),
+    ...selectedFriends.map((friend) => ({
+      id: String(friend.friend.id || ""),
+      name: friend.friend.name,
+    })),
+  ].filter((person) => Boolean(person.id));
+
+  const simulatorAmount = parseFloat(amount) || 0;
+
+  const simulatorRows: SimulatorRow[] = (() => {
+    if (simulatorPeople.length === 0) {
+      return [];
+    }
+
+    const round2 = (value: number) => Math.round(value * 100) / 100;
+
+    if (simulatorMethod === "equally") {
+      const equalShare = round2(simulatorAmount / simulatorPeople.length);
+      const remainder = round2(simulatorAmount - equalShare * simulatorPeople.length);
+      return simulatorPeople.map((person, index) => ({
+        userId: person.id,
+        name: person.name,
+        owedAmount: index === 0 ? round2(equalShare + remainder) : equalShare,
+      }));
+    }
+
+    if (simulatorMethod === "percentage") {
+      const rows = simulatorPeople.map((person) => {
+        const percentage = Number(simPercentageByUser[person.id] || 0);
+        return {
+          userId: person.id,
+          name: person.name,
+          percentage,
+          owedAmount: round2((simulatorAmount * percentage) / 100),
+        };
+      });
+
+      const totalAllocated = round2(rows.reduce((sum, row) => sum + row.owedAmount, 0));
+      const diff = round2(simulatorAmount - totalAllocated);
+      if (rows.length > 0 && diff !== 0) {
+        rows[0].owedAmount = round2(rows[0].owedAmount + diff);
+      }
+      return rows;
+    }
+
+    return simulatorPeople.map((person) => ({
+      userId: person.id,
+      name: person.name,
+      owedAmount: round2(Number(simExactByUser[person.id] || 0)),
+    }));
+  })();
+
+  const simulatorOwedTotal = simulatorRows.reduce(
+    (sum, row) => sum + Number(row.owedAmount || 0),
+    0
+  );
+  const simulatorPercentageTotal = simulatorRows.reduce(
+    (sum, row) => sum + Number(row.percentage || 0),
+    0
+  );
+
   return (
     <AppShell>
       <div className="p-4 md:p-8 max-w-2xl mx-auto space-y-6">
@@ -627,6 +733,135 @@ export default function AddExpensePage() {
                 </button>
               </div>
             </div>
+
+            {/* What-if Split Simulator */}
+            {selectedFriends.length > 0 && (
+              <div className="rounded-xl border-2 border-dashed border-primary/30 p-4 space-y-3 bg-primary/5 dark:bg-primary/10">
+                <div>
+                  <h3 className="text-sm font-semibold text-neutral-900 dark:text-dark-text">
+                    What-if Split Simulator
+                  </h3>
+                  <p className="text-xs text-neutral-600 dark:text-dark-text-secondary mt-1">
+                    Test different split outcomes before saving this expense.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSimulatorMethod("equally")}
+                    className={`p-2 rounded-lg text-xs font-medium border ${
+                      simulatorMethod === "equally"
+                        ? "border-primary bg-primary/15 text-primary"
+                        : "border-neutral-200 dark:border-dark-border text-neutral-700 dark:text-dark-text bg-white dark:bg-dark-bg-secondary"
+                    }`}
+                  >
+                    Equally
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSimulatorMethod("percentage")}
+                    className={`p-2 rounded-lg text-xs font-medium border ${
+                      simulatorMethod === "percentage"
+                        ? "border-primary bg-primary/15 text-primary"
+                        : "border-neutral-200 dark:border-dark-border text-neutral-700 dark:text-dark-text bg-white dark:bg-dark-bg-secondary"
+                    }`}
+                  >
+                    Percentage
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSimulatorMethod("exact")}
+                    className={`p-2 rounded-lg text-xs font-medium border ${
+                      simulatorMethod === "exact"
+                        ? "border-primary bg-primary/15 text-primary"
+                        : "border-neutral-200 dark:border-dark-border text-neutral-700 dark:text-dark-text bg-white dark:bg-dark-bg-secondary"
+                    }`}
+                  >
+                    Exact
+                  </button>
+                </div>
+
+                {simulatorMethod === "percentage" && (
+                  <div className="space-y-2">
+                    {simulatorPeople.map((person) => (
+                      <div key={person.id} className="flex items-center gap-2">
+                        <span className="text-xs w-24 truncate text-neutral-700 dark:text-dark-text">{person.name}</span>
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          step="0.01"
+                          value={simPercentageByUser[person.id] || ""}
+                          onChange={(e) =>
+                            setSimPercentageByUser((prev) => ({
+                              ...prev,
+                              [person.id]: e.target.value,
+                            }))
+                          }
+                          className="flex-1 px-2 py-1 text-xs border border-neutral-300 dark:border-dark-border rounded bg-white dark:bg-dark-bg-secondary text-neutral-900 dark:text-dark-text"
+                        />
+                        <span className="text-xs text-neutral-500 dark:text-dark-text-secondary">%</span>
+                      </div>
+                    ))}
+                    <p className="text-xs text-neutral-500 dark:text-dark-text-secondary">
+                      Total percentage: {simulatorPercentageTotal.toFixed(2)}%
+                    </p>
+                  </div>
+                )}
+
+                {simulatorMethod === "exact" && (
+                  <div className="space-y-2">
+                    {simulatorPeople.map((person) => (
+                      <div key={person.id} className="flex items-center gap-2">
+                        <span className="text-xs w-24 truncate text-neutral-700 dark:text-dark-text">{person.name}</span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={simExactByUser[person.id] || ""}
+                          onChange={(e) =>
+                            setSimExactByUser((prev) => ({
+                              ...prev,
+                              [person.id]: e.target.value,
+                            }))
+                          }
+                          className="flex-1 px-2 py-1 text-xs border border-neutral-300 dark:border-dark-border rounded bg-white dark:bg-dark-bg-secondary text-neutral-900 dark:text-dark-text"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="rounded-lg bg-white dark:bg-dark-bg-secondary border border-neutral-200 dark:border-dark-border overflow-hidden">
+                  <div className="grid grid-cols-2 px-3 py-2 text-xs font-semibold bg-neutral-100 dark:bg-dark-bg-tertiary">
+                    <span>Participant</span>
+                    <span className="text-right">Owes</span>
+                  </div>
+                  {simulatorRows.map((row) => (
+                    <div key={row.userId} className="grid grid-cols-2 px-3 py-2 text-sm border-t border-neutral-100 dark:border-dark-border">
+                      <span>{row.name}</span>
+                      <span className="text-right font-mono">₹{Number(row.owedAmount || 0).toFixed(2)}</span>
+                    </div>
+                  ))}
+                  <div className="grid grid-cols-2 px-3 py-2 text-xs font-semibold border-t border-neutral-200 dark:border-dark-border bg-neutral-50 dark:bg-dark-bg-tertiary">
+                    <span>Total</span>
+                    <span className="text-right font-mono">₹{simulatorOwedTotal.toFixed(2)}</span>
+                  </div>
+                </div>
+
+                {simulatorMethod === "percentage" && Math.abs(simulatorPercentageTotal - 100) > 0.01 && (
+                  <p className="text-xs text-amber-700 dark:text-amber-300">
+                    Percentage total should be close to 100% for a balanced split.
+                  </p>
+                )}
+                {simulatorMethod === "exact" && Math.abs(simulatorOwedTotal - simulatorAmount) > 0.01 && (
+                  <p className="text-xs text-amber-700 dark:text-amber-300">
+                    Exact amounts should add up to ₹{simulatorAmount.toFixed(2)}.
+                  </p>
+                )}
+              </div>
+            )}
 
             {/* Image Upload */}
             <ImageUpload

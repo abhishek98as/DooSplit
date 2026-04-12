@@ -4,7 +4,7 @@
 
 @layer base {
   body {
-    @apply bg-neutral-50 text-neutral-900 antialiased;
+    @apply bg-cream text-neutral-900 antialiased;
   }
 
   .dark body {
@@ -71,4 +71,185 @@
     -ms-overflow-style: none;
     scrollbar-width: none;
   }
+
+  /* ── Desktop Sidebar (always dark navy, both themes) ─────────────────── */
+  .ds-sidebar {
+    background-color: #0D1929;
+    border-right: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  .ds-sidebar-brand {
+    height: 68px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  .ds-logo-box {
+    width: 38px;
+    height: 38px;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #00C9A7, #007A65);
+    box-shadow: 0 4px 14px rgba(0, 201, 167, 0.35);
+    flex-shrink: 0;
+  }
+
+  .ds-sidebar-cta {
+    background: linear-gradient(135deg, #00C9A7, #00b896);
+    box-shadow: 0 4px 16px rgba(0, 201, 167, 0.3);
+    border-radius: 10px;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .ds-sidebar-cta:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px rgba(0, 201, 167, 0.4);
+  }
+
+  .ds-section-label {
+    color: rgba(255, 255, 255, 0.25);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+  }
+
+  .ds-nav-item {
+    color: rgba(255, 255, 255, 0.55);
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+
+  .ds-nav-item:hover {
+    background: rgba(0, 201, 167, 0.08);
+    color: rgba(255, 255, 255, 0.85);
+  }
+
+  .ds-nav-item--active {
+    background: rgba(0, 201, 167, 0.12) !important;
+    color: #00C9A7 !important;
+    font-weight: 600;
+  }
+
+  .ds-nav-accent {
+    position: absolute;
+    left: 0;
+    top: 20%;
+    bottom: 20%;
+    width: 3px;
+    border-radius: 0 3px 3px 0;
+    background: #00C9A7;
+    pointer-events: none;
+  }
+
+  .ds-user-profile {
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  .ds-user-profile:hover {
+    background: rgba(0, 201, 167, 0.08);
+  }
+
+  .ds-user-avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 11px;
+    background: linear-gradient(135deg, #00C9A7, #007A65);
+    flex-shrink: 0;
+  }
+
+  /* ── Desktop Topbar ───────────────────────────────────────────────────── */
+  .ds-topbar {
+    height: 68px;
+    flex-shrink: 0;
+    border-bottom: 1px solid;
+    position: sticky;
+    top: 0;
+    z-index: 40;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 28px;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    transition: background 0.2s ease, border-color 0.2s ease;
+  }
+
+  .ds-search {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-radius: 10px;
+    border-width: 1.5px;
+    border-style: solid;
+    padding: 8px 14px;
+    width: 220px;
+    transition: width 0.3s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .ds-search:focus-within {
+    width: 280px;
+    border-color: #00C9A7 !important;
+    box-shadow: 0 0 0 3px rgba(0, 201, 167, 0.15);
+  }
+
+  .ds-icon-btn {
+    width: 38px;
+    height: 38px;
+    border-radius: 8px;
+    border-width: 1px;
+    border-style: solid;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+    flex-shrink: 0;
+  }
+
+  .ds-icon-btn:hover {
+    border-color: #00C9A7 !important;
+    color: #00C9A7 !important;
+  }
+
+  .ds-topbar-avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    background: linear-gradient(135deg, #00C9A7, #007A65);
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    font-weight: 700;
+    color: white;
+    cursor: pointer;
+    border: 1.5px solid rgba(0, 201, 167, 0.3);
+  }
+
+  .ds-vdivider {
+    width: 1px;
+    height: 24px;
+    flex-shrink: 0;
+  }
+
+  /* ── Dashboard fade-up entrance animations ───────────────────────────── */
+  @keyframes ds-fade-up {
+    from {
+      opacity: 0;
+      transform: translateY(14px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .ds-anim-0  { animation: ds-fade-up 0.45s ease 0.00s both; }
+  .ds-anim-1  { animation: ds-fade-up 0.45s ease 0.05s both; }
+  .ds-anim-2  { animation: ds-fade-up 0.45s ease 0.10s both; }
+  .ds-anim-3  { animation: ds-fade-up 0.45s ease 0.15s both; }
+  .ds-anim-4  { animation: ds-fade-up 0.45s ease 0.20s both; }
+  .ds-anim-5  { animation: ds-fade-up 0.45s ease 0.25s both; }
 }

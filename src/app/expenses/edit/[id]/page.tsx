@@ -39,6 +39,23 @@ interface Participant {
   paidAmount: number;
 }
 
+interface DiscussionEntry {
+  _id: string;
+  type: "comment" | "edit_note";
+  message: string;
+  mentions?: string[];
+  createdBy?: {
+    _id: string;
+    name: string;
+    profilePicture?: string;
+  } | null;
+  createdAt: string;
+  metadata?: {
+    editedBy?: string;
+    diff?: Record<string, { before: any; after: any }>;
+  };
+}
+
 type SplitMethod = "equally" | "exact" | "percentage" | "shares";
 
 export default function EditExpensePage() {
@@ -71,6 +88,9 @@ export default function EditExpensePage() {
   const [groups, setGroups] = useState<Group[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [discussionThread, setDiscussionThread] = useState<DiscussionEntry[]>([]);
+  const [commentText, setCommentText] = useState("");
+  const [commentSubmitting, setCommentSubmitting] = useState(false);
 
   const categories = [
     { value: "food", label: "Food", icon: "🍔" },
@@ -153,6 +173,8 @@ export default function EditExpensePage() {
           }));
         setSelectedFriends(selectedFriendsList);
       }
+
+      setDiscussionThread(Array.isArray(data.discussionThread) ? data.discussionThread : []);
     } catch (error) {
       console.error("Error fetching expense:", error);
       alert("Failed to load expense");
@@ -274,6 +296,103 @@ export default function EditExpensePage() {
         ? prev.filter(f => f._id !== friend._id)
         : [...prev, friend]
     );
+  };
+
+  const formatDateTime = (dateString: string) => {
+    if (!dateString) return "";
+    const date = new Date(dateString);
+    return date.toLocaleString("en-IN", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
+
+  const formatDiffValue = (value: any): string => {
+    if (value === null || value === undefined || value === "") {
+      return "-";
+    }
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      return String(value);
+    }
+    if (Array.isArray(value)) {
+      if (value.length === 0) {
+        return "[]";
+      }
+      return JSON.stringify(value);
+    }
+    if (typeof value === "object") {
+      return JSON.stringify(value);
+    }
+    return String(value);
+  };
+
+  const mentionCandidates = [
+    ...(session?.user?.id
+      ? [{ id: session.user.id, name: session.user.name || "you" }]
+      : []),
+    ...selectedFriends.map((friend) => ({ id: friend._id, name: friend.name })),
+  ];
+
+  const appendMentionToComment = (name: string) => {
+    const token = `@${String(name || "").trim().replace(/\s+/g, "")}`;
+    setCommentText((prev) => {
+      if (!prev.trim()) {
+        return `${token} `;
+      }
+      if (prev.endsWith(" ")) {
+        return `${prev}${token} `;
+      }
+      return `${prev} ${token} `;
+    });
+  };
+
+  const handlePostComment = async () => {
+    const message = commentText.trim();
+    if (!message) {
+      return;
+    }
+
+    setCommentSubmitting(true);
+    try {
+      const response = await fetch(`/api/expenses/${expenseId}/comments`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ message }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.error || "Failed to add comment");
+      }
+
+      const result = await response.json();
+      const comment = result?.comment;
+      if (comment) {
+        setDiscussionThread((prev) => [
+          {
+            _id: String(comment._id || ""),
+            type: "comment",
+            message: String(comment.message || ""),
+            mentions: Array.isArray(comment.mentions) ? comment.mentions : [],
+            createdBy: comment.createdBy || null,
+            createdAt: comment.createdAt,
+          },
+          ...prev,
+        ]);
+      }
+
+      setCommentText("");
+    } catch (error: any) {
+      console.error("Failed to add comment:", error);
+      alert(error.message || "Failed to add comment");
+    } finally {
+      setCommentSubmitting(false);
+    }
   };
 
   if (loading) {
@@ -455,6 +574,106 @@ export default function EditExpensePage() {
                 rows={3}
                 className="w-full px-4 py-3 border-2 border-neutral-200 dark:border-dark-border rounded-md focus:outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 bg-white dark:bg-dark-bg-secondary text-neutral-900 dark:text-dark-text"
               />
+            </div>
+
+            {/* Discussion Thread */}
+            <div className="space-y-3 border-t border-neutral-200 dark:border-dark-border pt-4">
+              <div>
+                <h3 className="text-sm font-semibold text-neutral-800 dark:text-dark-text">
+                  Discussion & Edit Notes
+                </h3>
+                <p className="text-xs text-neutral-500 mt-1">
+                  Comment with @mentions and review edit history in one place.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <textarea
+                  value={commentText}
+                  onChange={(e) => setCommentText(e.target.value)}
+                  placeholder="Add a comment... use @name to mention"
+                  rows={3}
+                  className="w-full px-4 py-3 border-2 border-neutral-200 dark:border-dark-border rounded-md focus:outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 bg-white dark:bg-dark-bg-secondary text-neutral-900 dark:text-dark-text"
+                />
+
+                <div className="flex flex-wrap items-center gap-2">
+                  {mentionCandidates.map((candidate) => (
+                    <button
+                      key={candidate.id}
+                      type="button"
+                      onClick={() => appendMentionToComment(candidate.name)}
+                      className="px-2 py-1 text-xs rounded-full border border-neutral-200 dark:border-dark-border text-neutral-700 dark:text-dark-text hover:border-primary hover:text-primary"
+                    >
+                      @{candidate.name.replace(/\s+/g, "")}
+                    </button>
+                  ))}
+
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={handlePostComment}
+                    isLoading={commentSubmitting}
+                    disabled={!commentText.trim()}
+                    className="ml-auto"
+                  >
+                    Post Comment
+                  </Button>
+                </div>
+              </div>
+
+              <div className="max-h-80 overflow-y-auto space-y-2 pr-1">
+                {discussionThread.length === 0 ? (
+                  <p className="text-xs text-neutral-500 py-2">
+                    No discussion yet. Add the first comment.
+                  </p>
+                ) : (
+                  discussionThread.map((entry) => (
+                    <div
+                      key={entry._id}
+                      className="rounded-md border border-neutral-200 dark:border-dark-border p-3 bg-neutral-50/50 dark:bg-dark-bg-secondary/40"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-medium text-neutral-700 dark:text-dark-text">
+                          {entry.createdBy?.name || "System"}
+                        </span>
+                        <span className="text-[11px] text-neutral-500">
+                          {formatDateTime(entry.createdAt)}
+                        </span>
+                      </div>
+                      <p className="text-sm text-neutral-800 dark:text-dark-text mt-1 whitespace-pre-wrap break-words">
+                        {entry.message}
+                      </p>
+                      <div className="mt-2">
+                        <span
+                          className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${
+                            entry.type === "comment"
+                              ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
+                              : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
+                          }`}
+                        >
+                          {entry.type === "comment" ? "Comment" : "Edit Note"}
+                        </span>
+                      </div>
+                      {entry.type === "edit_note" && entry.metadata?.diff && Object.keys(entry.metadata.diff).length > 0 && (
+                        <div className="mt-3 space-y-1">
+                          {Object.entries(entry.metadata.diff).map(([field, value]) => (
+                            <div
+                              key={`${entry._id}_${field}`}
+                              className="text-[11px] rounded border border-neutral-200 dark:border-dark-border px-2 py-1 bg-white/70 dark:bg-dark-bg-secondary/60"
+                            >
+                              <span className="font-semibold capitalize">{field}</span>
+                              <span className="text-neutral-500">: </span>
+                              <span className="line-through text-neutral-500">{formatDiffValue(value?.before)}</span>
+                              <span className="text-neutral-500">{" -> "}</span>
+                              <span className="font-medium text-neutral-800 dark:text-dark-text">{formatDiffValue(value?.after)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
 
             {/* Submit Buttons */}

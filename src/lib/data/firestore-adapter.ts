@@ -15,6 +15,11 @@ import type {
 } from "./types";
 import { getAdminDb } from "@/lib/firestore/admin";
 import { computePairwiseBalancesForUser } from "./balance-service";
+import {
+  derivePaymentStatusFromSettledFlags,
+  isPaymentStatus,
+  normalizePaymentStatus,
+} from "@/lib/expenses/payment-status";
 
 function toIso(value: any): string {
   if (!value) {
@@ -383,11 +388,31 @@ async function getExpenses(input: ExpensesReadInput): Promise<ExpensesPayload> {
     };
   }
 
+  let friendExpenseIds: Set<string> | null = null;
+  if (input.friendId && String(input.friendId).trim()) {
+    const friendLinksSnap = await db
+      .collection("expense_participants")
+      .where("user_id", "==", String(input.friendId).trim())
+      .get();
+
+    friendExpenseIds = new Set(
+      uniqueStrings(
+        friendLinksSnap.docs.map((doc) => String(doc.data()?.expense_id || ""))
+      )
+    );
+  }
+
   const expensesById = await fetchDocsByIds("expenses", allExpenseIds);
   let expenses = allExpenseIds
     .map((id) => expensesById.get(id))
     .filter(Boolean)
     .filter((row: any) => !Boolean(row.is_deleted));
+
+  if (friendExpenseIds) {
+    expenses = expenses.filter((row: any) =>
+      friendExpenseIds?.has(String(row.id || ""))
+    );
+  }
 
   if (input.category) {
     expenses = expenses.filter(
@@ -403,6 +428,30 @@ async function getExpenses(input: ExpensesReadInput): Promise<ExpensesPayload> {
         (row: any) => String(row.group_id || "") === String(input.groupId)
       );
     }
+  }
+
+  if (input.status && isPaymentStatus(input.status)) {
+    expenses = expenses.filter(
+      (row: any) => normalizePaymentStatus(row.payment_status, "unpaid") === input.status
+    );
+  }
+
+  const hasMinAmount = Number.isFinite(Number(input.minAmount));
+  const hasMaxAmount = Number.isFinite(Number(input.maxAmount));
+  if (hasMinAmount || hasMaxAmount) {
+    const minAmount = hasMinAmount ? Number(input.minAmount) : NaN;
+    const maxAmount = hasMaxAmount ? Number(input.maxAmount) : NaN;
+
+    expenses = expenses.filter((row: any) => {
+      const rowAmount = toNumber(row.amount);
+      if (Number.isFinite(minAmount) && rowAmount < minAmount) {
+        return false;
+      }
+      if (Number.isFinite(maxAmount) && rowAmount > maxAmount) {
+        return false;
+      }
+      return true;
+    });
   }
 
   const startMs = input.startDate ? new Date(input.startDate).getTime() : NaN;
@@ -475,6 +524,13 @@ async function getExpenses(input: ExpensesReadInput): Promise<ExpensesPayload> {
     const group = mapGroup(groupsById.get(String(row.group_id || "")));
     const createdAt = toIso(row.created_at || row._created_at);
     const updatedAt = toIso(row.updated_at || row._updated_at);
+    const participants = participantsByExpense.get(String(row.id || "")) || [];
+    const participantSettledFlags = participants.map((participant: any) =>
+      Boolean(participant.isSettled)
+    );
+    const paymentStatus = isPaymentStatus(row.payment_status)
+      ? row.payment_status
+      : derivePaymentStatusFromSettledFlags(participantSettledFlags, "unpaid");
 
     return {
       _id: String(row.id || ""),
@@ -488,10 +544,11 @@ async function getExpenses(input: ExpensesReadInput): Promise<ExpensesPayload> {
       images: Array.isArray(row.images) ? row.images : [],
       notes: row.notes || "",
       isDeleted: Boolean(row.is_deleted),
+      paymentStatus,
       editHistory: Array.isArray(row.edit_history) ? row.edit_history : [],
       createdAt,
       updatedAt,
-      participants: participantsByExpense.get(String(row.id || "")) || [],
+      participants,
       _version: {
         version: 1,
         lastModified: updatedAt || createdAt,
@@ -578,7 +635,7 @@ async function getSettlements(input: SettlementsReadInput): Promise<SettlementsP
   };
 }
 
-async function buildUnifiedActivityFeed(
+async function buildLegacyActivityFeed(
   userId: string,
   limit: number
 ): Promise<any[]> {
@@ -735,6 +792,98 @@ async function buildUnifiedActivityFeed(
   });
 
   return activities;
+}
+
+function normalizeActivityType(type: string): string {
+  if (type === "settlement_added") {
+    return "settlement";
+  }
+  return type;
+}
+
+function mapActivityLogToFeedItem(row: any): any {
+  const metadata = row.metadata || {};
+  const rawType = String(row.type || "");
+  const type = normalizeActivityType(rawType);
+
+  const createdAt =
+    toIso(row.createdAt || row.createdAtIso || row.created_at || row._created_at) ||
+    new Date().toISOString();
+
+  const actorId = String(row.actorId || "");
+  const actorName = String(row.actorName || "").trim() || "Someone";
+  const amount =
+    metadata.amount !== undefined && metadata.amount !== null
+      ? toNumber(metadata.amount)
+      : null;
+
+  const activity: any = {
+    id: String(row.id || ""),
+    type,
+    description: String(row.description || row.title || "Activity"),
+    createdAt,
+  };
+
+  if (metadata.expenseType) {
+    activity.expenseType = String(metadata.expenseType);
+  }
+
+  if (amount !== null && Number.isFinite(amount)) {
+    activity.amount = amount;
+    activity.currency = String(metadata.currency || "INR");
+  }
+
+  if (actorId || actorName) {
+    activity.user = {
+      id: actorId,
+      name: actorName,
+      profilePicture: null,
+    };
+  }
+
+  if (metadata.groupId || metadata.groupName) {
+    activity.group = {
+      id: String(metadata.groupId || ""),
+      name: String(metadata.groupName || "Group"),
+    };
+  }
+
+  return activity;
+}
+
+async function getActivityLogFeed(userId: string, limit: number): Promise<any[]> {
+  const db = getAdminDb();
+  const logsSnap = await db
+    .collection("activity_logs")
+    .where("userId", "==", userId)
+    .orderBy("createdAt", "desc")
+    .limit(Math.max(1, limit))
+    .get();
+
+  if (logsSnap.empty) {
+    return [];
+  }
+
+  const activities = logsSnap.docs.map((doc) =>
+    mapActivityLogToFeedItem({ id: doc.id, ...(doc.data() || {}) })
+  );
+
+  activities.sort((a, b) => toDateMs(b.createdAt) - toDateMs(a.createdAt));
+  return activities;
+}
+
+async function buildUnifiedActivityFeed(
+  userId: string,
+  limit: number
+): Promise<any[]> {
+  const fetchLimit = Math.max(40, limit);
+  const activityLogFeed = await getActivityLogFeed(userId, fetchLimit);
+  if (activityLogFeed.length > 0) {
+    return activityLogFeed;
+  }
+
+  // Backward compatibility for users with older data before immutable logging.
+  return buildLegacyActivityFeed(userId, limit);
 }
 
 async function getDashboardActivity(

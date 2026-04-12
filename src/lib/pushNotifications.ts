@@ -157,8 +157,8 @@ export const sendTestNotification = async (): Promise<void> => {
   if (Notification.permission === 'granted') {
     new Notification('DooSplit Test', {
       body: 'This is a test notification',
-      icon: '/logo.webp',
-      badge: '/logo.webp'
+      icon: '/api/pwa/icon?size=192',
+      badge: '/api/pwa/icon?size=96'
     });
   } else {
     console.warn('Notification permission not granted');

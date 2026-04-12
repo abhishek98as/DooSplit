@@ -1,24 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSession } from "@/lib/auth/react-session";
 import { useParams, useRouter } from "next/navigation";
-import AppShell from "@/components/layout/AppShell";
-import Card, { CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
-import Button from "@/components/ui/Button";
-import Modal from "@/components/ui/Modal";
-import LoadingSpinner from "@/components/ui/LoadingSpinner";
-import {
-  Users,
-  Receipt,
-  Plus,
-  UserPlus,
-  ArrowLeft,
-  Trash2,
-  ChevronRight,
-  DollarSign,
-} from "lucide-react";
 import Link from "next/link";
+import AppShell from "@/components/layout/AppShell";
+import Card, { CardContent } from "@/components/ui/Card";
+import Button from "@/components/ui/Button";
+import LoadingSpinner from "@/components/ui/LoadingSpinner";
+import { ArrowLeft, Plus, Settings, ChevronRight, Receipt } from "lucide-react";
 
 interface GroupMember {
   _id: string;
@@ -27,9 +17,40 @@ interface GroupMember {
     name: string;
     email: string;
     profilePicture?: string;
-  };
+  } | null;
   role: string;
   joinedAt: string;
+}
+
+interface GroupBalance {
+  userId: string;
+  userName: string;
+  balance: number;
+}
+
+interface Group {
+  _id: string;
+  name: string;
+  description?: string;
+  type: string;
+  currency: string;
+  members: GroupMember[];
+  balances?: GroupBalance[];
+  memberCount: number;
+  userRole: string;
+}
+
+interface GroupExpenseParticipant {
+  userId:
+    | string
+    | {
+        _id?: string;
+        id?: string;
+        uid?: string;
+        userId?: string;
+      };
+  paidAmount: number;
+  owedAmount: number;
 }
 
 interface GroupExpense {
@@ -39,470 +60,569 @@ interface GroupExpense {
   category: string;
   date: string;
   currency: string;
-  createdBy: {
-    _id: string;
-    name: string;
-  };
-  participants: Array<{
-    userId: string;
-    paidAmount: number;
-    owedAmount: number;
-  }>;
+  createdBy?: {
+    _id?: string;
+    name?: string;
+  } | null;
+  participants: GroupExpenseParticipant[];
 }
 
-interface Group {
-  _id: string;
-  name: string;
-  description?: string;
-  image?: string;
-  type: string;
-  currency: string;
-  createdBy: {
-    _id: string;
+interface SimplifiedDebtTransaction {
+  from: {
+    id: string;
     name: string;
   };
-  members: GroupMember[];
-  balances?: Balance[];
-  memberCount: number;
-  userRole: string;
-  createdAt: string;
+  to: {
+    id: string;
+    name: string;
+  };
+  amount: number;
 }
 
-interface Balance {
-  userId: string;
-  userName: string;
-  balance: number;
+interface SimplifiedDebtsPayload {
+  transactions: SimplifiedDebtTransaction[];
+  originalCount: number;
+  optimizedCount: number;
+  savings: number;
+  message?: string;
+}
+
+const PAGE_SIZE = 20;
+
+function extractUserId(value: unknown): string {
+  if (!value) {
+    return "";
+  }
+
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (typeof value === "object") {
+    const typed = value as {
+      _id?: string;
+      id?: string;
+      uid?: string;
+      userId?: unknown;
+    };
+
+    if (typed.userId) {
+      return extractUserId(typed.userId);
+    }
+    if (typed._id) {
+      return String(typed._id);
+    }
+    if (typed.id) {
+      return String(typed.id);
+    }
+    if (typed.uid) {
+      return String(typed.uid);
+    }
+  }
+
+  return "";
+}
+
+function toNumber(value: unknown): number {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : 0;
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
+
+function formatCurrency(amount: number, currency = "INR"): string {
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency,
+    maximumFractionDigits: 2,
+  }).format(amount);
+}
+
+function groupTypeEmoji(type: string): string {
+  if (type === "trip") return "✈️";
+  if (type === "home") return "🏠";
+  if (type === "couple") return "💑";
+  return "👥";
+}
+
+function groupTypeColor(type: string): string {
+  if (type === "trip") return "bg-primary/15";
+  if (type === "home") return "bg-info/15";
+  if (type === "couple") return "bg-coral/15";
+  return "bg-neutral-200 dark:bg-dark-bg-tertiary";
+}
+
+function getCategoryIcon(category: string): string {
+  const icons: Record<string, string> = {
+    food: "🍔",
+    transport: "🚗",
+    shopping: "🛒",
+    entertainment: "🎬",
+    bills: "📄",
+    healthcare: "⚕️",
+    travel: "✈️",
+    other: "📦",
+    rent: "🏠",
+    utilities: "💡",
+  };
+
+  return icons[category] || "📦";
 }
 
 export default function GroupDetailPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
   const params = useParams();
-  const groupId = params.id as string;
+  const groupId = String(params.id || "");
 
   const [group, setGroup] = useState<Group | null>(null);
   const [expenses, setExpenses] = useState<GroupExpense[]>([]);
-  const [balances, setBalances] = useState<Balance[]>([]);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [deleting, setDeleting] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [simplifiedDebts, setSimplifiedDebts] = useState<SimplifiedDebtsPayload | null>(null);
+  const [isReady, setIsReady] = useState(false);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setIsReady(true), 20);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  const fetchGroupDetails = async () => {
+    const response = await fetch(`/api/groups/${groupId}`, { cache: "no-store" });
+    if (!response.ok) {
+      if (response.status === 404) {
+        router.push("/groups");
+        return null;
+      }
+      throw new Error("Failed to fetch group");
+    }
+
+    const data = (await response.json()) as { group: Group };
+    setGroup(data.group || null);
+    return data.group || null;
+  };
+
+  const fetchGroupExpenses = async (page: number, append: boolean) => {
+    const response = await fetch(
+      `/api/expenses?groupId=${groupId}&limit=${PAGE_SIZE}&page=${page}`,
+      { cache: "no-store" }
+    );
+    if (!response.ok) {
+      throw new Error("Failed to fetch group expenses");
+    }
+
+    const data = (await response.json()) as {
+      expenses?: GroupExpense[];
+      pagination?: {
+        totalPages?: number;
+      };
+    };
+
+    const incomingExpenses = Array.isArray(data.expenses) ? data.expenses : [];
+    const totalPages = toNumber(data.pagination?.totalPages);
+
+    setExpenses((prev) => {
+      if (!append) {
+        return incomingExpenses;
+      }
+
+      const seen = new Set(prev.map((item) => item._id));
+      const merged = [...prev];
+      for (const expense of incomingExpenses) {
+        if (!seen.has(expense._id)) {
+          merged.push(expense);
+        }
+      }
+      return merged;
+    });
+
+    if (totalPages > 0) {
+      setHasMore(page < totalPages);
+    } else {
+      setHasMore(incomingExpenses.length >= PAGE_SIZE);
+    }
+    setCurrentPage(page);
+  };
+
+  const fetchSimplifiedDebts = async () => {
+    try {
+      const response = await fetch(`/api/groups/${groupId}/simplified-debts`, {
+        cache: "no-store",
+      });
+      if (!response.ok) {
+        setSimplifiedDebts(null);
+        return;
+      }
+
+      const data = (await response.json()) as SimplifiedDebtsPayload;
+      setSimplifiedDebts(data);
+    } catch (error) {
+      console.error("Failed to fetch simplified debts:", error);
+      setSimplifiedDebts(null);
+    }
+  };
 
   useEffect(() => {
     if (status === "unauthenticated") {
       router.push("/auth/login");
-    } else if (status === "authenticated") {
-      fetchGroupDetails();
-      fetchGroupExpenses();
+      return;
     }
+
+    if (status !== "authenticated" || !groupId) {
+      return;
+    }
+
+    let active = true;
+
+    const load = async () => {
+      setLoading(true);
+      try {
+        await Promise.all([
+          fetchGroupDetails(),
+          fetchGroupExpenses(1, false),
+          fetchSimplifiedDebts(),
+        ]);
+      } catch (error) {
+        console.error("Failed to load group details:", error);
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
+      }
+    };
+
+    void load();
+
+    return () => {
+      active = false;
+    };
+  }, [groupId, router, status]);
+
+  useEffect(() => {
+    if (status !== "authenticated") {
+      return;
+    }
+
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ domains?: string[] }>).detail;
+      const domains = detail?.domains || [];
+      if (
+        domains.includes("groups") ||
+        domains.includes("expenses") ||
+        domains.includes("settlements") ||
+        domains.includes("activity")
+      ) {
+        void fetchGroupDetails();
+        void fetchGroupExpenses(1, false);
+        void fetchSimplifiedDebts();
+      }
+    };
+
+    window.addEventListener("doosplit:data-updated", handler as EventListener);
+    return () => {
+      window.removeEventListener("doosplit:data-updated", handler as EventListener);
+    };
   }, [status, groupId]);
 
-  const fetchGroupDetails = async () => {
-    try {
-      const response = await fetch(`/api/groups/${groupId}`);
-      if (!response.ok) {
-        if (response.status === 404) {
-          router.push("/groups");
-          return;
-        }
-        throw new Error("Failed to fetch group");
-      }
-      const data = await response.json();
-      setGroup(data.group);
-      const incomingBalances = Array.isArray(data.group?.balances)
-        ? data.group.balances
-        : [];
-      if (incomingBalances.length > 0) {
-        setBalances(
-          incomingBalances.map((item: any) => ({
-            userId: String(item.userId || ""),
-            userName: String(item.userName || "Unknown"),
-            balance: Number(item.balance || 0),
-          }))
-        );
-      } else {
-        setBalances(
-          (data.group?.members || []).map((member: GroupMember) => ({
-            userId: member.userId._id,
-            userName: member.userId.name,
-            balance: 0,
-          }))
-        );
-      }
-    } catch (error) {
-      console.error("Error fetching group:", error);
+  const myBalance = useMemo(() => {
+    if (!group || !session?.user?.id) {
+      return 0;
     }
-  };
 
-  const fetchGroupExpenses = async () => {
-    setLoading(true);
-    try {
-      const response = await fetch(`/api/expenses?groupId=${groupId}&limit=10`);
-      if (response.ok) {
-        const data = await response.json();
-        setExpenses(data.expenses || []);
-      }
-    } catch (error) {
-      console.error("Error fetching expenses:", error);
-    } finally {
-      setLoading(false);
+    const match = (group.balances || []).find(
+      (balance) => String(balance.userId) === String(session.user.id)
+    );
+    return toNumber(match?.balance);
+  }, [group, session?.user?.id]);
+
+  const pairwiseLines = useMemo(() => {
+    const myId = String(session?.user?.id || "");
+    if (!myId || !simplifiedDebts?.transactions) {
+      return [];
     }
-  };
 
-  const handleDeleteGroup = async () => {
-    setDeleting(true);
-    try {
-      const response = await fetch(`/api/groups/${groupId}`, {
-        method: "DELETE",
+    const lines: string[] = [];
+    for (const tx of simplifiedDebts.transactions) {
+      if (String(tx.from.id) === myId) {
+        lines.push(`You owe ${tx.to.name} ${formatCurrency(tx.amount, group?.currency || "INR")}`);
+      } else if (String(tx.to.id) === myId) {
+        lines.push(`${tx.from.name} owes you ${formatCurrency(tx.amount, group?.currency || "INR")}`);
+      }
+    }
+
+    return lines;
+  }, [group?.currency, session?.user?.id, simplifiedDebts?.transactions]);
+
+  const monthGroups = useMemo(() => {
+    const sorted = [...expenses].sort((a, b) => {
+      return new Date(b.date).getTime() - new Date(a.date).getTime();
+    });
+
+    const grouped = new Map<string, GroupExpense[]>();
+    for (const expense of sorted) {
+      const key = new Date(expense.date).toLocaleDateString("en-IN", {
+        month: "long",
+        year: "numeric",
       });
-
-      if (!response.ok) throw new Error("Failed to delete group");
-
-      router.push("/groups");
-    } catch (error) {
-      console.error("Error deleting group:", error);
-      alert("Failed to delete group");
-    } finally {
-      setDeleting(false);
-      setShowDeleteModal(false);
+      const list = grouped.get(key) || [];
+      list.push(expense);
+      grouped.set(key, list);
     }
-  };
 
-  const handleLeaveGroup = async () => {
+    return Array.from(grouped.entries());
+  }, [expenses]);
+
+  const handleLoadMore = async () => {
+    if (!hasMore || loadingMore) {
+      return;
+    }
+
+    setLoadingMore(true);
     try {
-      const response = await fetch(`/api/groups/${groupId}/members`, {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: session?.user?.id }),
-      });
-
-      if (!response.ok) throw new Error("Failed to leave group");
-
-      router.push("/groups");
+      await fetchGroupExpenses(currentPage + 1, true);
     } catch (error) {
-      console.error("Error leaving group:", error);
-      alert("Failed to leave group");
+      console.error("Failed to load more group expenses:", error);
+    } finally {
+      setLoadingMore(false);
     }
   };
 
-  const formatCurrency = (amount: number, currency: string = "INR") => {
-    return new Intl.NumberFormat("en-IN", {
-      style: "currency",
-      currency: currency,
-    }).format(amount);
-  };
-
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    return new Intl.DateTimeFormat("en-IN", {
-      day: "numeric",
-      month: "short",
-      year: "numeric",
-    }).format(date);
-  };
-
-  const getCategoryIcon = (category: string) => {
-    const icons: Record<string, string> = {
-      food: "🍔",
-      transport: "🚗",
-      shopping: "🛒",
-      entertainment: "🎬",
-      bills: "📄",
-      healthcare: "⚕️",
-      travel: "✈️",
-      other: "📦",
-    };
-    return icons[category] || "📦";
-  };
-
-  if (loading || !group) {
+  if (loading || status === "loading" || !group) {
     return (
       <AppShell>
-        <div className="flex items-center justify-center min-h-[400px]">
+        <div className="flex min-h-[420px] items-center justify-center">
           <LoadingSpinner />
         </div>
       </AppShell>
     );
   }
 
-  const isAdmin = group.userRole === "admin";
-  const totalSpent = expenses.reduce((sum, exp) => sum + exp.amount, 0);
-
   return (
     <AppShell>
-      <div className="p-4 md:p-8 space-y-6">
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <button
-              onClick={() => router.push("/groups")}
-              className="p-2 hover:bg-neutral-100 dark:hover:bg-dark-bg-tertiary rounded-lg transition-colors"
-            >
-              <ArrowLeft className="h-5 w-5" />
-            </button>
-            <div>
-              <h1 className="text-h1 font-bold text-neutral-900 dark:text-dark-text">
-                {group.name}
-              </h1>
-              {group.description && (
-                <p className="text-body text-neutral-500 dark:text-dark-text-secondary mt-1">
-                  {group.description}
-                </p>
-              )}
-            </div>
-          </div>
-          {isAdmin && (
-            <Button
-              variant="destructive"
-              onClick={() => setShowDeleteModal(true)}
-              className="flex items-center gap-2"
-            >
-              <Trash2 className="h-4 w-4" />
-              Delete Group
-            </Button>
-          )}
-        </div>
-
-        {/* Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Card>
-            <CardContent className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-neutral-500 dark:text-dark-text-secondary">
-                  Total Spent
-                </p>
-                <p className="text-2xl font-semibold mt-1 font-mono">
-                  {formatCurrency(totalSpent, group.currency)}
-                </p>
-              </div>
-              <div className="h-12 w-12 bg-primary/10 rounded-full flex items-center justify-center">
-                <DollarSign className="h-6 w-6 text-primary" />
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-neutral-500 dark:text-dark-text-secondary">
-                  Members
-                </p>
-                <p className="text-2xl font-semibold mt-1">{group.memberCount}</p>
-              </div>
-              <div className="h-12 w-12 bg-success/10 rounded-full flex items-center justify-center">
-                <Users className="h-6 w-6 text-success" />
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-neutral-500 dark:text-dark-text-secondary">
-                  Expenses
-                </p>
-                <p className="text-2xl font-semibold mt-1">{expenses.length}</p>
-              </div>
-              <div className="h-12 w-12 bg-info/10 rounded-full flex items-center justify-center">
-                <Receipt className="h-6 w-6 text-info" />
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Actions */}
-        <div className="flex flex-wrap gap-3">
-          <Link href={`/expenses/add?groupId=${groupId}`}>
-            <Button className="flex items-center gap-2">
-              <Plus className="h-4 w-4" />
-              Add Expense
-            </Button>
+      <div
+        className={`pb-28 md:pb-8 transition-all duration-300 ${
+          isReady ? "opacity-100 translate-y-0" : "opacity-0 translate-y-1"
+        }`}
+      >
+        <div className="flex items-center justify-between px-4 pt-4">
+          <button
+            onClick={() => router.push("/groups")}
+            className="rounded-lg p-2 transition-colors hover:bg-neutral-100 dark:hover:bg-dark-bg-tertiary"
+            aria-label="Back to groups"
+          >
+            <ArrowLeft className="h-5 w-5" />
+          </button>
+          <Link
+            href={`/groups/${groupId}/settings`}
+            className="rounded-lg p-2 transition-colors hover:bg-neutral-100 dark:hover:bg-dark-bg-tertiary"
+            aria-label="Group settings"
+          >
+            <Settings className="h-5 w-5" />
           </Link>
-          {isAdmin && (
-            <Button variant="secondary" className="flex items-center gap-2">
-              <UserPlus className="h-4 w-4" />
-              Invite Members
-            </Button>
-          )}
-          {!isAdmin && (
-            <Button
-              variant="destructive"
-              onClick={handleLeaveGroup}
-              className="flex items-center gap-2"
-            >
-              Leave Group
-            </Button>
+        </div>
+
+        <div className="flex items-center gap-4 px-4 py-3">
+          <div
+            className={`h-16 w-16 rounded-2xl text-3xl flex items-center justify-center ${groupTypeColor(
+              group.type
+            )}`}
+          >
+            {groupTypeEmoji(group.type)}
+          </div>
+          <div>
+            <h1 className="font-display text-h1 font-bold text-neutral-900 dark:text-dark-text">
+              {group.name}
+            </h1>
+            {group.description && (
+              <p className="text-sm text-neutral-500 dark:text-dark-text-secondary">
+                {group.description}
+              </p>
+            )}
+          </div>
+        </div>
+
+        <div className="flex gap-2 overflow-x-auto px-4 pb-1">
+          <span className="shrink-0 rounded-full bg-neutral-100 px-3 py-1 text-xs font-medium text-neutral-600 dark:bg-dark-bg-tertiary dark:text-dark-text-secondary">
+            {group.memberCount} people
+          </span>
+          <span className="shrink-0 rounded-full bg-neutral-100 px-3 py-1 text-xs font-medium capitalize text-neutral-600 dark:bg-dark-bg-tertiary dark:text-dark-text-secondary">
+            {group.type} group
+          </span>
+          {group.description && (
+            <span className="max-w-[220px] truncate rounded-full bg-neutral-100 px-3 py-1 text-xs font-medium text-neutral-600 dark:bg-dark-bg-tertiary dark:text-dark-text-secondary">
+              {group.description}
+            </span>
           )}
         </div>
 
-        {/* Members */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Members ({group.memberCount})</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              {group.members.map((member) => (
+        <div className="mx-4 mt-4 rounded-2xl bg-navy p-4 text-white relative overflow-hidden">
+          <div
+            className="absolute inset-0"
+            style={{
+              background:
+                "radial-gradient(ellipse at 20% 50%, rgba(0,184,169,0.25), transparent 60%)",
+            }}
+          />
+          <p className="relative text-sm text-white/65">Your balance</p>
+          <p
+            className={`relative mt-1 text-2xl md:text-3xl font-bold font-mono ${
+              myBalance < 0
+                ? "text-coral"
+                : myBalance > 0
+                ? "text-primary"
+                : "text-white"
+            }`}
+          >
+            {myBalance < -0.01
+              ? `You owe ${formatCurrency(Math.abs(myBalance), group.currency)}`
+              : myBalance > 0.01
+              ? `You are owed ${formatCurrency(myBalance, group.currency)}`
+              : "You are settled up"}
+          </p>
+
+          <div className="relative mt-3 space-y-1">
+            {pairwiseLines.length > 0 ? (
+              pairwiseLines.slice(0, 4).map((line) => (
+                <p key={line} className="text-sm text-white/80">
+                  {line}
+                </p>
+              ))
+            ) : (
+              <p className="text-sm text-white/70">No individual balances pending right now.</p>
+            )}
+          </div>
+        </div>
+
+        <div className="mx-4 mt-3">
+          <Link href={`/settlements?groupId=${groupId}`}>
+            <Button className="w-full">Settle Up</Button>
+          </Link>
+        </div>
+
+        <div className="mx-4 mt-5 rounded-2xl border border-neutral-200 bg-white p-4 dark:border-dark-border dark:bg-dark-bg-secondary">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-neutral-900 dark:text-dark-text">Expenses</h2>
+            <Link href={`/expenses/add?groupId=${groupId}`} className="hidden md:block">
+              <Button size="sm">
+                <Plus className="mr-1 h-4 w-4" />
+                Add expense
+              </Button>
+            </Link>
+          </div>
+
+          {monthGroups.length === 0 ? (
+            <div className="py-10 text-center">
+              <Receipt className="mx-auto mb-3 h-10 w-10 text-neutral-300" />
+              <p className="text-sm text-neutral-500 dark:text-dark-text-secondary">
+                No expenses yet in this group.
+              </p>
+              <Link href={`/expenses/add?groupId=${groupId}`} className="mt-4 inline-block">
+                <Button>Add first expense</Button>
+              </Link>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              {monthGroups.map(([month, monthExpenses], monthIndex) => (
                 <div
-                  key={member._id}
-                  className="flex items-center justify-between py-2 border-b border-neutral-200 dark:border-dark-border last:border-0"
+                  key={month}
+                  className="transition-all duration-300"
+                  style={{ transitionDelay: `${Math.min(monthIndex * 60, 240)}ms` }}
                 >
-                  <div className="flex items-center gap-3">
-                    <div className="h-10 w-10 rounded-full bg-primary/20 flex items-center justify-center">
-                      <span className="text-primary font-semibold">
-                        {member.userId.name.charAt(0).toUpperCase()}
-                      </span>
-                    </div>
-                    <div>
-                      <p className="font-medium text-neutral-900 dark:text-dark-text">
-                        {member.userId.name}
-                        {member.userId._id === session?.user?.id && " (You)"}
-                      </p>
-                      <p className="text-sm text-neutral-500">{member.userId.email}</p>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <p
-                      className={`text-xs px-2 py-1 rounded ${
-                        member.role === "admin"
-                          ? "bg-primary/10 text-primary"
-                          : "bg-neutral-100 dark:bg-dark-bg-tertiary text-neutral-600 dark:text-dark-text-secondary"
-                      }`}
-                    >
-                      {member.role}
-                    </p>
+                  <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-dark-text-secondary">
+                    {month}
+                  </h3>
+
+                  <div className="divide-y divide-neutral-200 dark:divide-dark-border">
+                    {monthExpenses.map((expense) => {
+                      const date = new Date(expense.date);
+                      const monthShort = date.toLocaleDateString("en-IN", { month: "short" });
+                      const day = date.toLocaleDateString("en-IN", { day: "2-digit" });
+
+                      const myParticipant = (expense.participants || []).find(
+                        (participant) =>
+                          extractUserId(participant.userId) === String(session?.user?.id || "")
+                      );
+
+                      const myPaid = toNumber(myParticipant?.paidAmount);
+                      const myOwed = toNumber(myParticipant?.owedAmount);
+                      const net = myPaid - myOwed;
+
+                      return (
+                        <Link
+                          key={expense._id}
+                          href={`/expenses/edit/${expense._id}`}
+                          className="-mx-2 flex items-center gap-3 rounded-xl px-2 py-3 transition-all duration-200 hover:bg-neutral-50 hover:translate-x-0.5 dark:hover:bg-dark-bg-tertiary"
+                        >
+                          <div className="w-10 shrink-0 text-center">
+                            <p className="text-[10px] uppercase tracking-wide text-neutral-400">{monthShort}</p>
+                            <p className="text-sm font-semibold text-neutral-700 dark:text-dark-text-secondary">
+                              {day}
+                            </p>
+                          </div>
+
+                          <div className="h-10 w-10 shrink-0 rounded-xl bg-neutral-100 text-xl flex items-center justify-center dark:bg-dark-bg-tertiary">
+                            {getCategoryIcon(expense.category)}
+                          </div>
+
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate font-medium text-neutral-900 dark:text-dark-text">
+                              {expense.description}
+                            </p>
+                            <p className="text-xs text-neutral-500 dark:text-dark-text-secondary">
+                              {expense.createdBy?.name || "Someone"} paid {formatCurrency(expense.amount, expense.currency)}
+                            </p>
+                          </div>
+
+                          <div className="shrink-0 text-right">
+                            <p
+                              className={`text-xs ${
+                                net >= 0 ? "text-neutral-500 dark:text-dark-text-secondary" : "text-coral"
+                              }`}
+                            >
+                              {net >= 0 ? "you lent" : "you borrowed"}
+                            </p>
+                            <p
+                              className={`text-sm font-semibold font-mono ${
+                                net >= 0 ? "text-primary" : "text-coral"
+                              }`}
+                            >
+                              {formatCurrency(Math.abs(net), expense.currency)}
+                            </p>
+                          </div>
+
+                          <ChevronRight className="h-4 w-4 shrink-0 text-neutral-400" />
+                        </Link>
+                      );
+                    })}
                   </div>
                 </div>
               ))}
-            </div>
-          </CardContent>
-        </Card>
 
-        {/* Member Balances */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Member Balances</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {balances.length === 0 ? (
-              <p className="text-sm text-neutral-500 dark:text-dark-text-secondary">
-                No balance data available.
-              </p>
-            ) : (
-              <div className="space-y-3">
-                {balances
-                  .slice()
-                  .sort((a, b) => Math.abs(b.balance) - Math.abs(a.balance))
-                  .map((entry) => {
-                    const isCurrentUser = entry.userId === session?.user?.id;
-                    return (
-                      <div
-                        key={entry.userId}
-                        className="flex items-center justify-between py-2 border-b border-neutral-200 dark:border-dark-border last:border-0"
-                      >
-                        <p className="text-sm font-medium text-neutral-900 dark:text-dark-text">
-                          {entry.userName}
-                          {isCurrentUser ? " (You)" : ""}
-                        </p>
-                        <p
-                          className={`text-sm font-semibold ${
-                            entry.balance > 0
-                              ? "text-green-600 dark:text-green-400"
-                              : entry.balance < 0
-                              ? "text-red-600 dark:text-red-400"
-                              : "text-neutral-500 dark:text-dark-text-secondary"
-                          }`}
-                        >
-                          {entry.balance === 0
-                            ? "Settled"
-                            : `${formatCurrency(Math.abs(entry.balance), group.currency)} ${entry.balance > 0 ? "to receive" : "to pay"}`}
-                        </p>
-                      </div>
-                    );
-                  })}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Recent Expenses */}
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardTitle>Recent Expenses</CardTitle>
-              <Link href={`/expenses?groupId=${groupId}`}>
-                <Button variant="secondary" size="sm">
-                  View All
-                </Button>
-              </Link>
+              {hasMore && (
+                <div className="pt-1 text-center">
+                  <Button variant="secondary" onClick={handleLoadMore} disabled={loadingMore}>
+                    {loadingMore ? "Loading..." : "Load older expenses"}
+                  </Button>
+                </div>
+              )}
             </div>
-          </CardHeader>
-          <CardContent>
-            {expenses.length === 0 ? (
-              <div className="text-center py-12">
-                <Receipt className="h-12 w-12 mx-auto mb-3 opacity-50" />
-                <p className="text-body text-neutral-500 dark:text-dark-text-secondary">
-                  No expenses yet
-                </p>
-                <Link href={`/expenses/add?groupId=${groupId}`} className="inline-block mt-4">
-                  <Button>Add First Expense</Button>
-                </Link>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {expenses.map((expense) => (
-                  <Link
-                    key={expense._id}
-                    href={`/expenses/edit/${expense._id}`}
-                    className="flex items-center justify-between py-3 border-b border-neutral-200 dark:border-dark-border last:border-0 hover:bg-neutral-50 dark:hover:bg-dark-bg-tertiary rounded px-2 transition-colors"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="text-2xl">{getCategoryIcon(expense.category)}</div>
-                      <div>
-                        <p className="font-medium text-neutral-900 dark:text-dark-text">
-                          {expense.description}
-                        </p>
-                        <p className="text-sm text-neutral-500">
-                          Paid by {expense.createdBy.name} • {formatDate(expense.date)}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <p className="text-lg font-semibold text-neutral-900 dark:text-dark-text font-mono">
-                        {formatCurrency(expense.amount, expense.currency)}
-                      </p>
-                      <ChevronRight className="h-4 w-4 text-neutral-400" />
-                    </div>
-                  </Link>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Delete Confirmation Modal */}
-        <Modal
-          isOpen={showDeleteModal}
-          onClose={() => setShowDeleteModal(false)}
-          title="Delete Group"
-        >
-          <div className="space-y-4">
-            <p className="text-body text-neutral-600 dark:text-dark-text-secondary">
-              Are you sure you want to delete &quot;{group.name}&quot;? This action cannot be undone and
-              all group data will be permanently deleted.
-            </p>
-            <div className="flex gap-3 justify-end">
-              <Button
-                variant="secondary"
-                onClick={() => setShowDeleteModal(false)}
-                disabled={deleting}
-              >
-                Cancel
-              </Button>
-              <Button variant="destructive" onClick={handleDeleteGroup} disabled={deleting}>
-                {deleting ? "Deleting..." : "Delete Group"}
-              </Button>
-            </div>
-          </div>
-        </Modal>
+          )}
+        </div>
       </div>
+
+      <Link
+        href={`/expenses/add?groupId=${groupId}`}
+        className="fixed bottom-24 right-4 z-40 flex items-center gap-2 rounded-2xl bg-primary px-4 py-3 text-sm font-medium text-white shadow-xl transition-all duration-300 hover:bg-primary-dark md:hidden"
+      >
+        <Plus className="h-5 w-5" />
+        Add expense
+      </Link>
     </AppShell>
   );
 }

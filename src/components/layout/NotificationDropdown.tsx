@@ -217,7 +217,7 @@ export default function NotificationDropdown() {
               </div>
             ) : notifications.length === 0 ? (
               <div className="text-center py-8">
-                <Bell className="h-12 w-12 mx-auto text-neutral-300 mb-2" />
+                <Bell className="h-12 w-12 mx-auto text-neutral-300 dark:text-dark-text-tertiary mb-2" />
                 <p className="text-sm text-neutral-500 dark:text-dark-text-secondary">
                   No notifications yet
                 </p>
@@ -228,7 +228,7 @@ export default function NotificationDropdown() {
                   <div
                     key={notification._id}
                     className={`p-4 border-b border-neutral-200 dark:border-dark-border hover:bg-neutral-50 dark:hover:bg-dark-bg-tertiary transition-colors ${
-                      !notification.isRead ? "bg-primary/5" : ""
+                      !notification.isRead ? "bg-primary/5 dark:bg-primary/10" : ""
                     }`}
                   >
                     <div className="flex items-start gap-3">

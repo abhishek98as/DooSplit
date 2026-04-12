@@ -8,6 +8,7 @@ import {
 import { requireUser } from "@/lib/auth/require-user";
 import { notifyFriendAccepted } from "@/lib/notificationService";
 import { getAdminDb } from "@/lib/firestore/admin";
+import { logFriendAdded, logFriendRemoved } from "@/lib/activity-logger";
 import {
   deleteBidirectionalFriendship,
   getFriendshipStatus,
@@ -395,19 +396,38 @@ export async function PUT(
         requestedBy: requesterId,
       });
 
+      let currentUserName = auth.user.name || "Someone";
+      let requesterName = "Someone";
+
       try {
         const db = getAdminDb();
-        const userDoc = await db.collection("users").doc(currentUserId).get();
+        const [userDoc, requesterDoc] = await Promise.all([
+          db.collection("users").doc(currentUserId).get(),
+          db.collection("users").doc(requesterId).get(),
+        ]);
+
+        currentUserName =
+          String(userDoc.data()?.name || "").trim() || currentUserName;
+        requesterName =
+          String(requesterDoc.data()?.name || "").trim() || requesterName;
+
         await notifyFriendAccepted(
           {
             id: currentUserId,
-            name: String(userDoc.data()?.name || auth.user.name || "Someone"),
+            name: currentUserName,
           },
           requesterId
         );
       } catch (notifError) {
         console.error("Failed to send friend acceptance notification:", notifError);
       }
+
+      void logFriendAdded({
+        userId: currentUserId,
+        userName: currentUserName,
+        friendId: requesterId,
+        friendName: requesterName,
+      });
 
       await invalidateUsersCache(
         [currentUserId, requesterId],
@@ -482,7 +502,25 @@ export async function DELETE(
 
     const friendId =
       sourceUserId === currentUserId ? sourceFriendId : sourceUserId;
+
+    const db = getAdminDb();
+    const [currentUserDoc, friendDoc] = await Promise.all([
+      db.collection("users").doc(currentUserId).get(),
+      db.collection("users").doc(friendId).get(),
+    ]);
+
+    const currentUserName =
+      String(currentUserDoc.data()?.name || "").trim() || auth.user.name || "Someone";
+    const friendName = String(friendDoc.data()?.name || "").trim() || "Someone";
+
     await deleteBidirectionalFriendship(currentUserId, friendId);
+
+    void logFriendRemoved({
+      userId: currentUserId,
+      userName: currentUserName,
+      friendId,
+      friendName,
+    });
 
     await invalidateUsersCache(
       [currentUserId, friendId],

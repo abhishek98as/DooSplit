@@ -11,6 +11,7 @@ import { getServerFirebaseUser } from "@/lib/auth/firebase-session";
 import { createSettlementInFirestore } from "@/lib/firestore/write-operations";
 import { notifySettlement } from "@/lib/notificationService";
 import { getAdminDb } from "@/lib/firestore/admin";
+import { logSettlementAdded } from "@/lib/activity-logger";
 
 export const dynamic = "force-dynamic";
 export const preferredRegion = "iad1";
@@ -120,16 +121,25 @@ export async function POST(request: NextRequest) {
       new Set([String(fromUserId), String(toUserId), String(userId)].filter(Boolean))
     );
 
+    let fromUserName = "Someone";
+    let toUserName = "Someone";
+    let groupName: string | null = null;
+
     try {
       const db = getAdminDb();
-      const [fromUserDoc, toUserDoc] = await Promise.all([
+      const [fromUserDoc, toUserDoc, groupDoc] = await Promise.all([
         db.collection("users").doc(String(fromUserId)).get(),
         db.collection("users").doc(String(toUserId)).get(),
+        groupId
+          ? db.collection("groups").doc(String(groupId)).get()
+          : Promise.resolve(null),
       ]);
 
-      const fromUserName =
-        String(fromUserDoc.data()?.name || "").trim() || "Someone";
-      const toUserName = String(toUserDoc.data()?.name || "").trim() || "Someone";
+      fromUserName = String(fromUserDoc.data()?.name || "").trim() || fromUserName;
+      toUserName = String(toUserDoc.data()?.name || "").trim() || toUserName;
+      groupName = groupDoc
+        ? String(groupDoc.data()?.name || "").trim() || null
+        : null;
 
       await notifySettlement(
         settlementId,
@@ -142,6 +152,20 @@ export async function POST(request: NextRequest) {
     } catch (notificationError) {
       console.error("Failed to send settlement notification:", notificationError);
     }
+
+    void logSettlementAdded({
+      actorId: userId,
+      actorName: auth.user.name || fromUserName,
+      settlementId,
+      fromUserId: String(fromUserId),
+      fromUserName,
+      toUserId: String(toUserId),
+      toUserName,
+      amount: numericAmount,
+      currency: settlementData.currency,
+      groupId: groupId ? String(groupId) : null,
+      groupName,
+    });
 
     await invalidateUsersCache(affectedUserIds, [
       "settlements",

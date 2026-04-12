@@ -11,7 +11,8 @@ import { firestore, https, logger, scheduler } from "firebase-functions/v2";
 
 initializeApp();
 
-const db = getFirestore();
+const FIRESTORE_DATABASE_ID = "doosplit";
+const db = getFirestore(FIRESTORE_DATABASE_ID);
 const messaging = getMessaging();
 const REGION = "asia-south1";
 
@@ -152,7 +153,7 @@ async function sendPushToUsers(
         notification: {
           title: payload.title,
           body: payload.body,
-          icon: "/logo.webp",
+          icon: "/api/pwa/icon?size=192",
         },
       },
     });
@@ -259,7 +260,7 @@ function mapUserName(snapshot: QueryDocumentSnapshot<DocumentData>): string {
 }
 
 export const expenseActivityPush = firestore.onDocumentCreated(
-  { document: "expenses/{expenseId}", region: REGION },
+  { document: "expenses/{expenseId}", region: REGION, database: FIRESTORE_DATABASE_ID },
   async (event) => {
     const snapshot = event.data;
     if (!snapshot) {
@@ -318,7 +319,7 @@ export const expenseActivityPush = firestore.onDocumentCreated(
 );
 
 export const settlementActivityPush = firestore.onDocumentCreated(
-  { document: "settlements/{settlementId}", region: REGION },
+  { document: "settlements/{settlementId}", region: REGION, database: FIRESTORE_DATABASE_ID },
   async (event) => {
     const snapshot = event.data;
     if (!snapshot) {

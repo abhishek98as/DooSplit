@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useSession } from "@/lib/auth/react-session";
 import { Button, Card, Input } from "@/components/ui";
+import BrandLogo from "@/components/ui/BrandLogo";
 import AppShell from "@/components/layout/AppShell";
 import {
   Copy,
@@ -11,7 +12,6 @@ import {
   MessageCircle,
   Check,
   Send,
-  UserPlus,
   Clock,
   CheckCircle2,
   Link2,
@@ -278,7 +278,7 @@ export default function InvitePage() {
       {/* Page header */}
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-neutral-900 dark:text-dark-text mb-2 flex items-center gap-3">
-          <UserPlus className="h-7 w-7 text-primary" />
+          <BrandLogo size={28} className="h-7 w-7 rounded-lg" />
           Invite Friends
         </h1>
         <p className="text-neutral-600 dark:text-dark-text-secondary">

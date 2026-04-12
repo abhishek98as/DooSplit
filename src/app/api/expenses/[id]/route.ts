@@ -16,6 +16,12 @@ import {
 import { requireUser } from "@/lib/auth/require-user";
 import { FieldValue, getAdminDb } from "@/lib/firestore/admin";
 import { EXPENSE_MUTATION_CACHE_SCOPES } from "@/lib/cache-scopes";
+import { logActivity, logExpenseDeleted, logExpenseUpdated } from "@/lib/activity-logger";
+import {
+  getPaymentStatusLabel,
+  isPaymentStatus,
+  normalizePaymentStatus,
+} from "@/lib/expenses/payment-status";
 import {
   fetchDocsByIds,
   logSlowRoute,
@@ -83,6 +89,68 @@ async function buildExpenseResponse(expenseId: string) {
   ]);
   const usersMap = await fetchDocsByIds("users", userIds);
 
+  const db = getAdminDb();
+  const commentsSnap = await db
+    .collection("expense_comments")
+    .where("expense_id", "==", expenseId)
+    .orderBy("created_at", "desc")
+    .limit(200)
+    .get();
+
+  const commentRows = commentsSnap.docs.map((doc) => ({
+    id: doc.id,
+    ...(doc.data() || {}),
+  }));
+
+  const commentUserIds = uniqueStrings(
+    commentRows.map((comment: any) => String(comment.created_by || ""))
+  );
+  const commentUsersMap = await fetchDocsByIds("users", commentUserIds);
+
+  const comments = commentRows.map((comment: any) => ({
+    _id: String(comment.id || ""),
+    expenseId: String(comment.expense_id || ""),
+    message: String(comment.message || ""),
+    mentions: Array.isArray(comment.mentions) ? comment.mentions : [],
+    createdBy: mapUser(commentUsersMap.get(String(comment.created_by || ""))),
+    createdAt: toIso(comment.created_at || comment._created_at),
+    updatedAt: toIso(comment.updated_at || comment._updated_at),
+  }));
+
+  const editHistoryRaw = Array.isArray(expense.edit_history) ? expense.edit_history : [];
+  const editHistory = editHistoryRaw.map((entry: any, index: number) => ({
+    _id: String(entry.id || `${expenseId}_edit_${index}`),
+    type: "edit_note",
+    message: String(entry.changes || "Updated"),
+    createdBy: mapUser(usersMap.get(String(entry.editedBy || ""))),
+    createdAt: toIso(entry.editedAt),
+    metadata: {
+      editedBy: String(entry.editedBy || ""),
+      diff: entry.diff || null,
+    },
+  }));
+
+  const discussionThread = [...comments.map((comment) => ({
+    _id: comment._id,
+    type: "comment",
+    message: comment.message,
+    mentions: comment.mentions,
+    createdBy: comment.createdBy,
+    createdAt: comment.createdAt,
+  })), ...editHistory.map((entry: any) => ({
+    _id: entry._id,
+    type: entry.type,
+    message: entry.message,
+    createdBy: entry.createdBy,
+    createdAt: entry.createdAt,
+    metadata: entry.metadata,
+  }))]
+    .sort((a: any, b: any) => {
+      const left = new Date(a.createdAt || 0).getTime();
+      const right = new Date(b.createdAt || 0).getTime();
+      return right - left;
+    });
+
   let group: { _id: string; name: string; image: string | null } | null = null;
   if (expense.group_id) {
     const groupRows = await fetchDocsByIds("groups", [String(expense.group_id)]);
@@ -109,6 +177,7 @@ async function buildExpenseResponse(expenseId: string) {
   const creator = usersMap.get(String(expense.created_by || ""));
   const createdAt = toIso(expense.created_at || expense._created_at);
   const updatedAt = toIso(expense.updated_at || expense._updated_at);
+  const paymentStatus = normalizePaymentStatus(expense.payment_status, "unpaid");
   const versionVector = {
     version: 1,
     lastModified: updatedAt || createdAt,
@@ -127,8 +196,11 @@ async function buildExpenseResponse(expenseId: string) {
       groupId: group,
       images: Array.isArray(expense.images) ? expense.images : [],
       notes: expense.notes || "",
+      paymentStatus,
       isDeleted: Boolean(expense.is_deleted),
-      editHistory: Array.isArray(expense.edit_history) ? expense.edit_history : [],
+      editHistory: editHistoryRaw,
+      comments,
+      discussionThread,
       createdAt,
       updatedAt,
       participants: mappedParticipants,
@@ -215,6 +287,7 @@ export async function PUT(
       splitMethod,
       paidBy,
       participants,
+      paymentStatus,
     } = body || {};
 
     const expense = await getExpenseRow(id);
@@ -267,28 +340,116 @@ export async function PUT(
 
     const previousParticipants = await getExpenseParticipants(id);
 
+    const nowIso = new Date().toISOString();
     const changes: string[] = [];
+    const diff: Record<string, { before: any; after: any }> = {};
+
     if (amount !== undefined && Number(amount) !== toNum(expense.amount)) {
       changes.push(`amount: ${toNum(expense.amount)} -> ${Number(amount)}`);
+      diff.amount = {
+        before: toNum(expense.amount),
+        after: Number(amount),
+      };
     }
     if (description !== undefined && String(description) !== String(expense.description)) {
       changes.push("description updated");
+      diff.description = {
+        before: String(expense.description || ""),
+        after: String(description),
+      };
     }
     if (category !== undefined && String(category) !== String(expense.category)) {
       changes.push(`category: ${expense.category} -> ${category}`);
+      diff.category = {
+        before: String(expense.category || "other"),
+        after: String(category),
+      };
     }
     if (date !== undefined) {
+      const previousDate = toIso(expense.date || expense.created_at || expense._created_at);
+      const nextDate = toIso(new Date(date).toISOString());
+      if (previousDate !== nextDate) {
+        diff.date = {
+          before: previousDate,
+          after: nextDate,
+        };
+      }
       changes.push("date updated");
+    }
+    if (currency !== undefined && String(currency) !== String(expense.currency || "INR")) {
+      changes.push(`currency: ${String(expense.currency || "INR")} -> ${String(currency)}`);
+      diff.currency = {
+        before: String(expense.currency || "INR"),
+        after: String(currency),
+      };
+    }
+    if (groupId !== undefined && String(groupId || "") !== String(expense.group_id || "")) {
+      changes.push("group updated");
+      diff.groupId = {
+        before: String(expense.group_id || ""),
+        after: String(groupId || ""),
+      };
+    }
+    if (notes !== undefined && String(notes || "") !== String(expense.notes || "")) {
+      changes.push("notes updated");
+      diff.notes = {
+        before: String(expense.notes || ""),
+        after: String(notes || ""),
+      };
+    }
+    if (images !== undefined) {
+      const previousImages = Array.isArray(expense.images) ? expense.images : [];
+      const nextImages = Array.isArray(images) ? images : [];
+      if (JSON.stringify(previousImages) !== JSON.stringify(nextImages)) {
+        changes.push("attachments updated");
+        diff.images = {
+          before: previousImages,
+          after: nextImages,
+        };
+      }
+    }
+    if (
+      paymentStatus !== undefined &&
+      isPaymentStatus(paymentStatus) &&
+      paymentStatus !== normalizePaymentStatus(expense.payment_status, "unpaid")
+    ) {
+      changes.push(
+        `payment status: ${normalizePaymentStatus(expense.payment_status, "unpaid")} -> ${paymentStatus}`
+      );
+      diff.paymentStatus = {
+        before: normalizePaymentStatus(expense.payment_status, "unpaid"),
+        after: paymentStatus,
+      };
+    }
+
+    if (splitMethod && participants) {
+      diff.splitMethod = {
+        before: String(expense.split_method || "equally"),
+        after: String(splitMethod),
+      };
+      diff.participants = {
+        before: previousParticipants.map((participant: any) => ({
+          userId: String(participant.user_id || ""),
+          paidAmount: Number(participant.paid_amount || 0),
+          owedAmount: Number(participant.owed_amount || 0),
+        })),
+        after: participants.map((participant: any) => ({
+          userId: toStringId(participant.userId || participant),
+          paidAmount: Number(participant.paidAmount || 0),
+          owedAmount: Number(participant.owedAmount || participant.exactAmount || 0),
+        })),
+      };
     }
 
     const editHistory = Array.isArray(expense.edit_history) ? [...expense.edit_history] : [];
     editHistory.push({
-      editedAt: new Date().toISOString(),
+      id: newAppId(),
+      editedAt: nowIso,
       editedBy: currentUserId,
       changes: changes.length > 0 ? changes.join(", ") : "Updated",
+      diff,
     });
 
-    const nowIso = new Date().toISOString();
     const updatePayload: Record<string, any> = {
       edit_history: editHistory,
       updated_at: nowIso,
@@ -302,6 +463,17 @@ export async function PUT(
     if (groupId !== undefined) updatePayload.group_id = groupId ? String(groupId) : null;
     if (images !== undefined) updatePayload.images = Array.isArray(images) ? images : [];
     if (notes !== undefined) updatePayload.notes = notes ? String(notes) : "";
+    if (paymentStatus !== undefined) {
+      if (!isPaymentStatus(paymentStatus)) {
+        return NextResponse.json(
+          { error: "Invalid payment status" },
+          { status: 400 }
+        );
+      }
+      updatePayload.payment_status = paymentStatus;
+      updatePayload.payment_status_updated_at = nowIso;
+      updatePayload.payment_status_updated_by = currentUserId;
+    }
 
     await db.collection("expenses").doc(id).set(updatePayload, { merge: true });
 
@@ -388,15 +560,22 @@ export async function PUT(
     const participantIds = responsePayload.expense.participants
       .map((participant: any) => participant.userId?._id)
       .filter(Boolean);
+    const normalizedParticipantIds = participantIds
+      .map((participantId: any) => String(participantId || ""))
+      .filter(Boolean);
+
+    let updaterName = auth.user.name || "Someone";
 
     try {
       const updaterDoc = await db.collection("users").doc(currentUserId).get();
+      updaterName =
+        String(updaterDoc.data()?.name || "").trim() || updaterName;
       await notifyExpenseUpdated(
         responsePayload.expense._id,
         responsePayload.expense.description,
         {
           id: currentUserId,
-          name: updaterDoc.data()?.name || "Someone",
+          name: updaterName,
         },
         participantIds
       );
@@ -404,10 +583,21 @@ export async function PUT(
       console.error("Failed to send notifications:", notifError);
     }
 
+    void logExpenseUpdated({
+      actorId: currentUserId,
+      actorName: updaterName,
+      expenseId: String(responsePayload.expense._id || id),
+      description: String(responsePayload.expense.description || "Expense"),
+      amount: Number(responsePayload.expense.amount || 0),
+      currency: String(responsePayload.expense.currency || "INR"),
+      participantIds: normalizedParticipantIds,
+      diff,
+    });
+
     const affectedUserIds = uniqueStrings([
       currentUserId,
       ...previousParticipants.map((participant: any) => String(participant.user_id || "")),
-      ...participantIds.map((participantId: any) => String(participantId || "")),
+      ...normalizedParticipantIds,
     ]);
 
     await invalidateUsersCache(affectedUserIds, [...EXPENSE_MUTATION_CACHE_SCOPES]);
@@ -431,6 +621,138 @@ export async function PUT(
     console.error("Update expense error:", error);
     return NextResponse.json(
       { error: error.message || "Failed to update expense" },
+      { status: 500 }
+    );
+  }
+}
+
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const routeStart = Date.now();
+    const { id } = await params;
+    const auth = await requireUser(request);
+    if (auth.response || !auth.user) {
+      return auth.response as NextResponse;
+    }
+    const currentUserId = auth.user.id;
+    const db = getAdminDb();
+
+    const body = await request.json();
+    const nextStatus = body?.paymentStatus;
+    if (!isPaymentStatus(nextStatus)) {
+      return NextResponse.json(
+        { error: "Invalid payment status" },
+        { status: 400 }
+      );
+    }
+
+    const expense = await getExpenseRow(id);
+    if (!expense) {
+      return NextResponse.json({ error: "Expense not found" }, { status: 404 });
+    }
+
+    const participantCheck = await isExpenseParticipant(id, currentUserId);
+    if (!participantCheck) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    const previousStatus = normalizePaymentStatus(expense.payment_status, "unpaid");
+    if (previousStatus === nextStatus) {
+      const payload = await buildExpenseResponse(id);
+      const routeMs = logSlowRoute("/api/expenses/[id]#PATCH", routeStart);
+      return NextResponse.json(
+        {
+          message: "Payment status unchanged",
+          expense: payload.expense,
+        },
+        {
+          status: 200,
+          headers: {
+            ETag: payload.etag,
+            "X-Version-Vector": JSON.stringify(payload.versionVector),
+            "X-Doosplit-Route-Ms": String(routeMs),
+          },
+        }
+      );
+    }
+
+    const nowIso = new Date().toISOString();
+    const editHistory = Array.isArray(expense.edit_history) ? [...expense.edit_history] : [];
+    editHistory.push({
+      id: newAppId(),
+      editedAt: nowIso,
+      editedBy: currentUserId,
+      changes: `payment status: ${previousStatus} -> ${nextStatus}`,
+      diff: {
+        paymentStatus: {
+          before: previousStatus,
+          after: nextStatus,
+        },
+      },
+    });
+
+    await db.collection("expenses").doc(id).set(
+      {
+        payment_status: nextStatus,
+        payment_status_updated_at: nowIso,
+        payment_status_updated_by: currentUserId,
+        edit_history: editHistory,
+        updated_at: nowIso,
+        _updated_at: FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+
+    const participants = await getExpenseParticipants(id);
+    const affectedUserIds = uniqueStrings([
+      currentUserId,
+      ...participants.map((participant: any) => String(participant.user_id || "")),
+    ]);
+
+    const actorDoc = await db.collection("users").doc(currentUserId).get();
+    const actorName =
+      String(actorDoc.data()?.name || "").trim() || auth.user.name || "Someone";
+
+    void logActivity({
+      userIds: affectedUserIds,
+      actorId: currentUserId,
+      actorName,
+      type: "expense_updated",
+      title: "Payment Status Updated",
+      description: `${actorName} marked "${String(expense.description || "Expense")}" as ${getPaymentStatusLabel(nextStatus)}`,
+      metadata: {
+        expenseId: String(expense.id || id),
+        expenseDescription: String(expense.description || "Expense"),
+        previousPaymentStatus: previousStatus,
+        paymentStatus: nextStatus,
+      },
+    });
+
+    await invalidateUsersCache(affectedUserIds, [...EXPENSE_MUTATION_CACHE_SCOPES]);
+
+    const payload = await buildExpenseResponse(id);
+    const routeMs = logSlowRoute("/api/expenses/[id]#PATCH", routeStart);
+    return NextResponse.json(
+      {
+        message: "Payment status updated successfully",
+        expense: payload.expense,
+      },
+      {
+        status: 200,
+        headers: {
+          ETag: payload.etag,
+          "X-Version-Vector": JSON.stringify(payload.versionVector),
+          "X-Doosplit-Route-Ms": String(routeMs),
+        },
+      }
+    );
+  } catch (error: any) {
+    console.error("Update payment status error:", error);
+    return NextResponse.json(
+      { error: "Failed to update payment status" },
       { status: 500 }
     );
   }
@@ -464,6 +786,9 @@ export async function DELETE(
     }
 
     const participants = await getExpenseParticipants(id);
+    const participantUserIds = (participants || [])
+      .map((participant: any) => String(participant.user_id || ""))
+      .filter(Boolean);
     const nowIso = new Date().toISOString();
     await db.collection("expenses").doc(id).set(
       {
@@ -491,20 +816,45 @@ export async function DELETE(
       await participantBatch.commit();
     }
 
+    let deleterName = auth.user.name || "Someone";
+
     try {
       const deleterDoc = await db.collection("users").doc(currentUserId).get();
+      deleterName =
+        String(deleterDoc.data()?.name || "").trim() || deleterName;
       await notifyExpenseDeleted(
         String(expense.description || "Expense"),
-        { id: currentUserId, name: deleterDoc.data()?.name || "Someone" },
-        (participants || []).map((participant: any) => String(participant.user_id || ""))
+        { id: currentUserId, name: deleterName },
+        participantUserIds
       );
     } catch (notifError) {
       console.error("Failed to send notifications:", notifError);
     }
 
+    void logExpenseDeleted({
+      actorId: currentUserId,
+      actorName: deleterName,
+      expenseId: String(expense.id || id),
+      description: String(expense.description || "Expense"),
+      amount: toNum(expense.amount),
+      currency: String(expense.currency || "INR"),
+      participantIds: participantUserIds,
+      before: {
+        description: String(expense.description || "Expense"),
+        amount: toNum(expense.amount),
+        category: String(expense.category || "other"),
+        date: toIso(expense.date || expense.created_at || expense._created_at),
+        groupId: String(expense.group_id || ""),
+        paymentStatus: String(expense.payment_status || "unpaid"),
+      },
+      after: {
+        isDeleted: true,
+      },
+    });
+
     const affectedUserIds = uniqueStrings([
       currentUserId,
-      ...(participants || []).map((participant: any) => String(participant.user_id || "")),
+      ...participantUserIds,
     ]);
 
     await invalidateUsersCache(affectedUserIds, [...EXPENSE_MUTATION_CACHE_SCOPES]);

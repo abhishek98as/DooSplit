@@ -41,9 +41,50 @@ interface AnalyticsData {
   }>;
 }
 
+interface ReconciliationReport {
+  period: {
+    startDate: string;
+    endDate: string;
+  };
+  summary: {
+    openingBalance: number;
+    expenseDelta: number;
+    settlementDelta: number;
+    netChange: number;
+    closingBalance: number;
+  };
+  changes: {
+    expenses: Array<{
+      id: string;
+      date: string;
+      description: string;
+      amount: number;
+      delta: number;
+      currency: string;
+    }>;
+    settlements: Array<{
+      id: string;
+      date: string;
+      description: string;
+      amount: number;
+      delta: number;
+      currency: string;
+    }>;
+  };
+}
+
 export default function AnalyticsPage() {
   const { data: session, status } = useSession();
   const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
+  const [reconciliation, setReconciliation] = useState<ReconciliationReport | null>(null);
+  const [reconciliationLoading, setReconciliationLoading] = useState(false);
+  const [reconciliationStartDate, setReconciliationStartDate] = useState(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split("T")[0];
+  });
+  const [reconciliationEndDate, setReconciliationEndDate] = useState(
+    () => new Date().toISOString().split("T")[0]
+  );
   const [loading, setLoading] = useState(true);
   const [timeframe, setTimeframe] = useState("month");
 
@@ -52,6 +93,7 @@ export default function AnalyticsPage() {
       window.location.href = "/auth/login";
     } else if (status === "authenticated") {
       fetchAnalytics();
+      fetchReconciliation();
     }
   }, [status, timeframe]);
 
@@ -66,6 +108,25 @@ export default function AnalyticsPage() {
       console.error("Failed to fetch analytics:", error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchReconciliation = async () => {
+    setReconciliationLoading(true);
+    try {
+      const params = new URLSearchParams({
+        startDate: reconciliationStartDate,
+        endDate: reconciliationEndDate,
+      });
+      const res = await fetch(`/api/analytics/reconciliation?${params.toString()}`);
+      if (res.ok) {
+        const data = await res.json();
+        setReconciliation(data);
+      }
+    } catch (error) {
+      console.error("Failed to fetch reconciliation report:", error);
+    } finally {
+      setReconciliationLoading(false);
     }
   };
 
@@ -261,6 +322,110 @@ export default function AnalyticsPage() {
             </CardContent>
           </Card>
         </div>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Balance Reconciliation Report</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-neutral-500 mb-1">Start Date</label>
+                <input
+                  type="date"
+                  value={reconciliationStartDate}
+                  onChange={(e) => setReconciliationStartDate(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-neutral-300 dark:border-dark-border bg-white dark:bg-dark-bg-secondary text-neutral-900 dark:text-dark-text"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-neutral-500 mb-1">End Date</label>
+                <input
+                  type="date"
+                  value={reconciliationEndDate}
+                  onChange={(e) => setReconciliationEndDate(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-neutral-300 dark:border-dark-border bg-white dark:bg-dark-bg-secondary text-neutral-900 dark:text-dark-text"
+                />
+              </div>
+              <div className="md:col-span-2 flex items-end">
+                <Button onClick={fetchReconciliation} className="w-full" disabled={reconciliationLoading}>
+                  {reconciliationLoading ? "Generating..." : "Generate Report"}
+                </Button>
+              </div>
+            </div>
+
+            {reconciliation && (
+              <div className="mt-5 space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+                  <div className="rounded-lg border border-neutral-200 dark:border-dark-border p-3">
+                    <p className="text-xs text-neutral-500">Opening</p>
+                    <p className="text-lg font-semibold font-mono">{formatCurrency(reconciliation.summary.openingBalance)}</p>
+                  </div>
+                  <div className="rounded-lg border border-neutral-200 dark:border-dark-border p-3">
+                    <p className="text-xs text-neutral-500">Expenses Impact</p>
+                    <p className="text-lg font-semibold font-mono">{formatCurrency(reconciliation.summary.expenseDelta)}</p>
+                  </div>
+                  <div className="rounded-lg border border-neutral-200 dark:border-dark-border p-3">
+                    <p className="text-xs text-neutral-500">Settlements Impact</p>
+                    <p className="text-lg font-semibold font-mono">{formatCurrency(reconciliation.summary.settlementDelta)}</p>
+                  </div>
+                  <div className="rounded-lg border border-neutral-200 dark:border-dark-border p-3">
+                    <p className="text-xs text-neutral-500">Net Change</p>
+                    <p className="text-lg font-semibold font-mono">{formatCurrency(reconciliation.summary.netChange)}</p>
+                  </div>
+                  <div className="rounded-lg border border-primary/30 bg-primary/5 p-3">
+                    <p className="text-xs text-neutral-500">Closing</p>
+                    <p className="text-lg font-semibold font-mono">{formatCurrency(reconciliation.summary.closingBalance)}</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-sm font-semibold mb-2">Expense Changes</p>
+                    <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                      {reconciliation.changes.expenses.length === 0 ? (
+                        <p className="text-xs text-neutral-500">No expense changes in selected period.</p>
+                      ) : (
+                        reconciliation.changes.expenses.map((row) => (
+                          <div key={row.id} className="rounded-lg border border-neutral-200 dark:border-dark-border p-3">
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-sm font-medium truncate">{row.description}</p>
+                              <p className="text-sm font-mono">{formatCurrency(row.delta)}</p>
+                            </div>
+                            <p className="text-xs text-neutral-500 mt-1">
+                              {new Date(row.date).toLocaleDateString("en-IN")} • {formatCurrency(row.amount)}
+                            </p>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  <div>
+                    <p className="text-sm font-semibold mb-2">Settlement Changes</p>
+                    <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                      {reconciliation.changes.settlements.length === 0 ? (
+                        <p className="text-xs text-neutral-500">No settlement changes in selected period.</p>
+                      ) : (
+                        reconciliation.changes.settlements.map((row) => (
+                          <div key={row.id} className="rounded-lg border border-neutral-200 dark:border-dark-border p-3">
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-sm font-medium truncate">{row.description}</p>
+                              <p className="text-sm font-mono">{formatCurrency(row.delta)}</p>
+                            </div>
+                            <p className="text-xs text-neutral-500 mt-1">
+                              {new Date(row.date).toLocaleDateString("en-IN")} • {formatCurrency(row.amount)}
+                            </p>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
         {/* Category Breakdown */}
         <Card>

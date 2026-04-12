@@ -1,8 +1,8 @@
 // Enhanced Service Worker for DooSplit PWA
-const CACHE_NAME = 'doosplit-v5';
-const STATIC_CACHE = 'doosplit-static-v5';
-const API_CACHE = 'doosplit-api-v5';
-const IMAGE_CACHE = 'doosplit-images-v5';
+const CACHE_NAME = 'doosplit-v6';
+const STATIC_CACHE = 'doosplit-static-v6';
+const API_CACHE = 'doosplit-api-v6';
+const IMAGE_CACHE = 'doosplit-images-v6';
 
 // Cache strategies
 const CACHE_STRATEGIES = {
@@ -15,7 +15,8 @@ const CACHE_STRATEGIES = {
 // Static assets to cache immediately
 const STATIC_ASSETS = [
   '/manifest.json',
-  '/logo.webp'
+  '/api/pwa/icon?size=96',
+  '/api/pwa/icon?size=192'
 ];
 
 // API routes that should be cached
@@ -300,8 +301,8 @@ self.addEventListener('push', (event) => {
 
   const options = {
     body,
-    icon: '/logo.webp',
-    badge: '/logo.webp',
+    icon: '/api/pwa/icon?size=192',
+    badge: '/api/pwa/icon?size=96',
     vibrate: [100, 50, 100],
     data: {
       dateOfArrival: Date.now(),
@@ -312,7 +313,7 @@ self.addEventListener('push', (event) => {
       {
         action: 'view',
         title: 'View',
-        icon: '/logo.webp'
+        icon: '/api/pwa/icon?size=96'
       },
       {
         action: 'dismiss',

@@ -3,176 +3,156 @@
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import Image from "next/image";
 import {
   Home,
   Users,
   UsersRound,
   Activity,
   Settings,
-  PlusCircle,
+  Plus,
   BarChart3,
   Wallet,
   UserPlus,
   Receipt,
-  Moon,
-  Sun,
+  ChevronRight,
 } from "lucide-react";
-import NotificationDropdown from "./NotificationDropdown";
-import { useTheme } from "@/contexts/ThemeContext";
+import { useSession } from "@/lib/auth/react-session";
+
+const NAV_SECTIONS = [
+  {
+    label: "Main",
+    items: [
+      { href: "/dashboard", icon: Home, label: "Dashboard" },
+      { href: "/expenses", icon: Receipt, label: "Expenses", badge: 0 },
+      { href: "/friends", icon: Users, label: "Friends" },
+      { href: "/groups", icon: UsersRound, label: "Groups" },
+    ],
+  },
+  {
+    label: "Finance",
+    items: [
+      { href: "/settlements", icon: Wallet, label: "Settlements" },
+      { href: "/analytics", icon: BarChart3, label: "Analytics" },
+    ],
+  },
+  {
+    label: "Other",
+    items: [
+      { href: "/activity", icon: Activity, label: "Activity" },
+      { href: "/invite", icon: UserPlus, label: "Invite Friends" },
+      { href: "/settings", icon: Settings, label: "Settings" },
+    ],
+  },
+] as const;
+
+function getInitials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  return parts
+    .slice(0, 2)
+    .map((w) => w[0]?.toUpperCase() ?? "")
+    .join("");
+}
 
 const Sidebar: React.FC = () => {
   const pathname = usePathname();
-  const { theme, toggleTheme } = useTheme();
-
-  const navItems = [
-    { href: "/dashboard", icon: Home, label: "Dashboard" },
-    { href: "/expenses", icon: Receipt, label: "Expenses" },
-    { href: "/friends", icon: Users, label: "Friends" },
-    { href: "/groups", icon: UsersRound, label: "Groups" },
-    { href: "/invite", icon: UserPlus, label: "Invite Friends" },
-    { href: "/activity", icon: Activity, label: "Activity" },
-    { href: "/analytics", icon: BarChart3, label: "Analytics" },
-    { href: "/settlements", icon: Wallet, label: "Settlements" },
-    { href: "/settings", icon: Settings, label: "Settings" },
-  ];
-
-  const isActive = (href: string) => pathname === href;
-
-  // Don't render theme toggle during server-side rendering
+  const { data: session } = useSession();
   const [mounted, setMounted] = useState(false);
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  useEffect(() => { setMounted(true); }, []);
 
-  if (!mounted) {
-    return (
-      <aside className="hidden md:flex md:flex-col md:fixed md:inset-y-0 md:w-64 bg-white border-r border-neutral-200 z-30">
-        {/* Logo */}
-        <div className="flex items-center justify-between h-16 px-6 border-b border-neutral-200">
-          <Link href="/dashboard" className="flex items-center space-x-2">
-            <Image
-              src="/logo.webp"
-              alt="DooSplit"
-              width={32}
-              height={32}
-              className="h-8 w-8 rounded-lg"
-            />
-            <span className="text-h4 font-bold text-neutral-900">
-              DooSplit
-            </span>
-          </Link>
-        </div>
+  const displayName = mounted ? (session?.user?.name?.trim() || "User") : "User";
+  const email = mounted ? (session?.user?.email?.trim() || "") : "";
+  const initials = getInitials(displayName) || "U";
 
-        {/* Navigation */}
-        <nav className="flex-1 px-4 py-6 space-y-2">
-          {navItems.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={`flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors ${
-                isActive(item.href)
-                  ? "bg-primary/10 text-primary"
-                  : "text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100"
-              }`}
-            >
-              <item.icon className="h-5 w-5 mr-3" />
-              {item.label}
-            </Link>
-          ))}
-        </nav>
-
-        {/* Add Expense Button */}
-        <div className="p-4 border-t border-neutral-200">
-          <Link href="/expenses/add">
-            <button className="w-full flex items-center justify-center px-4 py-3 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors">
-              <PlusCircle className="h-5 w-5 mr-2" />
-              Add Expense
-            </button>
-          </Link>
-        </div>
-      </aside>
-    );
-  }
+  const isActive = (href: string) =>
+    pathname === href || (href !== "/dashboard" && pathname.startsWith(href + "/"));
 
   return (
-    <aside className="hidden md:flex md:flex-col md:fixed md:inset-y-0 md:w-64 bg-white dark:bg-dark-bg-secondary border-r border-neutral-200 dark:border-dark-border z-30">
-      {/* Logo */}
-      <div className="flex items-center justify-between h-16 px-6 border-b border-neutral-200 dark:border-dark-border">
-        <Link href="/dashboard" className="flex items-center space-x-2">
-          <Image
-            src="/logo.webp"
-            alt="DooSplit"
-            width={32}
-            height={32}
-            className="h-8 w-8 rounded-lg"
-          />
-          <span className="text-h4 font-bold text-neutral-900 dark:text-dark-text">
+    <aside className="hidden md:flex md:flex-col md:fixed md:inset-y-0 md:w-64 ds-sidebar z-30 overflow-hidden">
+      {/* Decorative teal glow — top left */}
+      <div
+        className="pointer-events-none absolute top-0 left-0 w-44 h-44"
+        style={{ background: "radial-gradient(circle at top left, rgba(0,201,167,0.10) 0%, transparent 70%)" }}
+        aria-hidden
+      />
+
+      {/* ── Brand — 68px, matches topbar height exactly ─────────────────── */}
+      <div className="ds-sidebar-brand relative flex items-center gap-3 px-5 flex-shrink-0">
+        {/* Logo box */}
+        <div className="ds-logo-box flex items-center justify-center text-white font-bold font-display text-sm select-none">
+          DS
+        </div>
+        {/* Brand text */}
+        <div className="flex flex-col leading-tight min-w-0">
+          <span className="font-display font-extrabold text-white tracking-tight" style={{ fontSize: 18 }}>
             DooSplit
           </span>
-        </Link>
-        <button
-          onClick={toggleTheme}
-          className="p-2 rounded-lg transition-colors text-neutral-500 hover:text-neutral-700 hover:bg-neutral-100 dark:hover:bg-dark-bg-tertiary"
-          title={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
-        >
-          {theme === "light" ? (
-            <Moon className="h-5 w-5" />
-          ) : (
-            <Sun className="h-5 w-5" />
-          )}
-        </button>
-        <NotificationDropdown />
+          <span className="ds-section-label" style={{ letterSpacing: "0.5px" }}>
+            Expense Tracker
+          </span>
+        </div>
       </div>
 
-      {/* Navigation */}
-      <nav className="flex-1 px-4 py-6 space-y-1 overflow-y-auto">
+      {/* ── Add Expense CTA ───────────────────────────────────────────────── */}
+      <div className="px-4 pt-4 pb-2 flex-shrink-0">
         <Link
           href="/expenses/add"
-          className="flex items-center w-full h-11 px-4 mb-4 bg-primary text-white rounded-md hover:bg-primary-dark transition-colors"
+          className="ds-sidebar-cta group flex items-center justify-center gap-2 w-full py-[11px] text-white font-display font-bold text-sm"
         >
-          <PlusCircle className="h-5 w-5 mr-3" />
-          <span className="font-medium">Add Expense</span>
-        </Link>
-
-        {navItems.map((item) => {
-          const Icon = item.icon;
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={`flex items-center w-full h-11 px-4 rounded-md transition-colors ${
-                isActive(item.href)
-                  ? "bg-primary/10 text-primary font-medium"
-                  : "text-neutral-700 dark:text-dark-text-secondary hover:bg-neutral-100 dark:hover:bg-dark-bg-tertiary"
-              }`}
-            >
-              <Icon className="h-5 w-5 mr-3" />
-              <span>{item.label}</span>
-            </Link>
-          );
-        })}
-      </nav>
-
-      {/* User Profile */}
-      <div className="p-4 border-t border-neutral-200 dark:border-dark-border">
-        <Link
-          href="/settings"
-          className="flex items-center space-x-3 p-3 rounded-md hover:bg-neutral-100 dark:hover:bg-dark-bg-tertiary transition-colors"
-        >
-          <div className="h-10 w-10 bg-primary/10 rounded-full flex items-center justify-center">
-            <span className="text-primary font-semibold">U</span>
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-neutral-900 dark:text-dark-text truncate">
-              User Name
-            </p>
-            <p className="text-xs text-neutral-500 dark:text-dark-text-tertiary truncate">
-              View Profile
-            </p>
-          </div>
+          <Plus className="h-4 w-4 flex-shrink-0 transition-transform duration-200 group-hover:rotate-45" />
+          Add Expense
         </Link>
       </div>
+
+      {/* ── Scrollable nav ────────────────────────────────────────────────── */}
+      <nav className="flex-1 overflow-y-auto px-3 py-1 scrollbar-hide relative">
+        {NAV_SECTIONS.map((section) => (
+          <div key={section.label} className="mb-1">
+            <p className="ds-section-label px-2 pt-3 pb-[6px]">{section.label}</p>
+
+            {section.items.map((item) => {
+              const active = isActive(item.href);
+              const Icon = item.icon;
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={`ds-nav-item relative flex items-center gap-[11px] w-full px-3 py-[10px] mb-0.5 font-sans ${
+                    active ? "ds-nav-item--active" : ""
+                  }`}
+                >
+                  {active && <span className="ds-nav-accent" aria-hidden />}
+                  <Icon className="h-[18px] w-[18px] flex-shrink-0" />
+                  <span className="flex-1 truncate">{item.label}</span>
+                  {"badge" in item && (item as any).badge > 0 && (
+                    <span className="ml-auto bg-coral text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none">
+                      {(item as any).badge}
+                    </span>
+                  )}
+                </Link>
+              );
+            })}
+          </div>
+        ))}
+      </nav>
+
+      {/* ── User Profile — pinned bottom ──────────────────────────────────── */}
+      <Link
+        href="/settings"
+        className="ds-user-profile relative flex items-center gap-[10px] px-4 py-3 flex-shrink-0 transition-colors duration-150"
+      >
+        <div className="ds-user-avatar flex items-center justify-center select-none">
+          <span className="font-display font-bold text-white text-sm">{initials}</span>
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="font-sans font-semibold truncate text-[13px]" style={{ color: "rgba(255,255,255,0.85)" }}>
+            {displayName}
+          </p>
+          <p className="font-sans font-normal truncate text-[11px]" style={{ color: "rgba(255,255,255,0.35)" }}>
+            {email || "View profile"}
+          </p>
+        </div>
+        <ChevronRight className="flex-shrink-0 h-3.5 w-3.5" style={{ color: "rgba(255,255,255,0.25)" }} />
+      </Link>
     </aside>
   );
 };

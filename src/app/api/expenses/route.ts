@@ -18,6 +18,8 @@ import { firestoreReadRepository } from "@/lib/data/firestore-adapter";
 import { createExpenseInFirestore } from "@/lib/firestore/write-operations";
 import { getAdminDb } from "@/lib/firestore/admin";
 import { EXPENSE_MUTATION_CACHE_SCOPES } from "@/lib/cache-scopes";
+import { logExpenseAdded } from "@/lib/activity-logger";
+import { isPaymentStatus } from "@/lib/expenses/payment-status";
 
 export const dynamic = "force-dynamic";
 export const preferredRegion = "iad1";
@@ -72,8 +74,14 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
     const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
     const limit = Math.min(100, Math.max(1, parseInt(searchParams.get("limit") || "20", 10)));
+    const friendId = searchParams.get("friendId");
     const category = searchParams.get("category");
     const groupId = searchParams.get("groupId");
+    const status = searchParams.get("status");
+    const minAmountRaw = searchParams.get("minAmount");
+    const maxAmountRaw = searchParams.get("maxAmount");
+    const minAmount = minAmountRaw !== null ? Number(minAmountRaw) : null;
+    const maxAmount = maxAmountRaw !== null ? Number(maxAmountRaw) : null;
     const startDate = searchParams.get("startDate");
     const endDate = searchParams.get("endDate");
 
@@ -86,8 +94,12 @@ export async function GET(request: NextRequest) {
           userId,
           page,
           limit,
+          friendId,
           category,
           groupId,
+          status,
+          minAmount,
+          maxAmount,
           startDate,
           endDate,
         })
@@ -127,6 +139,7 @@ export async function POST(request: NextRequest) {
       splitMethod,
       paidBy,
       participants,
+      paymentStatus,
     } = body || {};
 
     if (!amount || !description || !paidBy || !participants || participants.length === 0) {
@@ -266,6 +279,11 @@ export async function POST(request: NextRequest) {
       notes: notes || "",
       is_deleted: false,
       split_method: splitMethod || "equally",
+      payment_status: isPaymentStatus(paymentStatus)
+        ? paymentStatus
+        : "unpaid",
+      payment_status_updated_at: nowIso,
+      payment_status_updated_by: createdById,
     };
 
     const firestoreParticipants = splitParticipants.map((participant) => ({
@@ -309,6 +327,21 @@ export async function POST(request: NextRequest) {
       console.error("Failed to send expense notifications:", notificationError);
     }
 
+    // Log activity — fire and forget
+    logExpenseAdded({
+      actorId: userId,
+      actorName: auth.user.name || "Someone",
+      expenseId,
+      description: String(description),
+      amount: totalAmount,
+      currency: currency || "INR",
+      groupId: groupId || null,
+      groupName: groupId
+        ? (await getAdminDb().collection("groups").doc(String(groupId)).get()).data()?.name || null
+        : null,
+      participantIds: firestoreParticipants.map((p) => toStringId(p.user_id)),
+    });
+
     await invalidateUsersCache(affectedUserIds, [...EXPENSE_MUTATION_CACHE_SCOPES]);
 
     // Return success response
@@ -323,6 +356,7 @@ export async function POST(request: NextRequest) {
       groupId: groupId || undefined,
       images: Array.isArray(images) ? images : [],
       notes: notes || "",
+      paymentStatus: expenseData.payment_status,
       participants: splitParticipants.map((participant) => ({
         userId: toStringId(participant.userId),
         paidAmount: Number(participant.paidAmount || 0),

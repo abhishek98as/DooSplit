@@ -10,6 +10,8 @@ import {
 } from "@/lib/firebase-messaging";
 import AppShell from "@/components/layout/AppShell";
 import { useTheme } from "@/contexts/ThemeContext";
+import { usePWA } from "@/components/pwa/PWAProvider";
+import FeedbackWidget from "@/components/ui/FeedbackWidget";
 import Card, { CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
@@ -32,6 +34,8 @@ import {
   Trash2,
   Loader2,
   Smartphone,
+  Download,
+  MessageSquarePlus,
 } from "lucide-react";
 
 interface UserProfile {
@@ -83,6 +87,12 @@ export default function SettingsPage() {
 
   // Theme context
   const { theme, toggleTheme } = useTheme();
+
+  // PWA install
+  const { canInstall, installPrompt, isStandalone } = usePWA();
+
+  // Feedback / Suggest Feature
+  const [showFeedback, setShowFeedback] = useState(false);
 
   // Currency state
   const [showCurrencyModal, setShowCurrencyModal] = useState(false);
@@ -417,19 +427,45 @@ export default function SettingsPage() {
                   />
                 </div>
               </button>
-              <Link
-                href="/install"
-                className="flex items-center w-full p-3 rounded-md hover:bg-neutral-50 dark:hover:bg-dark-bg-tertiary transition-colors"
-              >
-                <Smartphone className="h-5 w-5 text-neutral-500 mr-3" />
-                <div className="flex-1 text-left">
-                  <p className="text-sm font-medium text-neutral-900 dark:text-dark-text">Install App</p>
-                  <p className="text-xs text-neutral-500 dark:text-dark-text-tertiary">
-                    Steps for Android, iPhone, and desktop
-                  </p>
+              {isStandalone ? (
+                <div className="flex items-center w-full p-3 rounded-md opacity-60 cursor-default">
+                  <Smartphone className="h-5 w-5 text-neutral-500 mr-3" />
+                  <div className="flex-1 text-left">
+                    <p className="text-sm font-medium text-neutral-900 dark:text-dark-text">Install App</p>
+                    <p className="text-xs text-neutral-500 dark:text-dark-text-tertiary">App already installed</p>
+                  </div>
+                  <Check className="h-4 w-4 text-success" />
                 </div>
-                <ChevronRight className="h-4 w-4 text-neutral-400" />
-              </Link>
+              ) : canInstall ? (
+                <button
+                  type="button"
+                  onClick={() => void installPrompt()}
+                  className="flex items-center w-full p-3 rounded-md hover:bg-neutral-50 dark:hover:bg-dark-bg-tertiary transition-colors"
+                >
+                  <Download className="h-5 w-5 text-neutral-500 mr-3" />
+                  <div className="flex-1 text-left">
+                    <p className="text-sm font-medium text-neutral-900 dark:text-dark-text">Install App</p>
+                    <p className="text-xs text-neutral-500 dark:text-dark-text-tertiary">
+                      Add DooSplit to your home screen
+                    </p>
+                  </div>
+                  <ChevronRight className="h-4 w-4 text-neutral-400" />
+                </button>
+              ) : (
+                <Link
+                  href="/install"
+                  className="flex items-center w-full p-3 rounded-md hover:bg-neutral-50 dark:hover:bg-dark-bg-tertiary transition-colors"
+                >
+                  <Smartphone className="h-5 w-5 text-neutral-500 mr-3" />
+                  <div className="flex-1 text-left">
+                    <p className="text-sm font-medium text-neutral-900 dark:text-dark-text">Install App</p>
+                    <p className="text-xs text-neutral-500 dark:text-dark-text-tertiary">
+                      Steps for Android, iPhone, and desktop
+                    </p>
+                  </div>
+                  <ChevronRight className="h-4 w-4 text-neutral-400" />
+                </Link>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -520,6 +556,28 @@ export default function SettingsPage() {
                 />
               </button>
             </div>
+          </CardContent>
+        </Card>
+
+        {/* Support */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Support</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <button
+              onClick={() => setShowFeedback(true)}
+              className="flex items-center w-full p-3 rounded-md hover:bg-neutral-50 dark:hover:bg-dark-bg-tertiary transition-colors"
+            >
+              <MessageSquarePlus className="h-5 w-5 text-neutral-500 mr-3" />
+              <div className="flex-1 text-left">
+                <p className="text-sm font-medium text-neutral-900 dark:text-dark-text">Suggest Feature</p>
+                <p className="text-xs text-neutral-500 dark:text-dark-text-tertiary">
+                  Share ideas, improvements, or report bugs
+                </p>
+              </div>
+              <ChevronRight className="h-4 w-4 text-neutral-400" />
+            </button>
           </CardContent>
         </Card>
 
@@ -758,6 +816,9 @@ export default function SettingsPage() {
             )}
           </div>
         </Modal>
+
+        {/* Suggest Feature Modal */}
+        <FeedbackWidget isOpen={showFeedback} onClose={() => setShowFeedback(false)} />
       </div>
     </AppShell>
   );

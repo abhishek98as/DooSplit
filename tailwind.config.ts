@@ -52,9 +52,15 @@ const config: Config = {
           "text-tertiary": "#94A3B8",
           border: "#334155",
         },
+        cream: "#F5F4F0",
+        navy: {
+          DEFAULT: "#1A2744",
+          deep: "#111827",
+        },
       },
       fontFamily: {
-        sans: ["Inter", "system-ui", "sans-serif"],
+        display: ["var(--font-syne)", "system-ui", "sans-serif"],
+        sans: ["var(--font-dm-sans)", "system-ui", "sans-serif"],
         mono: ["JetBrains Mono", "SF Mono", "monospace"],
       },
       fontSize: {

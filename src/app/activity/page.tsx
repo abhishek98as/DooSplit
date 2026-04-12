@@ -4,7 +4,20 @@ import { useEffect, useState } from "react";
 import { useSession } from "@/lib/auth/react-session";
 import AppShell from "@/components/layout/AppShell";
 import Card, { CardContent } from "@/components/ui/Card";
-import { Clock, Receipt, DollarSign, UserPlus, Filter, Search, Calendar, X } from "lucide-react";
+import Button from "@/components/ui/Button";
+import {
+  Clock,
+  Receipt,
+  DollarSign,
+  UserPlus,
+  Filter,
+  Search,
+  X,
+  Users,
+  UserMinus,
+  FolderPlus,
+  FolderMinus,
+} from "lucide-react";
 
 interface Activity {
   id: string;
@@ -25,10 +38,31 @@ interface Activity {
   };
 }
 
+const ACTIVITY_PAGE_SIZE = 50;
+
+function mergeActivitiesById(existing: Activity[], incoming: Activity[]): Activity[] {
+  const map = new Map<string, Activity>();
+
+  for (const activity of existing) {
+    map.set(activity.id, activity);
+  }
+
+  for (const activity of incoming) {
+    map.set(activity.id, activity);
+  }
+
+  return Array.from(map.values()).sort((a, b) => {
+    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+  });
+}
+
 export default function ActivityPage() {
   const { data: session, status } = useSession();
   const [activities, setActivities] = useState<Activity[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [nextPage, setNextPage] = useState(2);
+  const [hasMore, setHasMore] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
 
   // Filter states
@@ -72,11 +106,18 @@ export default function ActivityPage() {
 
   const fetchActivities = async () => {
     try {
-      const res = await fetch("/api/dashboard/activity");
-      if (res.ok) {
-        const data = await res.json();
-        setActivities(data.activities || []);
+      const res = await fetch(`/api/activities?page=1&limit=${ACTIVITY_PAGE_SIZE}`);
+      if (!res.ok) {
+        return;
       }
+
+      const data = await res.json();
+      const pageActivities: Activity[] = Array.isArray(data.activities) ? data.activities : [];
+      const totalPages = Math.max(1, Number(data.pagination?.totalPages || 1));
+
+      setActivities(pageActivities);
+      setNextPage(2);
+      setHasMore(totalPages > 1);
     } catch (error) {
       console.error("Failed to fetch activities:", error);
     } finally {
@@ -84,11 +125,48 @@ export default function ActivityPage() {
     }
   };
 
+  const loadMoreActivities = async () => {
+    if (loading || loadingMore || !hasMore) {
+      return;
+    }
+
+    try {
+      setLoadingMore(true);
+      const pageToLoad = nextPage;
+      const res = await fetch(`/api/activities?page=${pageToLoad}&limit=${ACTIVITY_PAGE_SIZE}`);
+      if (!res.ok) {
+        return;
+      }
+
+      const data = await res.json();
+      const pageActivities: Activity[] = Array.isArray(data.activities) ? data.activities : [];
+      const totalPages = Math.max(1, Number(data.pagination?.totalPages || 1));
+
+      setActivities((prev) => mergeActivitiesById(prev, pageActivities));
+      setNextPage(pageToLoad + 1);
+      setHasMore(pageToLoad < totalPages);
+    } catch (error) {
+      console.error("Failed to load more activities:", error);
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
   // Filter activities based on current filters
   const filteredActivities = activities.filter(activity => {
     // Type filter
-    if (typeFilter !== "all" && activity.type !== typeFilter) {
-      return false;
+    if (typeFilter !== "all") {
+      const type = activity.type || "";
+      const matchesType =
+        (typeFilter === "expense" && type.startsWith("expense_")) ||
+        (typeFilter === "settlement" && (type === "settlement" || type === "settlement_added")) ||
+        (typeFilter === "friend" && type.startsWith("friend_")) ||
+        (typeFilter === "group" && type.startsWith("group_")) ||
+        type === typeFilter;
+
+      if (!matchesType) {
+        return false;
+      }
     }
 
     // Expense type filter
@@ -157,6 +235,8 @@ export default function ActivityPage() {
 
     switch (type) {
       case "expense_added":
+      case "expense_updated":
+      case "expense_deleted":
         return (
           <div className="flex items-start gap-3">
             <div className="h-10 w-10 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
@@ -193,6 +273,7 @@ export default function ActivityPage() {
         );
 
       case "settlement":
+      case "settlement_added":
         return (
           <div className="flex items-start gap-3">
             <div className="h-10 w-10 rounded-full bg-success/20 flex items-center justify-center flex-shrink-0">
@@ -217,10 +298,42 @@ export default function ActivityPage() {
         );
 
       case "friend_request":
+      case "friend_request_sent":
+      case "friend_added":
+      case "friend_removed":
         return (
           <div className="flex items-start gap-3">
             <div className="h-10 w-10 rounded-full bg-info/20 flex items-center justify-center flex-shrink-0">
-              <UserPlus className="h-5 w-5 text-info" />
+              {type === "friend_removed" ? (
+                <UserMinus className="h-5 w-5 text-info" />
+              ) : (
+                <UserPlus className="h-5 w-5 text-info" />
+              )}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm text-neutral-900 dark:text-dark-text">
+                {activity.description}
+              </p>
+              <span className="text-xs text-neutral-500">
+                {formatDate(activity.createdAt)}
+              </span>
+            </div>
+          </div>
+        );
+
+      case "group_created":
+      case "group_deleted":
+      case "group_member_added":
+        return (
+          <div className="flex items-start gap-3">
+            <div className="h-10 w-10 rounded-full bg-warning/20 flex items-center justify-center flex-shrink-0">
+              {type === "group_deleted" ? (
+                <FolderMinus className="h-5 w-5 text-warning" />
+              ) : type === "group_member_added" ? (
+                <Users className="h-5 w-5 text-warning" />
+              ) : (
+                <FolderPlus className="h-5 w-5 text-warning" />
+              )}
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm text-neutral-900 dark:text-dark-text">
@@ -234,7 +347,28 @@ export default function ActivityPage() {
         );
 
       default:
-        return null;
+        return (
+          <div className="flex items-start gap-3">
+            <div className="h-10 w-10 rounded-full bg-neutral-200 dark:bg-dark-bg-secondary flex items-center justify-center flex-shrink-0">
+              <Clock className="h-5 w-5 text-neutral-500" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm text-neutral-900 dark:text-dark-text">
+                {activity.description}
+              </p>
+              <div className="flex items-center gap-2 mt-1">
+                {activity.amount && (
+                  <span className="text-sm font-semibold text-neutral-800 dark:text-dark-text">
+                    {formatCurrency(activity.amount)}
+                  </span>
+                )}
+                <span className="text-xs text-neutral-500">
+                  {formatDate(activity.createdAt)}
+                </span>
+              </div>
+            </div>
+          </div>
+        );
     }
   };
 
@@ -305,7 +439,8 @@ export default function ActivityPage() {
                   <option value="all">All Activities</option>
                   <option value="expense">Expenses</option>
                   <option value="settlement">Settlements</option>
-                  <option value="friend_request">Friend Requests</option>
+                  <option value="friend">Friends</option>
+                  <option value="group">Groups</option>
                 </select>
               </div>
 
@@ -351,7 +486,15 @@ export default function ActivityPage() {
               <span className="text-xs text-neutral-600 dark:text-dark-text-secondary">Active filters:</span>
               {typeFilter !== "all" && (
                 <span className="inline-flex items-center gap-1 px-2 py-1 bg-primary/10 text-primary rounded-full text-xs">
-                  {typeFilter === "friend_request" ? "Friend Requests" : typeFilter.charAt(0).toUpperCase() + typeFilter.slice(1)}
+                  {typeFilter === "expense"
+                    ? "Expenses"
+                    : typeFilter === "settlement"
+                    ? "Settlements"
+                    : typeFilter === "friend"
+                    ? "Friends"
+                    : typeFilter === "group"
+                    ? "Groups"
+                    : typeFilter.charAt(0).toUpperCase() + typeFilter.slice(1)}
                   <button onClick={() => setTypeFilter("all")} className="ml-1 hover:bg-primary/20 rounded-full p-0.5">
                     <X className="h-3 w-3" />
                   </button>
@@ -402,16 +545,30 @@ export default function ActivityPage() {
                 </p>
               </div>
             ) : (
-              <div className="space-y-4">
-                {filteredActivities.map((activity) => (
-                  <div
-                    key={activity.id}
-                    className="py-3 border-b border-neutral-200 dark:border-dark-border last:border-0"
-                  >
-                    {renderActivity(activity)}
+              <>
+                <div className="space-y-4">
+                  {filteredActivities.map((activity) => (
+                    <div
+                      key={activity.id}
+                      className="py-3 border-b border-neutral-200 dark:border-dark-border last:border-0"
+                    >
+                      {renderActivity(activity)}
+                    </div>
+                  ))}
+                </div>
+
+                {hasMore && (
+                  <div className="pt-4 flex justify-center">
+                    <Button
+                      variant="secondary"
+                      onClick={loadMoreActivities}
+                      disabled={loadingMore}
+                    >
+                      {loadingMore ? "Loading..." : "Load More"}
+                    </Button>
                   </div>
-                ))}
-              </div>
+                )}
+              </>
             )}
           </CardContent>
         </Card>

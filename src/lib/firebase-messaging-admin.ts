@@ -143,7 +143,7 @@ export async function sendPushNotificationToUsers(
         notification: {
           title: payload.title,
           body: payload.body,
-          icon: "/logo.webp",
+          icon: "/api/pwa/icon?size=192",
         },
       },
     };

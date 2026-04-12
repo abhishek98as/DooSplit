@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { invalidateUsersCache } from "@/lib/cache";
 import { requireUser } from "@/lib/auth/require-user";
 import { FieldValue, getAdminDb } from "@/lib/firestore/admin";
+import { logActivity } from "@/lib/activity-logger";
 import { groupMemberDocId } from "@/lib/social/keys";
 import { fetchDocsByIds, mapUser, toIso, uniqueStrings } from "@/lib/firestore/route-helpers";
 import { GROUP_MUTATION_CACHE_SCOPES } from "@/lib/cache-scopes";
@@ -74,6 +75,8 @@ export async function POST(
     if (!userExists.exists) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
+    const newMemberName =
+      String(userExists.data()?.name || "").trim() || "a member";
 
     const existingMemberSnap = await db
       .collection("group_members")
@@ -110,6 +113,25 @@ export async function POST(
         ...members.map((member: any) => String(member.userId?._id)).filter(Boolean),
       ])
     );
+
+    const groupDoc = await db.collection("groups").doc(id).get();
+    const groupName =
+      String(groupDoc.data()?.name || "").trim() || "Group";
+
+    void logActivity({
+      userIds: affectedUserIds,
+      actorId: currentUserId,
+      actorName: auth.user.name || "Someone",
+      type: "group_member_added",
+      title: "Member Added",
+      description: `${auth.user.name || "Someone"} added ${newMemberName} to "${groupName}"`,
+      metadata: {
+        groupId: id,
+        groupName,
+        memberId: newMemberId,
+        memberName: newMemberName,
+      },
+    });
 
     await invalidateUsersCache(affectedUserIds, [...GROUP_MUTATION_CACHE_SCOPES]);
 

@@ -9,6 +9,7 @@ import { requireUser } from "@/lib/auth/require-user";
 import { firestoreReadRepository } from "@/lib/data/firestore-adapter";
 import { createGroupInFirestore } from "@/lib/firestore/write-operations";
 import { getAdminDb } from "@/lib/firestore/admin";
+import { logGroupCreated } from "@/lib/activity-logger";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -106,6 +107,14 @@ export async function POST(request: NextRequest) {
             ? row.joined_at.toDate().toISOString()
             : row.joined_at || new Date().toISOString(),
       };
+    });
+
+    void logGroupCreated({
+      actorId: userId,
+      actorName: auth.user.name || "Someone",
+      groupId,
+      groupName: String(groupRow.name || name || "Untitled Group"),
+      memberIds: allMemberIds,
     });
 
     await invalidateUsersCache(

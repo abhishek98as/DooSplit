@@ -4,7 +4,7 @@ import { useEffect, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui";
-import Image from "next/image";
+import BrandLogo from "@/components/ui/BrandLogo";
 import { CheckCircle, XCircle, Clock, Mail } from "lucide-react";
 import { auth, applyActionCode } from "@/lib/firebase";
 
@@ -123,13 +123,7 @@ function VerifyEmailContent() {
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary/10 to-success/10 p-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <Image
-            src="/logo.webp"
-            alt="DooSplit"
-            width={64}
-            height={64}
-            className="h-16 w-16 rounded-2xl mb-4 inline-block"
-          />
+          <BrandLogo size={64} className="h-16 w-16 rounded-2xl mb-4 inline-block" priority />
           <h1 className="text-h1 font-bold text-neutral-900">DooSplit</h1>
         </div>
 
@@ -159,13 +153,7 @@ export default function VerifyEmailPage() {
         <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary/10 to-success/10 p-4">
           <div className="w-full max-w-md">
             <div className="text-center mb-8">
-              <Image
-                src="/logo.webp"
-                alt="DooSplit"
-                width={64}
-                height={64}
-                className="h-16 w-16 rounded-2xl mb-4 inline-block"
-              />
+              <BrandLogo size={64} className="h-16 w-16 rounded-2xl mb-4 inline-block" priority />
               <h1 className="text-h1 font-bold text-neutral-900">DooSplit</h1>
             </div>
             <div className="bg-white rounded-xl shadow-md p-6 md:p-8 text-center">
