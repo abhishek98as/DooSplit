@@ -5,6 +5,7 @@ import { useSession } from "@/lib/auth/react-session";
 import { useRouter, useSearchParams } from "next/navigation";
 import AppShell from "@/components/layout/AppShell";
 import getOfflineStore from "@/lib/offline-store";
+import { authFetch } from "@/lib/auth/client-session";
 import Card from "@/components/ui/Card";
 import Input from "@/components/ui/Input";
 import Button from "@/components/ui/Button";
@@ -279,7 +280,7 @@ export default function ExpensesPage() {
         params.append("endDate", endDate);
       }
 
-      const response = await fetch(`/api/expenses?${params.toString()}`);
+      const response = await authFetch(`/api/expenses?${params.toString()}`);
       if (!response.ok) throw new Error("Failed to fetch expenses");
 
       const data = await response.json();
@@ -296,7 +297,7 @@ export default function ExpensesPage() {
 
   const fetchFriends = async () => {
     try {
-      const response = await fetch("/api/friends");
+      const response = await authFetch("/api/friends");
       if (!response.ok) {
         return;
       }
@@ -394,7 +395,7 @@ export default function ExpensesPage() {
 
     setDeleting(expenseToDelete._id);
     try {
-      const response = await fetch(`/api/expenses/${expenseToDelete._id}`, {
+      const response = await authFetch(`/api/expenses/${expenseToDelete._id}`, {
         method: "DELETE",
       });
 
@@ -477,7 +478,7 @@ export default function ExpensesPage() {
   ) => {
     setStatusUpdating(expenseId);
     try {
-      const response = await fetch(`/api/expenses/${expenseId}`, {
+      const response = await authFetch(`/api/expenses/${expenseId}`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",

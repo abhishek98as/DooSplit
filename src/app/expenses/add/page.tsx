@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useSession } from "@/lib/auth/react-session";
+import { authFetch } from "@/lib/auth/client-session";
 import { useRouter } from "next/navigation";
 import AppShell from "@/components/layout/AppShell";
 import Card from "@/components/ui/Card";
@@ -130,7 +131,7 @@ export default function AddExpensePage() {
   }, [session]);
 
   useEffect(() => {
-    if (amount && selectedFriends.length > 0) {
+    if (amount) {
       calculateSplit();
     }
   }, [amount, selectedFriends, splitMethod]);
@@ -169,7 +170,7 @@ export default function AddExpensePage() {
 
   const fetchFriends = async () => {
     try {
-      const res = await fetch("/api/friends");
+      const res = await authFetch("/api/friends");
       if (res.ok) {
         const data = await res.json();
         setFriends(data.friends || []);
@@ -181,7 +182,7 @@ export default function AddExpensePage() {
 
   const fetchGroups = async () => {
     try {
-      const res = await fetch("/api/groups");
+      const res = await authFetch("/api/groups");
       if (res.ok) {
         const data = await res.json();
         setGroups(data.groups || []);
@@ -197,13 +198,26 @@ export default function AddExpensePage() {
   // Bug 7 fix: compute correct owedAmount per participant on client side
   const calculateSplit = () => {
     const totalAmount = parseFloat(amount) || 0;
-    if (totalAmount === 0 || selectedFriends.length === 0) return;
+    if (totalAmount === 0) return;
+
+    const newParticipants: Participant[] = [];
+
+    if (selectedFriends.length === 0) {
+      // Personal expense — only the current user
+      newParticipants.push({
+        userId: session?.user?.id || "",
+        name: "You",
+        owedAmount: totalAmount,
+        paidAmount: totalAmount,
+      });
+      setParticipants(newParticipants);
+      return;
+    }
 
     const numPeople = selectedFriends.length + 1; // +1 for current user
     const equalShare = round2(totalAmount / numPeople);
     // Handle rounding: give remainder to first person (current user)
     const remainder = round2(totalAmount - equalShare * numPeople);
-    const newParticipants: Participant[] = [];
 
     // Add current user
     const userShare = splitMethod === "equally" ? round2(equalShare + remainder) : 0;
@@ -282,8 +296,8 @@ export default function AddExpensePage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!amount || !description || selectedFriends.length === 0) {
-      alert("Please fill in all required fields and select at least one friend");
+    if (!amount || !description) {
+      alert("Please fill in all required fields");
       return;
     }
 
@@ -291,6 +305,18 @@ export default function AddExpensePage() {
 
     try {
       const offlineStore = getOfflineStore();
+
+      // Build personal expense participants if none selected yet
+      let resolvedParticipants = participants;
+      if (selectedFriends.length === 0 && resolvedParticipants.length === 0 && session?.user?.id) {
+        const totalAmount = parseFloat(amount) || 0;
+        resolvedParticipants = [{
+          userId: session.user.id,
+          name: "You",
+          owedAmount: totalAmount,
+          paidAmount: totalAmount,
+        }];
+      }
 
       // Prepare expense data
       const expenseData = {
@@ -301,7 +327,7 @@ export default function AddExpensePage() {
         currency,
         groupId: selectedGroup?._id,
         paidBy,
-        participants,
+        participants: resolvedParticipants,
         notes,
         images: [], // Empty initially
         splitMethod
@@ -407,7 +433,7 @@ export default function AddExpensePage() {
 
     setCreatingGroup(true);
     try {
-      const res = await fetch("/api/groups", {
+      const res = await authFetch("/api/groups", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(groupFormData),

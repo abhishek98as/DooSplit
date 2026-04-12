@@ -413,7 +413,7 @@ class OfflineStore {
 
     if (this.isOnline()) {
       try {
-        const response = await fetch('/api/expenses', {
+        const response = await authFetch('/api/expenses', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(expenseData),
