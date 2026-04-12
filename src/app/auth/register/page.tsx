@@ -181,6 +181,9 @@ function RegisterPageContent() {
                 <Input
                   label="Full Name"
                   type="text"
+                  id="name"
+                  name="name"
+                  autoComplete="name"
                   placeholder="John Doe"
                   icon={<User className="h-5 w-5" />}
                   value={formData.name}
@@ -191,6 +194,9 @@ function RegisterPageContent() {
                 <Input
                   label="Email"
                   type="email"
+                  id="email"
+                  name="email"
+                  autoComplete="email"
                   placeholder="you@example.com"
                   icon={<Mail className="h-5 w-5" />}
                   value={formData.email}
@@ -201,6 +207,9 @@ function RegisterPageContent() {
                 <Input
                   label="Password"
                   type="password"
+                  id="password"
+                  name="password"
+                  autoComplete="new-password"
                   placeholder="********"
                   icon={<Lock className="h-5 w-5" />}
                   value={formData.password}
@@ -211,6 +220,9 @@ function RegisterPageContent() {
                 <Input
                   label="Confirm Password"
                   type="password"
+                  id="confirmPassword"
+                  name="confirmPassword"
+                  autoComplete="new-password"
                   placeholder="********"
                   icon={<Lock className="h-5 w-5" />}
                   value={formData.confirmPassword}

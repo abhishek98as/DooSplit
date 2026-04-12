@@ -118,6 +118,9 @@ export default function LoginPage() {
                 <Input
                   label="Email"
                   type="email"
+                  id="email"
+                  name="email"
+                  autoComplete="email"
                   placeholder="Enter your email"
                   icon={<Mail className="h-5 w-5" />}
                   value={formData.email}
@@ -129,6 +132,9 @@ export default function LoginPage() {
                   <Input
                     label="Password"
                     type={showPassword ? "text" : "password"}
+                    id="password"
+                    name="password"
+                    autoComplete="current-password"
                     placeholder="********"
                     icon={<Lock className="h-5 w-5" />}
                     value={formData.password}
