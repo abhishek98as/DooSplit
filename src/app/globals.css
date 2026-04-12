@@ -159,6 +159,7 @@
   }
 
   /* ── Desktop Topbar ───────────────────────────────────────────────────── */
+  /* Note: display is controlled by Tailwind hidden/md:flex on the element */
   .ds-topbar {
     height: 68px;
     flex-shrink: 0;
@@ -166,7 +167,6 @@
     position: sticky;
     top: 0;
     z-index: 40;
-    display: flex;
     align-items: center;
     justify-content: space-between;
     padding: 0 28px;

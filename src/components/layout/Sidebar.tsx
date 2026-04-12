@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import BrandLogo from "@/components/ui/BrandLogo";
 import {
   Home,
   Users,
@@ -77,19 +78,10 @@ const Sidebar: React.FC = () => {
 
       {/* ── Brand — 68px, matches topbar height exactly ─────────────────── */}
       <div className="ds-sidebar-brand relative flex items-center gap-3 px-5 flex-shrink-0">
-        {/* Logo box */}
-        <div className="ds-logo-box flex items-center justify-center text-white font-bold font-display text-sm select-none">
-          DS
-        </div>
-        {/* Brand text */}
-        <div className="flex flex-col leading-tight min-w-0">
-          <span className="font-display font-extrabold text-white tracking-tight" style={{ fontSize: 18 }}>
-            DooSplit
-          </span>
-          <span className="ds-section-label" style={{ letterSpacing: "0.5px" }}>
-            Expense Tracker
-          </span>
-        </div>
+        <BrandLogo size={34} className="h-[34px] w-[34px] rounded-xl flex-shrink-0" priority />
+        <span className="font-display font-extrabold text-white tracking-tight" style={{ fontSize: 18 }}>
+          DooSplit
+        </span>
       </div>
 
       {/* ── Add Expense CTA ───────────────────────────────────────────────── */}
