@@ -3,6 +3,15 @@
 @tailwind utilities;
 
 @layer base {
+  /* Set background on html element to prevent white flash during route transitions */
+  html {
+    background-color: #F5F4F0; /* cream */
+  }
+
+  html.dark {
+    background-color: #0F172A; /* dark.bg */
+  }
+
   body {
     @apply bg-cream text-neutral-900 antialiased;
   }
