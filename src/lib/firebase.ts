@@ -111,10 +111,7 @@ const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 const auth = getAuth(app);
 const googleProvider = new GoogleAuthProvider();
 
-const firestoreDatabaseId =
-  FIREBASE_DATABASE_ID ||
-  resolvedProjectId ||
-  "(default)";
+const firestoreDatabaseId = FIREBASE_DATABASE_ID || "(default)";
 
 function initFirestoreInstance() {
   if (typeof window !== "undefined") {

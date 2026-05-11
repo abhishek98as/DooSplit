@@ -65,11 +65,16 @@ export async function POST(request: NextRequest) {
     const auth = getAdminAuth();
     // verifyIdToken without checkRevoked to avoid Identity Platform (billing) API
     const decodedToken = await auth.verifyIdToken(idToken);
-    await ensureUserDoc({
-      uid: decodedToken.uid,
-      email: decodedToken.email,
-      name: (decodedToken.name as string | undefined) || null,
-    });
+    // Non-fatal: user doc creation should not block session token issuance
+    try {
+      await ensureUserDoc({
+        uid: decodedToken.uid,
+        email: decodedToken.email,
+        name: (decodedToken.name as string | undefined) || null,
+      });
+    } catch (docErr: any) {
+      console.error("[session] ensureUserDoc failed (non-fatal):", docErr?.message || docErr);
+    }
 
     const expiresInMs = FIREBASE_SESSION_MAX_AGE_SECONDS * 1000;
     const expiresAt = new Date(Date.now() + expiresInMs);

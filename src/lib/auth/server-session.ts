@@ -50,18 +50,30 @@ async function getCookieTokenFromServerContext(): Promise<string | null> {
 }
 
 async function resolveUserFromUid(identity: DecodedIdentity): Promise<ServerAppUser> {
-  const db = getAdminDb();
-  const userDoc = await db.collection("users").doc(identity.uid).get();
-  const user = userDoc.exists ? userDoc.data() || {} : {};
+  try {
+    const db = getAdminDb();
+    const userDoc = await db.collection("users").doc(identity.uid).get();
+    const user = userDoc.exists ? userDoc.data() || {} : {};
 
-  return {
-    id: identity.uid,
-    authUid: identity.uid,
-    email: (user.email as string | undefined) || identity.email || null,
-    name: (user.name as string | undefined) || identity.name || null,
-    role: (user.role as string | undefined) || "user",
-    source: "firebase",
-  };
+    return {
+      id: identity.uid,
+      authUid: identity.uid,
+      email: (user.email as string | undefined) || identity.email || null,
+      name: (user.name as string | undefined) || identity.name || null,
+      role: (user.role as string | undefined) || "user",
+      source: "firebase",
+    };
+  } catch {
+    // Firestore unavailable (e.g. billing not enabled) — fallback to JWT identity
+    return {
+      id: identity.uid,
+      authUid: identity.uid,
+      email: identity.email || null,
+      name: identity.name || null,
+      role: "user",
+      source: "firebase",
+    };
+  }
 }
 
 async function verifyIdToken(idToken: string): Promise<ServerAppUser | null> {

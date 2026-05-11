@@ -4,9 +4,10 @@ import { getStorage } from "firebase-admin/storage";
 import { adminApp, adminAuth } from "@/lib/firebase-admin";
 
 let firestoreInstance: Firestore | null = null;
+// Use server-only FIREBASE_DATABASE_ID. NEXT_PUBLIC_ env vars are client-side
+// and should NOT drive Admin SDK database selection.
 const FIRESTORE_DATABASE_ID =
   process.env.FIREBASE_DATABASE_ID?.trim() ||
-  process.env.NEXT_PUBLIC_FIREBASE_DATABASE_ID?.trim() ||
   "(default)";
 
 export function getAdminDb(): Firestore {
