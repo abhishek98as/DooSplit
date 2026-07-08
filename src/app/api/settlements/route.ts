@@ -6,12 +6,13 @@ import {
   invalidateUsersCache,
 } from "@/lib/cache";
 import { requireUser } from "@/lib/auth/require-user";
-import { firestoreReadRepository } from "@/lib/data/firestore-adapter";
+import { getActiveRepository } from "@/lib/data";
 import { getServerFirebaseUser } from "@/lib/auth/firebase-session";
 import { createSettlementInFirestore } from "@/lib/firestore/write-operations";
 import { notifySettlement } from "@/lib/notificationService";
 import { getAdminDb } from "@/lib/firestore/admin";
 import { logSettlementAdded } from "@/lib/activity-logger";
+import { allocateSettlementToExpenses } from "@/lib/settlements/allocation";
 
 export const dynamic = "force-dynamic";
 export const preferredRegion = "iad1";
@@ -40,14 +41,16 @@ export async function GET(request: NextRequest) {
     const { data: payload, cacheStatus } = await getOrSetCacheJsonWithMeta(
       cacheKey,
       CACHE_TTL.settlements,
-      async () =>
-        firestoreReadRepository.getSettlements({
+      async () => {
+        const repository = await getActiveRepository();
+        return repository.getSettlements({
           userId,
           page,
           limit,
           groupId,
           friendId,
-        })
+        });
+      }
     );
 
     return NextResponse.json(payload, {
@@ -117,8 +120,21 @@ export async function POST(request: NextRequest) {
     };
 
     const settlementId = await createSettlementInFirestore(settlementData);
+    const allocationResult = await allocateSettlementToExpenses({
+      settlementId,
+      fromUserId: String(fromUserId),
+      toUserId: String(toUserId),
+      amount: numericAmount,
+      groupId: groupId || null,
+      actorId: userId,
+    });
     const affectedUserIds = Array.from(
-      new Set([String(fromUserId), String(toUserId), String(userId)].filter(Boolean))
+      new Set([
+        String(fromUserId),
+        String(toUserId),
+        String(userId),
+        ...allocationResult.affectedUserIds,
+      ].filter(Boolean))
     );
 
     let fromUserName = "Someone";
@@ -184,6 +200,20 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       settlementId,
+      settlement: {
+        _id: settlementId,
+        amount: numericAmount,
+        currency: settlementData.currency,
+        method: settlementData.method,
+        note: settlementData.note || "",
+        screenshot: settlementData.screenshot || null,
+        date: settlementData.date || new Date().toISOString(),
+        fromUserId: { _id: String(fromUserId), name: fromUserName },
+        toUserId: { _id: String(toUserId), name: toUserName },
+        groupId: groupId ? { _id: String(groupId), name: groupName || "Group" } : null,
+      },
+      allocations: allocationResult.allocations,
+      updatedExpenses: allocationResult.updatedExpenses,
       message: "Settlement created successfully",
     });
   } catch (error: any) {

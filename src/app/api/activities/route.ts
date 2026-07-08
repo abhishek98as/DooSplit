@@ -4,7 +4,7 @@ import {
   buildUserScopedCacheKey,
   getOrSetCacheJsonWithMeta,
 } from "@/lib/cache";
-import { firestoreReadRepository } from "@/lib/data/firestore-adapter";
+import { getActiveRepository } from "@/lib/data";
 import { getServerFirebaseUser } from "@/lib/auth/firebase-session";
 
 export const dynamic = "force-dynamic";
@@ -32,12 +32,14 @@ export async function GET(request: NextRequest) {
     const { data: payload, cacheStatus } = await getOrSetCacheJsonWithMeta(
       cacheKey,
       CACHE_TTL.activities,
-      async () =>
-        firestoreReadRepository.getActivities({
+      async () => {
+        const repository = await getActiveRepository();
+        return repository.getActivities({
           userId,
           page,
           limit,
-        })
+        });
+      }
     );
 
     return NextResponse.json(payload, {

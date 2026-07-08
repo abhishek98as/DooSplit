@@ -5,7 +5,7 @@ import {
   getOrSetCacheJsonWithMeta,
   invalidateUsersCache,
 } from "@/lib/cache";
-import { firestoreReadRepository } from "@/lib/data/firestore-adapter";
+import { getActiveRepository } from "@/lib/data";
 import { getServerFirebaseUser } from "@/lib/auth/firebase-session";
 import { newAppId } from "@/lib/ids";
 import { notifyFriendRequest } from "@/lib/notificationService";
@@ -80,11 +80,13 @@ export async function GET(request: NextRequest) {
     const { data: payload, cacheStatus } = await getOrSetCacheJsonWithMeta(
       cacheKey,
       CACHE_TTL.friends,
-      async () =>
-        firestoreReadRepository.getFriends({
+      async () => {
+        const repository = await getActiveRepository();
+        return repository.getFriends({
           userId,
           requestSearch: request.nextUrl.search,
-        })
+        });
+      }
     );
 
     return NextResponse.json(payload, {

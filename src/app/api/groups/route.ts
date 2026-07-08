@@ -6,7 +6,7 @@ import {
   invalidateUsersCache,
 } from "@/lib/cache";
 import { requireUser } from "@/lib/auth/require-user";
-import { firestoreReadRepository } from "@/lib/data/firestore-adapter";
+import { getActiveRepository } from "@/lib/data";
 import { createGroupInFirestore } from "@/lib/firestore/write-operations";
 import { getAdminDb } from "@/lib/firestore/admin";
 import { logGroupCreated } from "@/lib/activity-logger";
@@ -32,11 +32,13 @@ export async function GET(request: NextRequest) {
     const { data: payload, cacheStatus } = await getOrSetCacheJsonWithMeta(
       cacheKey,
       CACHE_TTL.groups,
-      async () =>
-        firestoreReadRepository.getGroups({
+      async () => {
+        const repository = await getActiveRepository();
+        return repository.getGroups({
           userId,
           requestSearch: request.nextUrl.search,
-        })
+        });
+      }
     );
 
     return NextResponse.json(payload, {

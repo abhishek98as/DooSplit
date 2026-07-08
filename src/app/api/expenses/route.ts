@@ -14,12 +14,13 @@ import {
   invalidateUsersCache,
 } from "@/lib/cache";
 import { requireUser } from "@/lib/auth/require-user";
-import { firestoreReadRepository } from "@/lib/data/firestore-adapter";
+import { getActiveRepository } from "@/lib/data";
 import { createExpenseInFirestore } from "@/lib/firestore/write-operations";
 import { getAdminDb } from "@/lib/firestore/admin";
 import { EXPENSE_MUTATION_CACHE_SCOPES } from "@/lib/cache-scopes";
 import { logExpenseAdded } from "@/lib/activity-logger";
 import { isPaymentStatus } from "@/lib/expenses/payment-status";
+import { createExpenseFromPayload } from "@/lib/expenses/expense-creation";
 
 export const dynamic = "force-dynamic";
 export const preferredRegion = "iad1";
@@ -69,7 +70,7 @@ export async function GET(request: NextRequest) {
     if (auth.response || !auth.user) {
       return auth.response as NextResponse;
     }
-    const userId = auth.user.id;
+    const userId = auth.user!.id;
 
     const searchParams = request.nextUrl.searchParams;
     const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
@@ -89,8 +90,9 @@ export async function GET(request: NextRequest) {
     const { data: payload, cacheStatus } = await getOrSetCacheJsonWithMeta(
       cacheKey,
       CACHE_TTL.expenses,
-      async () =>
-        firestoreReadRepository.getExpenses({
+      async () => {
+        const repository = await getActiveRepository();
+        return repository.getExpenses({
           userId,
           page,
           limit,
@@ -102,7 +104,8 @@ export async function GET(request: NextRequest) {
           maxAmount,
           startDate,
           endDate,
-        })
+        });
+      }
     );
 
     return NextResponse.json(payload, {
@@ -124,7 +127,25 @@ export async function POST(request: NextRequest) {
     if (auth.response || !auth.user) {
       return auth.response as NextResponse;
     }
-    const userId = auth.user.id;
+    {
+      const body = await request.json();
+      const result = await createExpenseFromPayload({
+        actor: {
+          id: auth.user!.id,
+          name: auth.user!.name || "Someone",
+          email: auth.user!.email || "",
+        },
+        payload: body,
+      });
+
+      return NextResponse.json({
+        success: true,
+        expenseId: result.expenseId,
+        expense: result.expense,
+        message: "Expense created successfully",
+      });
+    }
+    const userId = auth.user!.id;
 
     const body = await request.json();
     const {
@@ -317,7 +338,7 @@ export async function POST(request: NextRequest) {
         String(currency || "INR"),
         {
           id: userId,
-          name: auth.user.name || "Someone",
+          name: auth.user!.name || "Someone",
         },
         affectedUserIds,
         groupName
@@ -330,7 +351,7 @@ export async function POST(request: NextRequest) {
     // Log activity — fire and forget
     logExpenseAdded({
       actorId: userId,
-      actorName: auth.user.name || "Someone",
+      actorName: auth.user!.name || "Someone",
       expenseId,
       description: String(description),
       amount: totalAmount,
@@ -379,6 +400,18 @@ export async function POST(request: NextRequest) {
     });
   } catch (error: any) {
     console.error("Create expense error:", error);
+    const badRequestMessages = [
+      "Missing required fields",
+      "Amount must be greater than 0",
+      "Maximum 10 images allowed per expense",
+      "All image references must be valid strings",
+      "No valid participants provided",
+      "Invalid split method",
+      "Invalid split calculation",
+    ];
+    if (badRequestMessages.includes(String(error?.message || ""))) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
     return NextResponse.json(
       { error: error.message || "Failed to create expense" },
       { status: 500 }
