@@ -20,7 +20,6 @@
   },
   "env": {
     "DATA_BACKEND": "dynamodb",
-    "NEXT_PUBLIC_FIREBASE_DATABASE_ID": "(default)",
     "DYNAMODB_TABLE": "doosplit",
     "DYNAMODB_MIGRATION_TABLE": "doosplit_migration",
     "DYNAMODB_LOCKS_TABLE": "doosplit_locks",

@@ -7,12 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test:firebase": "node scripts/test-firebase-connection.js",
-    "seed:firebase": "node scripts/seed-firebase.js",
-    "backfill:user-normalized": "node scripts/backfill-user-normalized-fields.js",
-    "create:tables": "tsx scripts/create-dynamodb-tables.ts",
-    "migrate:to-dynamodb": "tsx scripts/migrate-mongodb-to-dynamodb.ts",
-    "migrate:dry-run": "tsx scripts/migrate-mongodb-to-dynamodb.ts --dry-run"
+    "create:tables": "tsx scripts/create-dynamodb-tables.ts"
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.1054.0",
@@ -27,7 +22,6 @@
     "jspdf": "^2.5.2",
     "jspdf-autotable": "^3.8.4",
     "lucide-react": "^0.563.0",
-    "mongoose": "^8.24.0",
     "next": "15.5.12",
     "nodemailer": "^8.0.4",
     "react": "^19.0.0",

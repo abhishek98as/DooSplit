@@ -1,8 +1,8 @@
 import type { NextRequest } from "next/server";
 import { cookies } from "next/headers";
 import { jwtVerify, createRemoteJWKSet } from "jose";
-import { getAdminAuth } from "@/lib/firestore/admin";
-import { User } from "@/lib/mongodb/models";
+import { getFirebaseAuth } from "@/lib/firebase-admin";
+import { getUserById } from "@/lib/dynamodb/entities/users";
 import { FIREBASE_SESSION_COOKIE_NAME } from "@/lib/auth/session-cookie";
 
 // Firebase publishes RSA public keys — verify ID tokens without Admin SDK credentials
@@ -67,7 +67,7 @@ async function getCookieTokenFromServerContext(): Promise<string | null> {
 
 async function resolveUserFromUid(identity: DecodedIdentity): Promise<ServerAppUser> {
   try {
-    const user = await User.findById(identity.uid).lean();
+    const user = await getUserById(identity.uid);
     return {
       id: identity.uid,
       authUid: identity.uid,
@@ -77,14 +77,10 @@ async function resolveUserFromUid(identity: DecodedIdentity): Promise<ServerAppU
       source: "firebase",
     };
   } catch {
-    // MongoDB unavailable — fallback to JWT identity
     return {
-      id: identity.uid,
-      authUid: identity.uid,
-      email: identity.email || null,
-      name: identity.name || null,
-      role: "user",
-      source: "firebase",
+      id: identity.uid, authUid: identity.uid,
+      email: identity.email || null, name: identity.name || null,
+      role: "user", source: "firebase",
     };
   }
 }
@@ -129,9 +125,8 @@ export async function verifyFirebaseIdTokenClaims(
 }
 
 async function verifyIdToken(idToken: string): Promise<ServerAppUser | null> {
-  // Step 1: Try Firebase Admin SDK (authoritative — can detect revoked tokens)
   try {
-    const auth = getAdminAuth();
+    const auth = getFirebaseAuth();
     const decoded = await auth.verifyIdToken(idToken);
     return resolveUserFromUid({
       uid: decoded.uid,
@@ -141,18 +136,13 @@ async function verifyIdToken(idToken: string): Promise<ServerAppUser | null> {
   } catch (err: any) {
     const isNotInitialized = err?.message?.includes("not initialized");
     if (!isNotInitialized) {
-      // Genuine auth error (expired, revoked, malformed) — do not fall through
       console.warn("[server-session] Admin verifyIdToken failed:", err?.code || err?.message);
       return null;
     }
-    // Admin SDK not configured — fall through to JWK verification
   }
 
-  // Step 2: Verify using Firebase public JWKs — no server credentials needed
   const claims = await verifyFirebaseIdTokenClaims(idToken);
-  if (!claims) {
-    return null;
-  }
+  if (!claims) return null;
   return resolveUserFromUid(claims);
 }
 

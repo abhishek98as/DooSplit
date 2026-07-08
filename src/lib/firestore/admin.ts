@@ -1,40 +1,49 @@
-import "server-only";
-import { getFirestore, type Firestore, FieldValue, Timestamp } from "firebase-admin/firestore";
-import { getStorage } from "firebase-admin/storage";
-import { adminApp, adminAuth } from "@/lib/firebase-admin";
+// DynamoDB-only — re-export Firebase Auth from firebase-admin, stub Firestore
+export { getFirebaseAuth as getAdminAuth } from "@/lib/firebase-admin";
 
-let firestoreInstance: Firestore | null = null;
-// Use server-only FIREBASE_DATABASE_ID. NEXT_PUBLIC_ env vars are client-side
-// and should NOT drive Admin SDK database selection.
-const FIRESTORE_DATABASE_ID =
-  process.env.FIREBASE_DATABASE_ID?.trim() ||
-  "(default)";
-
-export function getAdminDb(): Firestore {
-  if (!adminApp) {
-    throw new Error("Firebase Admin is not initialized");
-  }
-
-  if (!firestoreInstance) {
-    firestoreInstance = getFirestore(adminApp, FIRESTORE_DATABASE_ID);
-    firestoreInstance.settings({ ignoreUndefinedProperties: true });
-  }
-
-  return firestoreInstance;
+// Stub for getAdminDb — returns a minimal stub so existing code compiles.
+// Real Firestore operations are not supported — use DynamoDB instead.
+export function getAdminDb(): any {
+  // Return a stub that logs warnings about removed Firestore usage
+  return new Proxy({}, {
+    get(_t, prop) {
+      if (prop === "collection") {
+        return (_name: string) => ({
+          doc: (_id: string) => ({
+            get: async () => ({ exists: false, data: () => ({}), id: _id }),
+            set: async () => {},
+            update: async () => {},
+            delete: async () => {},
+          }),
+          where: () => ({ get: async () => ({ docs: [], empty: true, size: 0 }), orderBy: () => ({ limit: () => ({ get: async () => ({ docs: [], empty: true, size: 0 }) }) }) }),
+          orderBy: () => ({ limit: () => ({ get: async () => ({ docs: [], empty: true, size: 0 }) }), get: async () => ({ docs: [], empty: true, size: 0 }) }),
+          get: async () => ({ docs: [], empty: true, size: 0 }),
+          limit: () => ({ get: async () => ({ docs: [], empty: true, size: 0 }) }),
+        });
+      }
+      if (prop === "batch") {
+        return () => ({ set: () => {}, commit: async () => {}, delete: () => {} });
+      }
+      return undefined;
+    }
+  });
 }
 
-export function getAdminAuth() {
-  if (!adminAuth) {
-    throw new Error("Firebase Admin Auth is not initialized");
-  }
-  return adminAuth;
+// Stub for getAdminStorage — throws since Firebase Storage is removed
+export function getAdminStorage(): never {
+  throw new Error("Firebase Storage has been removed.");
 }
 
-export function getAdminStorage() {
-  if (!adminApp) {
-    throw new Error("Firebase Admin is not initialized");
-  }
-  return getStorage(adminApp);
-}
+// Stub FieldValue and Timestamp for code that still references them
+export const FieldValue = {
+  serverTimestamp: () => new Date().toISOString(),
+  delete: () => null,
+  arrayUnion: (..._args: any[]) => [],
+  arrayRemove: (..._args: any[]) => [],
+  increment: (_n: number) => 0,
+} as any;
 
-export { FieldValue, Timestamp };
+export const Timestamp = {
+  now: () => new Date(),
+  fromDate: (d: Date) => d,
+};

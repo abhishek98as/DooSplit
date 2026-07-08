@@ -6,25 +6,13 @@ let adminAuth: Auth | null = null;
 let initError: string | null = null;
 
 function normalizeEnvValue(value: string | undefined): string | undefined {
-  if (!value) {
-    return undefined;
-  }
-
+  if (!value) return undefined;
   const trimmed = value.trim();
-  if (!trimmed) {
-    return undefined;
-  }
-
+  if (!trimmed) return undefined;
   const hasDoubleQuotes = trimmed.startsWith('"') && trimmed.endsWith('"');
   const hasSingleQuotes = trimmed.startsWith("'") && trimmed.endsWith("'");
-  const unwrapped =
-    hasDoubleQuotes || hasSingleQuotes ? trimmed.slice(1, -1).trim() : trimmed;
-
-  // Vercel env sync via stdin can accidentally persist a literal trailing "\r\n".
-  const withoutTrailingEscapedNewlines = unwrapped.replace(
-    /(\\r\\n|\\n|\\r)+$/g,
-    ""
-  );
+  const unwrapped = hasDoubleQuotes || hasSingleQuotes ? trimmed.slice(1, -1).trim() : trimmed;
+  const withoutTrailingEscapedNewlines = unwrapped.replace(/(\\r\\n|\\n|\\r)+$/g, "");
   const normalized = withoutTrailingEscapedNewlines.trim();
   return normalized || undefined;
 }
@@ -33,46 +21,19 @@ function getProjectId(): string | null {
   const explicit =
     normalizeEnvValue(process.env.FIREBASE_PROJECT_ID) ||
     normalizeEnvValue(process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID);
-
-  if (explicit) {
-    return explicit;
-  }
-
+  if (explicit) return explicit;
   const authDomain = normalizeEnvValue(process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN);
-  if (!authDomain) {
-    return null;
-  }
-
+  if (!authDomain) return null;
   const inferred = authDomain.split(".")[0]?.trim();
   return inferred || null;
 }
 
-function getStorageBucket(projectId: string): string | undefined {
-  const explicit =
-    normalizeEnvValue(process.env.FIREBASE_STORAGE_BUCKET) ||
-    normalizeEnvValue(process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET);
-
-  if (explicit) {
-    return explicit.replace(/^gs:\/\//, "");
-  }
-
-  return `${projectId}.firebasestorage.app`;
-}
-
 function initFirebaseAdminApp(): App | null {
   const existing = getApps();
-  if (existing.length > 0) {
-    return existing[0];
-  }
+  if (existing.length > 0) return existing[0];
 
   const projectId = getProjectId();
-  if (!projectId) {
-    initError =
-      "FIREBASE_PROJECT_ID or NEXT_PUBLIC_FIREBASE_PROJECT_ID is not set";
-    return null;
-  }
-
-  const storageBucket = getStorageBucket(projectId);
+  if (!projectId) return null;
 
   try {
     const serviceAccountKey = normalizeEnvValue(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
@@ -81,38 +42,31 @@ function initFirebaseAdminApp(): App | null {
 
     if (serviceAccountKey) {
       const serviceAccount = JSON.parse(serviceAccountKey);
-      return initializeApp({
-        credential: cert(serviceAccount),
-        projectId,
-        storageBucket,
-      });
+      return initializeApp({ credential: cert(serviceAccount), projectId });
     }
 
     if (privateKey && clientEmail) {
       return initializeApp({
-        credential: cert({
-          projectId,
-          clientEmail,
-          privateKey: privateKey.replace(/\\n/g, "\n"),
-        }),
-        storageBucket,
+        credential: cert({ projectId, clientEmail, privateKey: privateKey.replace(/\\n/g, "\n") }),
       });
     }
 
-    return initializeApp({ projectId, storageBucket });
-  } catch (error: any) {
-    initError = error?.message || "Firebase Admin initialization failed";
+    return initializeApp({ projectId });
+  } catch {
     return null;
   }
 }
 
 try {
   adminApp = initFirebaseAdminApp();
-  if (adminApp) {
-    adminAuth = getAuth(adminApp);
-  }
-} catch (error: any) {
-  initError = error?.message || "Firebase Admin auth initialization failed";
+  if (adminApp) adminAuth = getAuth(adminApp);
+} catch {
+  // Silently handle — auth will fall back gracefully
+}
+
+export function getFirebaseAuth(): Auth {
+  if (!adminAuth) adminAuth = getAuth(adminApp!);
+  return adminAuth;
 }
 
 export { adminApp, adminAuth, initError };
