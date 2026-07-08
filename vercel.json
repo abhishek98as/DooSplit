@@ -3,14 +3,28 @@
   "outputDirectory": ".next",
   "framework": "nextjs",
   "regions": ["iad1"],
+  "crons": [
+    {
+      "path": "/api/cron/payment-reminders",
+      "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/cron/recurring-expenses",
+      "schedule": "0 0 * * *"
+    }
+  ],
   "functions": {
     "src/app/api/**/*.ts": {
       "maxDuration": 45
     }
   },
   "env": {
-    "DATA_BACKEND": "firestore",
-    "FIREBASE_DATABASE_ID": "doosplit",
-    "NEXT_PUBLIC_FIREBASE_DATABASE_ID": "doosplit"
+    "DATA_BACKEND": "mongodb",
+    "FIREBASE_DATABASE_ID": "(default)",
+    "NEXT_PUBLIC_FIREBASE_DATABASE_ID": "(default)",
+    "DYNAMODB_TABLE": "doosplit",
+    "DYNAMODB_MIGRATION_TABLE": "doosplit_migration",
+    "DYNAMODB_LOCKS_TABLE": "doosplit_locks",
+    "AWS_REGION": "eu-central-1"
   }
 }
