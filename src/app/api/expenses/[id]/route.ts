@@ -166,8 +166,8 @@ async function buildExpenseResponse(expenseId: string) {
       _id: String(participant.id || ""),
       expenseId: String(participant.expense_id || ""),
       userId: user ? mapUser(user) : null,
-      paidAmount: toNum(participant.paid_amount),
-      owedAmount: toNum(participant.owed_amount),
+      paidAmount: toNum(participant.amount_paid),
+      owedAmount: toNum(participant.amount_owed),
       isSettled: Boolean(participant.is_settled),
       createdAt: toIso(participant.created_at || participant._created_at),
       updatedAt: toIso(participant.updated_at || participant._updated_at),
@@ -197,6 +197,9 @@ async function buildExpenseResponse(expenseId: string) {
       images: Array.isArray(expense.images) ? expense.images : [],
       notes: expense.notes || "",
       paymentStatus,
+      recurringTemplateId: expense.recurring_template_id || undefined,
+      recurringRunId: expense.recurring_run_id || undefined,
+      recurrenceOccurrenceDate: toIso(expense.recurrence_occurrence_date),
       isDeleted: Boolean(expense.is_deleted),
       editHistory: editHistoryRaw,
       comments,
@@ -430,8 +433,8 @@ export async function PUT(
       diff.participants = {
         before: previousParticipants.map((participant: any) => ({
           userId: String(participant.user_id || ""),
-          paidAmount: Number(participant.paid_amount || 0),
-          owedAmount: Number(participant.owed_amount || 0),
+          paidAmount: Number(participant.amount_paid || 0),
+          owedAmount: Number(participant.amount_owed || 0),
         })),
         after: participants.map((participant: any) => ({
           userId: toStringId(participant.userId || participant),
@@ -877,4 +880,3 @@ export async function DELETE(
     );
   }
 }
-

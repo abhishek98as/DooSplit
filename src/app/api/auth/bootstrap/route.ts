@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth/require-user";
-import { getAdminDb, FieldValue } from "@/lib/firestore/admin";
-import { newAppId } from "@/lib/ids";
 import { invalidateUsersCache } from "@/lib/cache";
 import {
   friendshipPairKey,
@@ -9,36 +7,36 @@ import {
   normalizeName,
 } from "@/lib/social/keys";
 import { upsertBidirectionalFriendship } from "@/lib/social/friendship-store";
+import { User, Friendship, Invitation, ExpenseParticipant } from "@/lib/mongodb/models";
+import { newAppId } from "@/lib/ids";
+import { getMongoDb } from "@/lib/mongodb/client";
+import { getDataBackendMode } from "@/lib/data/config";
 
 export const dynamic = "force-dynamic";
 
 async function mergeDummyFriends(inviterId: string, newUserId: string, targetName: string) {
-  const db = getAdminDb();
+  const dummies = await User.find({
+    is_dummy: true,
+    created_by: inviterId,
+  }).lean();
 
-  const dummiesSnap = await db
-    .collection("users")
-    .where("is_dummy", "==", true)
-    .where("created_by", "==", inviterId)
-    .get();
-
-  const dummies = dummiesSnap.docs.filter((doc) => {
-    const name = String(doc.data().name || "").trim().toLowerCase();
+  const matchingDummies = dummies.filter((doc: any) => {
+    const name = String(doc.name || "").trim().toLowerCase();
     return name === targetName.trim().toLowerCase();
   });
 
   let merged = 0;
 
-  for (const dummyDoc of dummies) {
-    const dummyId = dummyDoc.id;
+  for (const dummy of matchingDummies) {
+    const dummyId = String(dummy._id);
     const migratedPairs = new Set<string>();
 
     const [linksAsUser, linksAsFriend] = await Promise.all([
-      db.collection("friendships").where("user_id", "==", dummyId).get(),
-      db.collection("friendships").where("friend_id", "==", dummyId).get(),
+      Friendship.find({ user_id: dummyId }).lean(),
+      Friendship.find({ friend_id: dummyId }).lean(),
     ]);
 
-    for (const doc of [...linksAsUser.docs, ...linksAsFriend.docs]) {
-      const row = doc.data();
+    for (const row of [...linksAsUser, ...linksAsFriend]) {
       const nextUserId = row.user_id === dummyId ? newUserId : String(row.user_id);
       const nextFriendId = row.friend_id === dummyId ? newUserId : String(row.friend_id);
       const nextStatus = row.status || "accepted";
@@ -50,59 +48,53 @@ async function mergeDummyFriends(inviterId: string, newUserId: string, targetNam
           await upsertBidirectionalFriendship({
             userId: nextUserId,
             friendId: nextFriendId,
-            status: nextStatus,
+            status: nextStatus as "pending" | "accepted",
             requestedBy: nextRequestedBy,
           });
           migratedPairs.add(pairKey);
         }
       }
 
-      await doc.ref.delete();
+      await Friendship.deleteOne({ _id: row._id });
     }
 
-    const dummyParticipants = await db
-      .collection("expense_participants")
-      .where("user_id", "==", dummyId)
-      .get();
+    const dummyParticipants = await ExpenseParticipant.find({ user_id: dummyId }).lean();
 
-    for (const participantDoc of dummyParticipants.docs) {
-      const participant = participantDoc.data();
+    for (const participant of dummyParticipants) {
       const expenseId = String(participant.expense_id);
-      const existing = await db
-        .collection("expense_participants")
-        .where("expense_id", "==", expenseId)
-        .where("user_id", "==", newUserId)
-        .limit(1)
-        .get();
+      const existingParticipant = await ExpenseParticipant.findOne({
+        expense_id: expenseId,
+        user_id: newUserId,
+      }).lean();
 
-      if (!existing.empty) {
-        const existingDoc = existing.docs[0];
-        const existingRow = existingDoc.data();
-        await existingDoc.ref.set(
+      if (existingParticipant) {
+        await ExpenseParticipant.updateOne(
+          { _id: existingParticipant._id },
           {
-            paid_amount: Number(existingRow.paid_amount || 0) + Number(participant.paid_amount || 0),
-            owed_amount: Number(existingRow.owed_amount || 0) + Number(participant.owed_amount || 0),
-            is_settled: Boolean(existingRow.is_settled) && Boolean(participant.is_settled),
-            updated_at: new Date().toISOString(),
-            _updated_at: FieldValue.serverTimestamp(),
-          },
-          { merge: true }
+            $inc: {
+              amount_paid: Number((participant as any).paid_amount || participant.amount_paid || 0),
+              amount_owed: Number((participant as any).owed_amount || participant.amount_owed || 0),
+            },
+            $set: {
+              is_settled: Boolean(existingParticipant.is_settled) && Boolean(participant.is_settled),
+              updated_at: new Date(),
+            },
+          }
         );
       } else {
-        const newId = newAppId();
-        await db.collection("expense_participants").doc(newId).set({
-          ...participant,
-          id: newId,
+        const { _id: _, ...participantData } = participant as any;
+        await ExpenseParticipant.create({
+          _id: newAppId(),
+          ...participantData,
           user_id: newUserId,
-          updated_at: new Date().toISOString(),
-          _updated_at: FieldValue.serverTimestamp(),
+          updated_at: new Date(),
         });
       }
 
-      await participantDoc.ref.delete();
+      await ExpenseParticipant.deleteOne({ _id: participant._id });
     }
 
-    await dummyDoc.ref.delete();
+    await User.deleteOne({ _id: dummyId });
     merged += 1;
   }
 
@@ -110,20 +102,13 @@ async function mergeDummyFriends(inviterId: string, newUserId: string, targetNam
 }
 
 async function processInvite(inviteToken: string, newUserId: string): Promise<{ inviterId: string | null; friendAdded: boolean }> {
-  const db = getAdminDb();
-  const inviteSnap = await db
-    .collection("invitations")
-    .where("token", "==", inviteToken)
-    .limit(1)
-    .get();
+  const invite = await Invitation.findOne({ token: inviteToken }).lean();
 
-  if (inviteSnap.empty) {
+  if (!invite) {
     return { inviterId: null, friendAdded: false };
   }
 
-  const inviteDoc = inviteSnap.docs[0];
-  const invite = inviteDoc.data();
-  const expiresAt = invite.expires_at ? new Date(invite.expires_at) : null;
+  const expiresAt = (invite as any).expires_at ? new Date((invite as any).expires_at) : null;
 
   if (invite.status !== "pending" || (expiresAt && expiresAt < new Date())) {
     return { inviterId: null, friendAdded: false };
@@ -134,13 +119,14 @@ async function processInvite(inviteToken: string, newUserId: string): Promise<{ 
     return { inviterId: null, friendAdded: false };
   }
 
-  await inviteDoc.ref.set(
+  await Invitation.updateOne(
+    { _id: invite._id },
     {
-      status: "accepted",
-      updated_at: new Date().toISOString(),
-      _updated_at: FieldValue.serverTimestamp(),
-    },
-    { merge: true }
+      $set: {
+        status: "accepted",
+        updated_at: new Date(),
+      },
+    }
   );
 
   await upsertBidirectionalFriendship({
@@ -162,9 +148,8 @@ async function processReferral(
     return { inviterId: null, friendAdded: false };
   }
 
-  const db = getAdminDb();
-  const inviterDoc = await db.collection("users").doc(inviterId).get();
-  if (!inviterDoc.exists) {
+  const inviter = await User.findById(inviterId).lean();
+  if (!inviter) {
     return { inviterId: null, friendAdded: false };
   }
 
@@ -194,63 +179,97 @@ export async function POST(request: NextRequest) {
       : "";
     const rawName = typeof body?.name === "string" ? body.name.trim() : "";
 
-    const db = getAdminDb();
-    const now = new Date().toISOString();
-
-    const userRef = db.collection("users").doc(auth.user.id);
-    const existing = await userRef.get();
-
     const fallbackName = rawName || auth.user.name || "User";
     const fallbackEmail = auth.user.email || "";
 
-    await userRef.set(
-      {
-        id: auth.user.id,
-        email: fallbackEmail,
-        email_normalized: normalizeEmail(fallbackEmail),
-        name: fallbackName,
-        name_normalized: normalizeName(fallbackName),
-        role: "user",
-        is_active: true,
-        is_dummy: false,
-        auth_provider: "firebase",
-        email_verified: true,
-        default_currency: existing.data()?.default_currency || "INR",
-        timezone: existing.data()?.timezone || "Asia/Kolkata",
-        language: existing.data()?.language || "en",
-        push_notifications_enabled: existing.data()?.push_notifications_enabled || false,
-        email_notifications_enabled: existing.data()?.email_notifications_enabled !== false,
-        created_at: existing.data()?.created_at || now,
-        updated_at: now,
-        _created_at: existing.exists ? existing.data()?._created_at : FieldValue.serverTimestamp(),
-        _updated_at: FieldValue.serverTimestamp(),
-      },
-      { merge: true }
-    );
+    const backend = getDataBackendMode();
+    let isNewUser = false;
+
+    if (backend === "dynamodb") {
+      const { getUserById, putUser, updateUser } = await import("@/lib/dynamodb/entities/users");
+      const existing = await getUserById(auth.user.id);
+      isNewUser = !existing;
+      const now = new Date().toISOString();
+      if (existing) {
+        await updateUser(auth.user.id, {
+          name: fallbackName,
+          name_normalized: normalizeName(fallbackName),
+          updated_at: now,
+        });
+      } else {
+        await putUser({
+          id: auth.user.id,
+          email: fallbackEmail,
+          email_normalized: normalizeEmail(fallbackEmail),
+          name: fallbackName,
+          name_normalized: normalizeName(fallbackName),
+          is_active: true,
+          created_at: now,
+          updated_at: now,
+        });
+      }
+    } else {
+      await getMongoDb();
+      const existing = await User.findById(auth.user.id).lean();
+      isNewUser = !existing;
+      await User.findOneAndUpdate(
+        { _id: auth.user.id },
+        {
+          $set: {
+            email: fallbackEmail,
+            email_normalized: normalizeEmail(fallbackEmail),
+            name: fallbackName,
+            name_normalized: normalizeName(fallbackName),
+            role: "user",
+            is_active: true,
+            is_dummy: false,
+            auth_provider: "firebase",
+            email_verified: true,
+            default_currency: existing?.default_currency || "INR",
+            timezone: existing?.timezone || "Asia/Kolkata",
+            language: existing?.language || "en",
+            push_notifications_enabled: existing?.push_notifications_enabled || false,
+            email_notifications_enabled: existing?.email_notifications_enabled !== false,
+            updated_at: new Date(),
+          },
+          $setOnInsert: {
+            _id: auth.user.id,
+            phone: null,
+            profile_picture: null,
+            fcm_tokens: [],
+            created_by: null,
+            created_at: existing?.created_at || new Date(),
+          },
+        },
+        { upsert: true }
+      );
+    }
 
     let inviterId: string | null = null;
     let friendAdded = false;
-
-    if (inviteToken) {
-      const inviteResult = await processInvite(inviteToken, auth.user.id);
-      inviterId = inviteResult.inviterId;
-      friendAdded = inviteResult.friendAdded;
-    } else if (inviterRef) {
-      const referralResult = await processReferral(inviterRef, auth.user.id);
-      inviterId = referralResult.inviterId;
-      friendAdded = referralResult.friendAdded;
-    }
-
     let dummyMerged = 0;
-    if (inviterId && fallbackName) {
-      dummyMerged = await mergeDummyFriends(inviterId, auth.user.id, fallbackName);
-    }
 
-    if (inviterId && (friendAdded || dummyMerged > 0)) {
-      await invalidateUsersCache(
-        [auth.user.id, inviterId],
-        ["friends", "activities", "dashboard-activity", "friend-details", "analytics"]
-      );
+    if (backend !== "dynamodb") {
+      if (inviteToken) {
+        const inviteResult = await processInvite(inviteToken, auth.user.id);
+        inviterId = inviteResult.inviterId;
+        friendAdded = inviteResult.friendAdded;
+      } else if (inviterRef) {
+        const referralResult = await processReferral(inviterRef, auth.user.id);
+        inviterId = referralResult.inviterId;
+        friendAdded = referralResult.friendAdded;
+      }
+
+      if (inviterId && fallbackName) {
+        dummyMerged = await mergeDummyFriends(inviterId, auth.user.id, fallbackName);
+      }
+
+      if (inviterId && (friendAdded || dummyMerged > 0)) {
+        await invalidateUsersCache(
+          [auth.user.id, inviterId],
+          ["friends", "activities", "dashboard-activity", "friend-details", "analytics"]
+        );
+      }
     }
 
     return NextResponse.json(
@@ -264,7 +283,7 @@ export async function POST(request: NextRequest) {
         friendAdded,
         dummyMerged,
       },
-      { status: existing.exists ? 200 : 201 }
+      { status: isNewUser ? 201 : 200 }
     );
   } catch (error: any) {
     return NextResponse.json(

@@ -255,6 +255,265 @@ async function computeUserNetBalance(userId: string): Promise<number> {
   return Number(balance.toFixed(2));
 }
 
+function round2(value: number): number {
+  return Number(value.toFixed(2));
+}
+
+function extractUserId(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string" || typeof value === "number") return String(value).trim();
+  if (typeof value === "object") {
+    const row = value as Record<string, unknown>;
+    return extractUserId(row.userId || row.id || row._id || row.uid);
+  }
+  return "";
+}
+
+function splitRecurringExpense(payload: Record<string, unknown>, ownerId: string) {
+  const amount = Number(payload.amount || 0);
+  const paidBy = extractUserId(payload.paidBy) || ownerId;
+  const rawParticipants = Array.isArray(payload.participants) ? payload.participants : [];
+  const participantIds = unique([
+    paidBy,
+    ...rawParticipants.map((participant) =>
+      extractUserId((participant as Record<string, unknown>)?.userId || participant)
+    ),
+  ]);
+  const splitMethod = String(payload.splitMethod || "equally");
+
+  if (participantIds.length === 0 || amount <= 0) {
+    throw new Error("Invalid recurring expense payload");
+  }
+
+  if (splitMethod === "exact") {
+    const rows = rawParticipants
+      .map((participant) => {
+        const row = participant as Record<string, unknown>;
+        return {
+          userId: extractUserId(row.userId || participant),
+          owedAmount: Number(row.exactAmount || row.owedAmount || 0),
+        };
+      })
+      .filter((row) => row.userId);
+    if (!rows.some((row) => row.userId === paidBy)) {
+      rows.push({ userId: paidBy, owedAmount: 0 });
+    }
+    return rows.map((row) => ({
+      user_id: row.userId,
+      paid_amount: row.userId === paidBy ? amount : 0,
+      owed_amount: round2(row.owedAmount),
+      is_settled: false,
+    }));
+  }
+
+  if (splitMethod === "percentage") {
+    let allocated = 0;
+    return rawParticipants
+      .map((participant, index) => {
+        const row = participant as Record<string, unknown>;
+        const userId = extractUserId(row.userId || participant);
+        const percentage = Number(row.percentage || 0);
+        const owed =
+          index === rawParticipants.length - 1
+            ? round2(amount - allocated)
+            : round2((amount * percentage) / 100);
+        allocated = round2(allocated + owed);
+        return {
+          user_id: userId,
+          paid_amount: userId === paidBy ? amount : 0,
+          owed_amount: owed,
+          is_settled: false,
+        };
+      })
+      .filter((row) => row.user_id);
+  }
+
+  if (splitMethod === "shares") {
+    const rows = rawParticipants
+      .map((participant) => {
+        const row = participant as Record<string, unknown>;
+        return {
+          userId: extractUserId(row.userId || participant),
+          shares: Number(row.shares || 1),
+        };
+      })
+      .filter((row) => row.userId);
+    const totalShares = rows.reduce((sum, row) => sum + row.shares, 0) || rows.length;
+    let allocated = 0;
+    return rows.map((row, index) => {
+      const owed =
+        index === rows.length - 1
+          ? round2(amount - allocated)
+          : round2((amount * row.shares) / totalShares);
+      allocated = round2(allocated + owed);
+      return {
+        user_id: row.userId,
+        paid_amount: row.userId === paidBy ? amount : 0,
+        owed_amount: owed,
+        is_settled: false,
+      };
+    });
+  }
+
+  const share = round2(amount / participantIds.length);
+  const remainder = round2(amount - share * participantIds.length);
+  return participantIds.map((userId, index) => ({
+    user_id: userId,
+    paid_amount: userId === paidBy ? amount : 0,
+    owed_amount: index === 0 ? round2(share + remainder) : share,
+    is_settled: false,
+  }));
+}
+
+function daysInUtcMonth(year: number, month: number): number {
+  return new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+}
+
+function addRecurringInterval(
+  value: Date,
+  frequency: string,
+  intervalValue: number,
+  dayOfMonth?: number | null
+): Date {
+  const interval = Math.max(1, Math.floor(Number(intervalValue || 1)));
+  const from = new Date(
+    Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate())
+  );
+  if (frequency === "weekly") {
+    from.setUTCDate(from.getUTCDate() + 7 * interval);
+    return from;
+  }
+  if (frequency === "yearly") {
+    const year = from.getUTCFullYear() + interval;
+    const month = from.getUTCMonth();
+    const day = Math.min(Number(dayOfMonth || from.getUTCDate()), daysInUtcMonth(year, month));
+    return new Date(Date.UTC(year, month, day));
+  }
+  const totalMonths = from.getUTCMonth() + interval;
+  const year = from.getUTCFullYear() + Math.floor(totalMonths / 12);
+  const month = totalMonths % 12;
+  const day = Math.min(Number(dayOfMonth || from.getUTCDate()), daysInUtcMonth(year, month));
+  return new Date(Date.UTC(year, month, day));
+}
+
+function recurringRunKey(templateId: string, occurrenceDate: Date): string {
+  return `${templateId}_${occurrenceDate.toISOString().slice(0, 10)}`;
+}
+
+async function createRecurringExpenseRun(templateDoc: any) {
+  const template = templateDoc.data() || {};
+  const templateId = String(template.id || templateDoc.id);
+  const ownerId = String(template.owner_id || "");
+  const nextRunAt = toDate(template.next_run_at);
+  if (!ownerId || !nextRunAt) {
+    return { status: "skipped" };
+  }
+
+  const occurrenceDate = new Date(
+    Date.UTC(nextRunAt.getUTCFullYear(), nextRunAt.getUTCMonth(), nextRunAt.getUTCDate())
+  );
+  const runId = recurringRunKey(templateId, occurrenceDate);
+  const runRef = db.collection("recurring_expense_runs").doc(runId);
+  const nextRun = addRecurringInterval(
+    occurrenceDate,
+    String(template.frequency || "monthly"),
+    Number(template.interval || 1),
+    template.day_of_month === undefined || template.day_of_month === null
+      ? null
+      : Number(template.day_of_month)
+  );
+
+  if ((await runRef.get()).exists) {
+    await templateDoc.ref.set(
+      {
+        last_run_at: occurrenceDate.toISOString(),
+        next_run_at: nextRun.toISOString(),
+        updated_at: new Date().toISOString(),
+        _updated_at: FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+    return { status: "duplicate" };
+  }
+
+  const payload = (template.expense_payload || {}) as Record<string, unknown>;
+  const expenseRef = db.collection("expenses").doc();
+  const participantRows = splitRecurringExpense(payload, ownerId);
+  const batch = db.batch();
+  const nowIso = new Date().toISOString();
+
+  batch.set(runRef, {
+    id: runId,
+    template_id: templateId,
+    owner_id: ownerId,
+    occurrence_date: occurrenceDate.toISOString(),
+    status: "created",
+    expense_id: expenseRef.id,
+    created_at: nowIso,
+    updated_at: nowIso,
+    _created_at: FieldValue.serverTimestamp(),
+    _updated_at: FieldValue.serverTimestamp(),
+  });
+  batch.set(expenseRef, {
+    id: expenseRef.id,
+    amount: Number(payload.amount || 0),
+    description: String(payload.description || template.name || "Recurring expense"),
+    category: String(payload.category || "other"),
+    date: occurrenceDate.toISOString(),
+    currency: String(payload.currency || "INR"),
+    created_by: ownerId,
+    group_id: payload.groupId || null,
+    images: Array.isArray(payload.images) ? payload.images : [],
+    notes: payload.notes || "",
+    is_deleted: false,
+    split_method: String(payload.splitMethod || "equally"),
+    payment_status: "unpaid",
+    payment_status_updated_at: nowIso,
+    payment_status_updated_by: ownerId,
+    recurring_template_id: templateId,
+    recurring_run_id: runId,
+    recurrence_occurrence_date: occurrenceDate.toISOString(),
+    created_at: FieldValue.serverTimestamp(),
+    updated_at: FieldValue.serverTimestamp(),
+  });
+  for (const participant of participantRows) {
+    const participantRef = db.collection("expense_participants").doc();
+    batch.set(participantRef, {
+      id: participantRef.id,
+      expense_id: expenseRef.id,
+      ...participant,
+      created_at: FieldValue.serverTimestamp(),
+      updated_at: FieldValue.serverTimestamp(),
+    });
+  }
+
+  const endDate = toDate(template.end_date);
+  batch.set(
+    templateDoc.ref,
+    {
+      last_run_at: occurrenceDate.toISOString(),
+      next_run_at: nextRun.toISOString(),
+      status: endDate && nextRun > endDate ? "ended" : "active",
+      updated_at: nowIso,
+      _updated_at: FieldValue.serverTimestamp(),
+    },
+    { merge: true }
+  );
+  await batch.commit();
+
+  const participantIds = unique(participantRows.map((row) => String(row.user_id || "")));
+  await createNotificationDocs(
+    participantIds.filter((id) => id !== ownerId),
+    {
+      type: "recurring_expense_created",
+      message: `Recurring expense "${String(payload.description || template.name || "Expense")}" was added`,
+      data: { expenseId: expenseRef.id, recurringTemplateId: templateId, runId },
+    }
+  );
+
+  return { status: "created", expenseId: expenseRef.id };
+}
+
 function mapUserName(snapshot: QueryDocumentSnapshot<DocumentData>): string {
   return String(snapshot.data().name || "").trim() || "Someone";
 }
@@ -430,6 +689,61 @@ export const sendDuePaymentReminders = scheduler.onSchedule(
     }
 
     logger.info("sendDuePaymentReminders completed", { notifiedCount });
+  }
+);
+
+export const runDueRecurringExpenses = scheduler.onSchedule(
+  { schedule: "every 60 minutes", timeZone: "Asia/Kolkata", region: REGION },
+  async () => {
+    const nowIso = new Date().toISOString();
+    const dueSnap = await db
+      .collection("recurring_expense_templates")
+      .where("status", "==", "active")
+      .where("next_run_at", "<=", nowIso)
+      .orderBy("next_run_at", "asc")
+      .limit(50)
+      .get();
+
+    let createdCount = 0;
+    let duplicateCount = 0;
+    let failedCount = 0;
+
+    for (const templateDoc of dueSnap.docs) {
+      let runsForTemplate = 0;
+      while (runsForTemplate < 12) {
+        const currentDoc = await templateDoc.ref.get();
+        if (!currentDoc.exists) break;
+        const current = currentDoc.data() || {};
+        if (current.status !== "active") break;
+        const nextRunAt = toDate(current.next_run_at);
+        if (!nextRunAt || nextRunAt > new Date()) break;
+
+        try {
+          const result = await createRecurringExpenseRun(currentDoc);
+          if (result.status === "duplicate") {
+            duplicateCount += 1;
+          } else if (result.status === "created") {
+            createdCount += 1;
+          }
+        } catch (error) {
+          failedCount += 1;
+          logger.error("runDueRecurringExpenses failed for template", {
+            templateId: templateDoc.id,
+            error,
+          });
+          break;
+        }
+
+        runsForTemplate += 1;
+      }
+    }
+
+    logger.info("runDueRecurringExpenses completed", {
+      checked: dueSnap.size,
+      createdCount,
+      duplicateCount,
+      failedCount,
+    });
   }
 );
 

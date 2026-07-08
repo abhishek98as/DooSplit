@@ -5,15 +5,16 @@ import {
   getOrSetCacheJson,
 } from "@/lib/cache";
 import { requireUser } from "@/lib/auth/require-user";
-import { getAdminDb } from "@/lib/firestore/admin";
+import { Expense, ExpenseParticipant, Settlement } from "@/lib/mongodb/models";
 import {
   fetchDocsByIds,
-  logSlowRoute,
   mapUser,
   toIso,
   toNum,
   uniqueStrings,
-} from "@/lib/firestore/route-helpers";
+} from "@/lib/mongodb/route-helpers";
+import { logSlowRoute } from "@/lib/firestore/route-helpers";
+import { User } from "@/lib/mongodb/models";
 import { getFriendshipStatus } from "@/lib/social/friendship-store";
 
 export const dynamic = "force-dynamic";
@@ -45,21 +46,15 @@ export async function GET(
     );
 
     const payload = await getOrSetCacheJson(cacheKey, CACHE_TTL.activities, async () => {
-      const db = getAdminDb();
       const transactions: any[] = [];
 
-      const [userParticipantsSnap, friendParticipantsSnap] = await Promise.all([
-        db.collection("expense_participants").where("user_id", "==", userId).get(),
-        db.collection("expense_participants").where("user_id", "==", friendId).get(),
+      const [userParticipants, friendParticipants] = await Promise.all([
+        ExpenseParticipant.find({ user_id: userId }).lean(),
+        ExpenseParticipant.find({ user_id: friendId }).lean(),
       ]);
 
-      const pairParticipants = [
-        ...userParticipantsSnap.docs.map((doc) => ({ id: doc.id, ...((doc.data() as any) || {}) })),
-        ...friendParticipantsSnap.docs.map((doc) => ({ id: doc.id, ...((doc.data() as any) || {}) })),
-      ];
-
       const pairByExpense = new Map<string, any[]>();
-      for (const participant of pairParticipants || []) {
+      for (const participant of [...userParticipants, ...friendParticipants]) {
         const key = String(participant.expense_id || "");
         const list = pairByExpense.get(key) || [];
         list.push(participant);
@@ -68,26 +63,25 @@ export async function GET(
 
       const expenseIds = Array.from(pairByExpense.entries())
         .filter(([, participants]) => {
-          const users = new Set(participants.map((participant) => String(participant.user_id || "")));
+          const users = new Set(participants.map((p) => String(p.user_id || "")));
           return users.has(userId) && users.has(friendId);
         })
         .map(([expenseId]) => expenseId);
 
       if (expenseIds.length > 0) {
         const [expensesById, allParticipants] = await Promise.all([
-          fetchDocsByIds("expenses", expenseIds),
-          Promise.all(
-            expenseIds.map(async (expenseId) => {
-              const snap = await db
-                .collection("expense_participants")
-                .where("expense_id", "==", expenseId)
-                .get();
-              return snap.docs.map((doc) => ({ id: doc.id, ...((doc.data() as any) || {}) }));
-            })
-          ).then((chunks) => chunks.flat()),
+          fetchDocsByIds(Expense, expenseIds),
+          (async () => {
+            const results = await Promise.all(
+              expenseIds.map((eid) =>
+                ExpenseParticipant.find({ expense_id: eid }).lean()
+              )
+            );
+            return results.flat();
+          })(),
         ]);
 
-        const expenses = Array.from(expensesById.values()).filter((row: any) => !row.is_deleted);
+        const expenses = Array.from(expensesById.values()).filter((row: any) => !row.is_deleted) as any[];
 
         const settledByExpense = new Map<string, boolean>();
         for (const participant of allParticipants || []) {
@@ -122,11 +116,11 @@ export async function GET(
 
           const netAmount = toNum(userParticipant.owed_amount);
           const isPositive =
-            toNum(userParticipant.paid_amount) > toNum(userParticipant.owed_amount);
-          const creator = usersMap.get(String(expense.created_by || ""));
-          const group = expense.group_id
+            toNum(userParticipant.amount_paid) > toNum(userParticipant.amount_owed);
+          const creator = usersMap.get(String(expense.created_by || "")) as any;
+          const group = (expense.group_id
             ? groupsMap.get(String(expense.group_id || ""))
-            : null;
+            : null) as any;
 
           transactions.push({
             id: String(expense.id || ""),
@@ -149,22 +143,15 @@ export async function GET(
         }
       }
 
-      const [outgoingSettlementsSnap, incomingSettlementsSnap] = await Promise.all([
-        db
-          .collection("settlements")
-          .where("from_user_id", "==", userId)
-          .where("to_user_id", "==", friendId)
-          .get(),
-        db
-          .collection("settlements")
-          .where("from_user_id", "==", friendId)
-          .where("to_user_id", "==", userId)
-          .get(),
-      ]);
-      const settlements = [
-        ...outgoingSettlementsSnap.docs.map((doc) => ({ id: doc.id, ...((doc.data() as any) || {}) })),
-        ...incomingSettlementsSnap.docs.map((doc) => ({ id: doc.id, ...((doc.data() as any) || {}) })),
-      ].sort((a, b) => {
+      const rawSettlements = await Settlement.find({
+        $or: [
+          { from_user_id: userId, to_user_id: friendId },
+          { from_user_id: friendId, to_user_id: userId },
+        ],
+      }).lean();
+      const settlements = rawSettlements
+        .map((doc: any) => ({ ...doc, id: String(doc._id) }))
+        .sort((a: any, b: any) => {
         const aMs = new Date(toIso(a.created_at || a._created_at || a.date)).getTime();
         const bMs = new Date(toIso(b.created_at || b._created_at || b.date)).getTime();
         return bMs - aMs;
@@ -180,9 +167,9 @@ export async function GET(
 
       for (const settlement of settlements || []) {
         const isFromUser = String(settlement.from_user_id || "") === userId;
-        const otherUser = isFromUser
+        const otherUser = (isFromUser
           ? settlementUsersMap.get(String(settlement.to_user_id || ""))
-          : settlementUsersMap.get(String(settlement.from_user_id || ""));
+          : settlementUsersMap.get(String(settlement.from_user_id || ""))) as any;
         const action = isFromUser ? "paid" : "received payment from";
 
         transactions.push({

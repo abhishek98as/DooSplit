@@ -1,9 +1,7 @@
-"use client";
+﻿"use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useSession } from "@/lib/auth/react-session";
-import { auth, db } from "@/lib/firebase";
-import { collection, onSnapshot, query, where } from "firebase/firestore";
 
 type RealtimeDomain =
   | "expenses"
@@ -19,31 +17,71 @@ interface DataUpdatedEventDetail {
   at: number;
 }
 
-const DEFAULT_DEBOUNCE_MS = 350;
-const AUTH_READY_TIMEOUT_MS = 6000;
-
-async function waitForAuthReady(timeoutMs = AUTH_READY_TIMEOUT_MS): Promise<void> {
-  if (auth.currentUser) {
-    return;
-  }
-
-  await new Promise<void>((resolve) => {
-    const timer = setTimeout(() => {
-      unsubscribe();
-      resolve();
-    }, timeoutMs);
-
-    const unsubscribe = auth.onAuthStateChanged(() => {
-      clearTimeout(timer);
-      unsubscribe();
-      resolve();
-    });
-  });
-}
-
 function emitDataUpdated(detail: DataUpdatedEventDetail) {
   window.dispatchEvent(new CustomEvent("doosplit:data-updated", { detail }));
 }
+
+// â”€â”€ SSE Connection (primary: real-time via EventSource) â”€â”€
+
+function connectSSE(
+  userId: string,
+  lastEventAt: string,
+  onDisconnect: () => void
+): { close: () => void } {
+  const url = `/api/realtime/events?since=${encodeURIComponent(lastEventAt)}`;
+  const source = new EventSource(url);
+
+  source.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      if (data.type === "data-updated") {
+        emitDataUpdated({
+          domains: (data.domains as RealtimeDomain[]) || ["activity"],
+          reason: data.reason || "Data changed",
+          at: Date.now(),
+        });
+      } else if (data.type === "reconnect") {
+        source.close();
+        onDisconnect();
+      }
+    } catch {
+      // Ignore malformed events
+    }
+  };
+
+  source.onerror = () => {
+    source.close();
+    onDisconnect();
+  };
+
+  return { close: () => source.close() };
+}
+
+// â”€â”€ Polling fallback â”€â”€
+
+function startPolling(
+  userId: string,
+  intervalMs: number,
+  stopSignal: { current: boolean }
+) {
+  const poll = () => {
+    if (stopSignal.current) return;
+
+    emitDataUpdated({
+      domains: ["activity"],
+      reason: "Polling refresh",
+      at: Date.now(),
+    });
+
+    if (!stopSignal.current) {
+      setTimeout(poll, intervalMs);
+    }
+  };
+
+  setTimeout(poll, intervalMs);
+}
+
+// â”€â”€ Provider â”€â”€
 
 interface RealtimeDataSyncProviderProps {
   children: React.ReactNode;
@@ -51,152 +89,42 @@ interface RealtimeDataSyncProviderProps {
 
 export function RealtimeDataSyncProvider({ children }: RealtimeDataSyncProviderProps) {
   const { data: session, status } = useSession();
+  const sseRef = useRef<{ close: () => void } | null>(null);
+  const pollStopRef = useRef(false);
 
   useEffect(() => {
-    if (status !== "authenticated" || !session?.user?.id) {
-      return;
-    }
+    if (status !== "authenticated" || !session?.user?.id) return;
 
-    let disposed = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const pendingDomains = new Set<RealtimeDomain>();
-    const pendingReasons = new Set<string>();
-    const unsubscribers: Array<() => void> = [];
-    let permissionWarningShown = false;
+    const userId = session.user.id;
+    const lastEventAt = new Date(Date.now() - 60_000).toISOString(); // last 60s
 
-    const flushPending = () => {
-      if (pendingDomains.size === 0 || disposed) {
-        return;
-      }
+    // Try SSE first
+    let reconnectTimer: ReturnType<typeof setTimeout>;
 
-      const domains = Array.from(pendingDomains);
-      const reason =
-        pendingReasons.size > 0 ? Array.from(pendingReasons).join(",") : "realtime-update";
-
-      pendingDomains.clear();
-      pendingReasons.clear();
-
-      emitDataUpdated({
-        domains,
-        reason,
-        at: Date.now(),
+    const startSSE = () => {
+      sseRef.current?.close();
+      sseRef.current = connectSSE(userId, lastEventAt, () => {
+        // SSE disconnected â€” fall back to polling after 5s delay
+        reconnectTimer = setTimeout(() => {
+          pollStopRef.current = false;
+          startPolling(userId, 30_000, pollStopRef);
+          // Retry SSE after 60s
+          setTimeout(() => {
+            pollStopRef.current = true;
+            startSSE();
+          }, 60_000);
+        }, 5_000);
       });
     };
 
-    const queueUpdate = (domains: RealtimeDomain[], reason: string) => {
-      for (const domain of domains) {
-        pendingDomains.add(domain);
-      }
-      pendingReasons.add(reason);
-
-      if (timer) {
-        clearTimeout(timer);
-      }
-      timer = setTimeout(flushPending, DEFAULT_DEBOUNCE_MS);
-    };
-
-    const handleListenerError = (label: string) => (error: any) => {
-      const code = error?.code || "unknown";
-      if (code === "permission-denied") {
-        if (!permissionWarningShown) {
-          permissionWarningShown = true;
-          console.warn(
-            "Realtime data sync listeners are disabled by Firestore rules for this session."
-          );
-        }
-        return;
-      }
-      console.warn(`Realtime data sync listener error (${label}): ${code}`);
-    };
-
-    const subscribeQuery = (
-      label: string,
-      queryRef: ReturnType<typeof query>,
-      domains: RealtimeDomain[]
-    ) => {
-      let initialized = false;
-      const unsubscribe = onSnapshot(
-        queryRef,
-        (snapshot) => {
-          if (!initialized) {
-            initialized = true;
-            return;
-          }
-          if (snapshot.docChanges().length === 0) {
-            return;
-          }
-          queueUpdate(domains, label);
-        },
-        handleListenerError(label)
-      );
-      unsubscribers.push(unsubscribe);
-    };
-
-    const startSubscriptions = async () => {
-      await waitForAuthReady();
-      if (disposed) {
-        return;
-      }
-      const firebaseUser = auth.currentUser;
-      if (!firebaseUser || firebaseUser.uid !== session.user.id) {
-        return;
-      }
-
-      await firebaseUser.getIdToken().catch(() => undefined);
-      if (disposed) {
-        return;
-      }
-
-      const uid = session.user.id;
-      subscribeQuery(
-        "expense_participants",
-        query(collection(db, "expense_participants"), where("user_id", "==", uid)),
-        ["expenses", "friends", "groups", "analytics", "activity"]
-      );
-      subscribeQuery(
-        "settlements_from",
-        query(collection(db, "settlements"), where("from_user_id", "==", uid)),
-        ["settlements", "friends", "analytics", "activity", "expenses"]
-      );
-      subscribeQuery(
-        "settlements_to",
-        query(collection(db, "settlements"), where("to_user_id", "==", uid)),
-        ["settlements", "friends", "analytics", "activity", "expenses"]
-      );
-      subscribeQuery(
-        "friendships_user",
-        query(collection(db, "friendships"), where("user_id", "==", uid)),
-        ["friends", "groups", "activity"]
-      );
-      subscribeQuery(
-        "friendships_friend",
-        query(collection(db, "friendships"), where("friend_id", "==", uid)),
-        ["friends", "groups", "activity"]
-      );
-      subscribeQuery(
-        "group_members",
-        query(collection(db, "group_members"), where("user_id", "==", uid)),
-        ["groups", "friends", "activity"]
-      );
-      subscribeQuery(
-        "notifications",
-        query(collection(db, "notifications"), where("user_id", "==", uid)),
-        ["activity"]
-      );
-    };
-
-    void startSubscriptions();
+    startSSE();
 
     return () => {
-      disposed = true;
-      if (timer) {
-        clearTimeout(timer);
-      }
-      for (const unsubscribe of unsubscribers) {
-        unsubscribe();
-      }
+      sseRef.current?.close();
+      pollStopRef.current = true;
+      clearTimeout(reconnectTimer);
     };
-  }, [session?.user?.id, status]);
+  }, [status, session?.user?.id]);
 
   return <>{children}</>;
 }

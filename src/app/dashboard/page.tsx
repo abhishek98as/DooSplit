@@ -75,6 +75,11 @@ interface NudgeItem {
   message: string;
   actionLabel?: string;
   actionHref?: string;
+  state?: {
+    dismissedAt?: string;
+    snoozedUntil?: string;
+    actedAt?: string;
+  };
 }
 
 interface SectionLoadingState {
@@ -506,6 +511,29 @@ export default function DashboardPage() {
     return "border-blue-200 bg-blue-50 dark:bg-blue-900/20 dark:border-blue-900/30";
   };
 
+  const updateNudgeState = async (
+    nudgeId: string,
+    action: "dismiss" | "snooze" | "mark_acted"
+  ) => {
+    try {
+      const snoozeUntil =
+        action === "snooze"
+          ? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+          : undefined;
+      const response = await fetch(`/api/nudges/${encodeURIComponent(nudgeId)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, snoozeUntil }),
+      });
+      if (!response.ok) {
+        throw new Error("Failed to update nudge");
+      }
+      setNudges((prev) => prev.filter((nudge) => nudge.id !== nudgeId));
+    } catch (error) {
+      console.error("Failed to update nudge:", error);
+    }
+  };
+
   return (
     <AppShell>
       <div className="p-4 md:p-8 space-y-6">
@@ -705,10 +733,30 @@ export default function DashboardPage() {
                         {nudge.message}
                       </p>
                       {nudge.actionLabel && nudge.actionHref && (
-                        <Link href={nudge.actionHref} className="inline-block mt-2 text-xs font-medium text-primary hover:underline">
+                        <Link
+                          href={nudge.actionHref}
+                          onClick={() => void updateNudgeState(nudge.id, "mark_acted")}
+                          className="inline-block mt-2 text-xs font-medium text-primary hover:underline"
+                        >
                           {nudge.actionLabel}
                         </Link>
                       )}
+                      <div className="flex gap-2 mt-2">
+                        <button
+                          type="button"
+                          onClick={() => void updateNudgeState(nudge.id, "snooze")}
+                          className="text-xs text-neutral-600 dark:text-dark-text-secondary hover:text-primary"
+                        >
+                          Snooze
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void updateNudgeState(nudge.id, "dismiss")}
+                          className="text-xs text-neutral-600 dark:text-dark-text-secondary hover:text-primary"
+                        >
+                          Dismiss
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -962,4 +1010,3 @@ export default function DashboardPage() {
     </AppShell>
   );
 }
-

@@ -152,6 +152,9 @@ export default function NotificationDropdown() {
     switch (type) {
       case "expense_added":
       case "expense_updated":
+      case "expense_mentioned":
+      case "expense_comment_added":
+      case "recurring_expense_created":
         return <Receipt className="h-4 w-4 text-primary" />;
       case "payment_received":
       case "settlement_added":

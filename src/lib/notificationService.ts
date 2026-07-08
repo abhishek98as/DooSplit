@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { getSupabaseAdminClient } from "@/lib/supabase/admin";
+import { Notification } from "@/lib/mongodb/models";
 
 type IdLike = string | { toString(): string };
 
@@ -14,14 +14,6 @@ function newId(): string {
   return crypto.randomBytes(12).toString("hex");
 }
 
-function requireSupabase() {
-  const supabase = getSupabaseAdminClient();
-  if (!supabase) {
-    throw new Error("Supabase service client is not configured");
-  }
-  return supabase;
-}
-
 function toId(value: IdLike): string {
   return typeof value === "string" ? value : value.toString();
 }
@@ -31,25 +23,17 @@ function toId(value: IdLike): string {
  */
 export async function createNotification(params: CreateNotificationParams) {
   try {
-    const supabase = requireSupabase();
-    const payload = {
-      id: newId(),
+    const doc = await Notification.create({
+      _id: newId(),
       user_id: toId(params.userId),
       type: params.type,
-      message: params.message,
+      title: params.type,
+      body: params.message,
       data: params.data || {},
       is_read: false,
-    };
-    const { data, error } = await supabase
-      .from("notifications")
-      .insert(payload)
-      .select("*")
-      .single();
-    if (error) {
-      throw error;
-    }
-
-    return data;
+      created_at: new Date(),
+    });
+    return doc;
   } catch (error) {
     console.error("Error creating notification:", error);
     throw error;
@@ -61,29 +45,21 @@ export async function createNotification(params: CreateNotificationParams) {
  */
 export async function createNotifications(notifications: CreateNotificationParams[]) {
   try {
-    if (notifications.length === 0) {
-      return [];
-    }
+    if (notifications.length === 0) return [];
 
-    const supabase = requireSupabase();
     const rows = notifications.map((n) => ({
-      id: newId(),
+      _id: newId(),
       user_id: toId(n.userId),
       type: n.type,
-      message: n.message,
+      title: n.type,
+      body: n.message,
       data: n.data || {},
       is_read: false,
+      created_at: new Date(),
     }));
 
-    const { data, error } = await supabase
-      .from("notifications")
-      .insert(rows)
-      .select("*");
-    if (error) {
-      throw error;
-    }
-
-    return data || [];
+    const docs = await Notification.insertMany(rows, { ordered: false });
+    return docs;
   } catch (error) {
     console.error("Error creating notifications:", error);
     throw error;

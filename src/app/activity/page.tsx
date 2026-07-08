@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useSession } from "@/lib/auth/react-session";
+import Link from "next/link";
 import AppShell from "@/components/layout/AppShell";
 import Card, { CardContent } from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
@@ -26,6 +27,9 @@ interface Activity {
   description: string;
   amount?: number;
   currency?: string;
+  actionHref?: string;
+  actionLabel?: string;
+  expenseId?: string;
   createdAt: string;
   user?: {
     id: string;
@@ -237,6 +241,9 @@ export default function ActivityPage() {
       case "expense_added":
       case "expense_updated":
       case "expense_deleted":
+      case "expense_comment_added":
+      case "expense_mentioned":
+      case "recurring_expense_created":
         return (
           <div className="flex items-start gap-3">
             <div className="h-10 w-10 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
@@ -268,6 +275,14 @@ export default function ActivityPage() {
                   {formatDate(activity.createdAt)}
                 </span>
               </div>
+              {activity.expenseId && (
+                <Link
+                  href={`/expenses/edit/${activity.expenseId}`}
+                  className="inline-block mt-2 text-xs font-medium text-primary hover:underline"
+                >
+                  Open expense
+                </Link>
+              )}
             </div>
           </div>
         );
@@ -342,6 +357,31 @@ export default function ActivityPage() {
               <span className="text-xs text-neutral-500">
                 {formatDate(activity.createdAt)}
               </span>
+            </div>
+          </div>
+        );
+
+      case "smart_nudge":
+        return (
+          <div className="flex items-start gap-3">
+            <div className="h-10 w-10 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center flex-shrink-0">
+              <Clock className="h-5 w-5 text-blue-600 dark:text-blue-300" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm text-neutral-900 dark:text-dark-text">
+                {activity.description}
+              </p>
+              <span className="text-xs text-neutral-500">
+                {formatDate(activity.createdAt)}
+              </span>
+              {activity.actionHref && (
+                <Link
+                  href={activity.actionHref}
+                  className="block mt-2 text-xs font-medium text-primary hover:underline"
+                >
+                  {activity.actionLabel || "Open"}
+                </Link>
+              )}
             </div>
           </div>
         );

@@ -5,13 +5,13 @@ import {
   getOrSetCacheJson,
 } from "@/lib/cache";
 import { requireUser } from "@/lib/auth/require-user";
-import { getAdminDb } from "@/lib/firestore/admin";
+import { Expense, ExpenseParticipant, Settlement } from "@/lib/mongodb/models";
 import {
   fetchDocsByIds,
-  logSlowRoute,
   toNum,
   uniqueStrings,
-} from "@/lib/firestore/route-helpers";
+} from "@/lib/mongodb/route-helpers";
+import { logSlowRoute } from "@/lib/firestore/route-helpers";
 
 export const dynamic = "force-dynamic";
 export const preferredRegion = "iad1";
@@ -64,16 +64,7 @@ export async function GET(request: NextRequest) {
     );
 
     const payload = await getOrSetCacheJson(cacheKey, CACHE_TTL.analytics, async () => {
-      const db = getAdminDb();
-      const userParticipantsSnap = await db
-        .collection("expense_participants")
-        .where("user_id", "==", userId)
-        .get();
-
-      const userParticipants: any[] = userParticipantsSnap.docs.map((doc) => ({
-        id: doc.id,
-        ...((doc.data() as any) || {}),
-      }));
+      const userParticipants = await ExpenseParticipant.find({ user_id: userId }).lean();
 
       const expenseIds = uniqueStrings(
         userParticipants.map((participant: any) => String(participant.expense_id || ""))
@@ -93,7 +84,7 @@ export async function GET(request: NextRequest) {
         };
       }
 
-      const expensesById = await fetchDocsByIds("expenses", expenseIds);
+      const expensesById = await fetchDocsByIds(Expense, expenseIds);
       const expenseRows = Array.from(expensesById.values()).filter((row: any) => {
         if (row.is_deleted) {
           return false;
@@ -144,7 +135,7 @@ export async function GET(request: NextRequest) {
           999
         );
 
-        const monthExpenses = expenseRows.filter((expense: any) => {
+        const monthExpenses: any[] = expenseRows.filter((expense: any) => {
           const expenseDate = toDateMs(expense.date || expense.created_at || expense._created_at);
           return expenseDate >= monthStart.getTime() && expenseDate <= monthEnd.getTime();
         });
@@ -168,26 +159,20 @@ export async function GET(request: NextRequest) {
       let totalSpent = 0;
       let totalPaid = 0;
       for (const participant of participantByExpense.values()) {
-        totalSpent += toNum(participant.owed_amount);
-        totalPaid += toNum(participant.paid_amount);
+        totalSpent += toNum(participant.amount_owed);
+        totalPaid += toNum(participant.amount_paid);
       }
 
-      const [fromSettlementsSnap, toSettlementsSnap] = await Promise.all([
-        db
-          .collection("settlements")
-          .where("from_user_id", "==", userId)
-          .where("date", ">=", startDate.toISOString())
-          .get(),
-        db
-          .collection("settlements")
-          .where("to_user_id", "==", userId)
-          .where("date", ">=", startDate.toISOString())
-          .get(),
-      ]);
+      const settlementDocs = await Settlement.find({
+        $or: [
+          { from_user_id: userId, date: { $gte: startDate.toISOString() } },
+          { to_user_id: userId, date: { $gte: startDate.toISOString() } },
+        ],
+      }).lean();
 
       const settlementMap = new Map<string, any>();
-      for (const doc of [...fromSettlementsSnap.docs, ...toSettlementsSnap.docs]) {
-        settlementMap.set(doc.id, { id: doc.id, ...((doc.data() as any) || {}) });
+      for (const doc of settlementDocs) {
+        settlementMap.set(String(doc._id), doc);
       }
 
       const totalSettled = Array.from(settlementMap.values()).reduce(

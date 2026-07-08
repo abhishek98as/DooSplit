@@ -276,10 +276,10 @@ export function PWAProvider({ children }: PWAProviderProps) {
     const handleBeforeInstallPrompt = (event: Event) => {
       const e = event as BeforeInstallPromptEvent;
 
-      // Prevent the default prompt
-      e.preventDefault();
-
-      // Store the event for later use
+      // Store the event for later use (custom install button).
+      // Do NOT preventDefault() — let Chrome show its native mini-infobar.
+      // Calling preventDefault() without later calling prompt() triggers:
+      //   "Banner not shown: beforeinstallpromptevent.preventDefault() called."
       setDeferredPrompt(e);
       setCanInstall(true);
       syncInstallEnvironment();

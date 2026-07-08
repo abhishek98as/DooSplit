@@ -88,7 +88,7 @@ export async function GET(request: NextRequest) {
         }
         const expenseMs = toDateMs(expense.date || expense.created_at || expense._created_at);
         if (expenseMs <= cutoffMs) {
-          delta += toNum(participant.paid_amount) - toNum(participant.owed_amount);
+          delta += toNum(participant.amount_paid) - toNum(participant.amount_owed);
         }
       }
       return delta;
@@ -125,7 +125,7 @@ export async function GET(request: NextRequest) {
           return null;
         }
 
-        const delta = toNum(participant.paid_amount) - toNum(participant.owed_amount);
+        const delta = toNum(participant.amount_paid) - toNum(participant.amount_owed);
         return {
           id: String(expense.id || participant.expense_id || ""),
           type: "expense",

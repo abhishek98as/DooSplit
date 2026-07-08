@@ -43,6 +43,9 @@ interface Expense {
   images?: string[];
   notes?: string;
   paymentStatus: PaymentStatus;
+  recurringTemplateId?: string;
+  recurringRunId?: string;
+  recurrenceOccurrenceDate?: string;
   groupId?: {
     _id: string;
     name: string;
@@ -902,6 +905,14 @@ export default function ExpensesPage() {
                                 <span>•</span>
                                 <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
                                   Non-Group
+                                </span>
+                              </>
+                            )}
+                            {expense.recurringTemplateId && (
+                              <>
+                                <span>â€¢</span>
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-teal-100 text-teal-800 dark:bg-teal-900 dark:text-teal-200">
+                                  Recurring
                                 </span>
                               </>
                             )}

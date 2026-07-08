@@ -9,17 +9,25 @@
     "lint": "next lint",
     "test:firebase": "node scripts/test-firebase-connection.js",
     "seed:firebase": "node scripts/seed-firebase.js",
-    "backfill:user-normalized": "node scripts/backfill-user-normalized-fields.js"
+    "backfill:user-normalized": "node scripts/backfill-user-normalized-fields.js",
+    "create:tables": "tsx scripts/create-dynamodb-tables.ts",
+    "migrate:to-dynamodb": "tsx scripts/migrate-mongodb-to-dynamodb.ts",
+    "migrate:dry-run": "tsx scripts/migrate-mongodb-to-dynamodb.ts --dry-run"
   },
   "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1054.0",
+    "@aws-sdk/lib-dynamodb": "^3.1054.0",
+    "@aws-sdk/util-dynamodb": "^3.996.2",
     "@types/bcryptjs": "^2.4.6",
     "bcryptjs": "^2.4.3",
+    "dotenv": "^17.4.2",
     "firebase": "^12.9.0",
     "firebase-admin": "^13.6.1",
     "jose": "^6.2.0",
     "jspdf": "^2.5.2",
     "jspdf-autotable": "^3.8.4",
     "lucide-react": "^0.563.0",
+    "mongoose": "^8.24.0",
     "next": "15.5.12",
     "nodemailer": "^8.0.4",
     "react": "^19.0.0",
@@ -37,6 +45,7 @@
     "eslint-config-next": "15.5.12",
     "postcss": "^8",
     "tailwindcss": "^3.4.1",
+    "tsx": "^4.22.3",
     "typescript": "^5"
   }
 }

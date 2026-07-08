@@ -1,8 +1,7 @@
-import { getAdminAuth, getAdminDb } from "@/lib/firestore/admin";
+import { getAdminAuth } from "@/lib/firestore/admin";
 
 export async function getFirebaseAccountDetails() {
   const auth = getAdminAuth();
-  getAdminDb();
 
   const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || null;
 

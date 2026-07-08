@@ -5,8 +5,8 @@ import {
   getOrSetCacheJson,
 } from "@/lib/cache";
 import { requireUser } from "@/lib/auth/require-user";
-import { getAdminDb } from "@/lib/firestore/admin";
-import { fetchDocsByIds, round2, toNum, uniqueStrings } from "@/lib/firestore/route-helpers";
+import { GroupMember, Expense, ExpenseParticipant, Settlement, User } from "@/lib/mongodb/models";
+import { round2, toNum, uniqueStrings, fetchDocsByIds } from "@/lib/mongodb/route-helpers";
 
 export const dynamic = "force-dynamic";
 
@@ -77,15 +77,12 @@ export async function GET(
       return auth.response as NextResponse;
     }
     const userId = auth.user.id;
-    const db = getAdminDb();
 
-    const membershipSnap = await db
-      .collection("group_members")
-      .where("group_id", "==", id)
-      .where("user_id", "==", userId)
-      .limit(1)
-      .get();
-    if (membershipSnap.empty) {
+    const membership = await GroupMember.findOne({
+      group_id: id,
+      user_id: userId,
+    }).lean();
+    if (!membership) {
       return NextResponse.json(
         { error: "You are not a member of this group" },
         { status: 403 }
@@ -94,12 +91,9 @@ export async function GET(
 
     const cacheKey = buildUserScopedCacheKey("groups", userId, `debts:${id}`);
     const payload = await getOrSetCacheJson(cacheKey, CACHE_TTL.friends, async () => {
-      const groupMembersSnap = await db
-        .collection("group_members")
-        .where("group_id", "==", id)
-        .get();
+      const groupMembers = await GroupMember.find({ group_id: id }).lean();
       const memberIds = uniqueStrings(
-        groupMembersSnap.docs.map((doc) => String(doc.data()?.user_id || ""))
+        groupMembers.map((doc: any) => String(doc.user_id || ""))
       );
       if (memberIds.length === 0) {
         return {
@@ -115,43 +109,27 @@ export async function GET(
         memberIds.map((memberId) => [String(memberId), 0] as [string, number])
       );
 
-      const expensesSnap = await db
-        .collection("expenses")
-        .where("group_id", "==", id)
-        .where("is_deleted", "==", false)
-        .get();
-      const expenseIds = expensesSnap.docs.map((doc) => String(doc.data()?.id || doc.id));
+      const expenses = await Expense.find({
+        group_id: id,
+        is_deleted: { $ne: true },
+      }).lean();
+      const expenseIds = expenses.map((e: any) => String(e._id));
 
       if (expenseIds.length > 0) {
-        for (const expenseIdChunk of (() => {
-          const chunks: string[][] = [];
-          for (let i = 0; i < expenseIds.length; i += 10) {
-            chunks.push(expenseIds.slice(i, i + 10));
-          }
-          return chunks;
-        })()) {
-          const participantsSnap = await db
-            .collection("expense_participants")
-            .where("expense_id", "in", expenseIdChunk)
-            .get();
-          for (const participantDoc of participantsSnap.docs) {
-            const participant = participantDoc.data() || {};
-            const participantUserId = String(participant.user_id || "");
-            if (!netMap.has(participantUserId)) {
-              continue;
-            }
-            const delta = toNum(participant.paid_amount) - toNum(participant.owed_amount);
-            netMap.set(participantUserId, round2((netMap.get(participantUserId) || 0) + delta));
-          }
+        const participants = await ExpenseParticipant.find({
+          expense_id: { $in: expenseIds },
+        }).lean();
+
+        for (const participant of participants) {
+          const participantUserId = String(participant.user_id || "");
+          if (!netMap.has(participantUserId)) continue;
+          const delta = toNum(participant.amount_paid) - toNum(participant.amount_owed);
+          netMap.set(participantUserId, round2((netMap.get(participantUserId) || 0) + delta));
         }
       }
 
-      const settlementsSnap = await db
-        .collection("settlements")
-        .where("group_id", "==", id)
-        .get();
-      for (const settlementDoc of settlementsSnap.docs) {
-        const settlement = settlementDoc.data() || {};
+      const settlements = await Settlement.find({ group_id: id }).lean();
+      for (const settlement of settlements) {
         const from = String(settlement.from_user_id || "");
         const to = String(settlement.to_user_id || "");
         const amount = toNum(settlement.amount);
@@ -164,7 +142,7 @@ export async function GET(
       }
 
       const simplified = simplifyFromNet(netMap);
-      const usersMap = await fetchDocsByIds("users", memberIds);
+      const usersMap = await fetchDocsByIds<any>(User, memberIds);
 
       const transactions = simplified.transactions.map((tx) => {
         const fromUser = usersMap.get(tx.from);

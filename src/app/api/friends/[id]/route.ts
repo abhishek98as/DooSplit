@@ -141,7 +141,7 @@ export async function GET(
         for (const p of participants) {
           const uid = String(p.user_id || "");
           if (!uid) continue;
-          const net = toNum(p.paid_amount) - toNum(p.owed_amount);
+          const net = toNum(p.amount_paid) - toNum(p.amount_owed);
           netMap.set(uid, round2((netMap.get(uid) || 0) + net));
         }
         const debtors: Array<{ userId: string; amount: number }> = [];

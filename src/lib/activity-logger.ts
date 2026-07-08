@@ -1,7 +1,7 @@
 /**
  * Activity Logger
  *
- * Writes immutable activity_log entries to Firestore whenever a mutation occurs.
+ * Writes immutable activity_log entries to MongoDB whenever a mutation occurs.
  * This gives us a true, permanent audit trail that survives friend removals,
  * group deletions, and expense edits.
  *
@@ -17,19 +17,23 @@
  *   createdAt  — server timestamp
  */
 
-import { FieldValue, getAdminDb } from "@/lib/firestore/admin";
+import { ActivityLog } from "@/lib/mongodb/models";
 
 export type ActivityType =
   | "expense_added"
   | "expense_updated"
   | "expense_deleted"
+  | "expense_comment_added"
+  | "expense_mentioned"
+  | "recurring_expense_created"
   | "friend_added"
   | "friend_removed"
   | "friend_request_sent"
   | "group_created"
   | "group_deleted"
   | "group_member_added"
-  | "settlement_added";
+  | "settlement_added"
+  | "smart_nudge";
 
 export interface LogActivityInput {
   /** UIDs of everyone who should see this event (can be multiple) */
@@ -49,30 +53,26 @@ export interface LogActivityInput {
  */
 export async function logActivity(input: LogActivityInput): Promise<void> {
   try {
-    const db = getAdminDb();
-    const batch = db.batch();
-    const now = FieldValue.serverTimestamp();
-
     const uniqueUserIds = Array.from(new Set(input.userIds.filter(Boolean)));
     if (uniqueUserIds.length === 0) return;
 
-    for (const userId of uniqueUserIds) {
-      const ref = db.collection("activity_logs").doc();
-      batch.set(ref, {
-        userId,
-        actorId: input.actorId,
-        actorName: input.actorName,
-        type: input.type,
-        title: input.title,
-        description: input.description,
-        metadata: input.metadata || {},
-        createdAt: now,
-        // ISO string alongside server timestamp for easy client querying
-        createdAtIso: new Date().toISOString(),
-      });
-    }
+    const now = new Date();
+    const nowIso = now.toISOString();
 
-    await batch.commit();
+    const docs = uniqueUserIds.map((userId) => ({
+      _id: `${userId}_${now.getTime()}_${Math.random().toString(36).slice(2, 8)}`,
+      userId,
+      actorId: input.actorId,
+      actorName: input.actorName,
+      type: input.type,
+      title: input.title,
+      description: input.description,
+      metadata: input.metadata || {},
+      createdAt: now,
+      createdAtIso: nowIso,
+    }));
+
+    await ActivityLog.insertMany(docs, { ordered: false });
   } catch (err) {
     // Never block the main operation
     console.error("[activity-logger] Failed to write activity log:", err);

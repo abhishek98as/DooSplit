@@ -83,12 +83,14 @@ export interface ExpensesReadInput {
 
 export interface DashboardActivityReadInput {
   userId: string;
+  limit?: number;
 }
 
 export interface ActivitiesReadInput {
   userId: string;
   page: number;
   limit: number;
+  type?: string;
 }
 
 export interface SettlementsReadInput {

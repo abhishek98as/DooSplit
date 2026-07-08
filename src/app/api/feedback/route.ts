@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth/require-user";
-import { FieldValue, getAdminDb } from "@/lib/firestore/admin";
-import { COLLECTIONS } from "@/lib/firestore/collections";
+import { FeatureFeedback } from "@/lib/mongodb/models";
 import { newAppId } from "@/lib/ids";
 
 export const dynamic = "force-dynamic";
@@ -29,12 +28,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const db = getAdminDb();
     const feedbackId = newAppId();
-    const nowIso = new Date().toISOString();
+    const now = new Date();
 
-    await db.collection(COLLECTIONS.featureFeedback).doc(feedbackId).set({
-      id: feedbackId,
+    await FeatureFeedback.create({
+      _id: feedbackId,
       type,
       message,
       screen: screen || null,
@@ -42,10 +40,8 @@ export async function POST(request: NextRequest) {
       created_by_name: auth.user.name || "",
       created_by_email: auth.user.email || "",
       status: "new",
-      created_at: nowIso,
-      updated_at: nowIso,
-      _created_at: FieldValue.serverTimestamp(),
-      _updated_at: FieldValue.serverTimestamp(),
+      created_at: now,
+      updated_at: now,
     });
 
     return NextResponse.json(

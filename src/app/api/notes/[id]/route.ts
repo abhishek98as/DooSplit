@@ -3,6 +3,7 @@ import { requireUser } from "@/lib/auth/require-user";
 import { getMongoDb } from "@/lib/mongodb/client";
 import { Note } from "@/lib/mongodb/models";
 import { newAppId } from "@/lib/ids";
+import { getDataBackendMode } from "@/lib/data/config";
 
 export const dynamic = "force-dynamic";
 
@@ -15,12 +16,48 @@ export async function PUT(
     if (auth.response || !auth.user) {
       return auth.response as NextResponse;
     }
-    await getMongoDb();
 
     const { id } = await params;
     const body = await request.json().catch(() => ({}));
     const { title, text, type, items, color, pinned, archived, trashed, reminder } = body;
 
+    const backend = getDataBackendMode();
+    if (backend === "dynamodb") {
+      const { getNoteById, putNote } = await import("@/lib/dynamodb/entities/notes");
+      const existing = await getNoteById(auth.user.id, id);
+      if (!existing) {
+        return NextResponse.json({ error: "Note not found" }, { status: 404 });
+      }
+
+      const now = new Date().toISOString();
+      const updatedNote = {
+        id: existing.id,
+        userId: existing.userId,
+        title: title !== undefined ? String(title).trim() : existing.title,
+        text: text !== undefined ? String(text).trim() : existing.text,
+        type: type !== undefined ? (type === "text" ? ("text" as const) : ("list" as const)) : existing.type,
+        items: Array.isArray(items) ? items.map((i: any) => ({
+          id: i.id || newAppId(),
+          text: String(i.text || ""),
+          done: Boolean(i.done),
+          createdAt: i.createdAt || now,
+          updatedAt: i.updatedAt || now,
+        })) : existing.items,
+        color: color !== undefined ? String(color) : existing.color,
+        pinned: pinned !== undefined ? Boolean(pinned) : existing.pinned,
+        archived: archived !== undefined ? Boolean(archived) : existing.archived,
+        trashed: trashed !== undefined ? Boolean(trashed) : existing.trashed,
+        reminder: reminder !== undefined ? (reminder || null) : existing.reminder,
+        created_at: existing.created_at,
+        updated_at: now,
+      };
+
+      await putNote(updatedNote);
+
+      return NextResponse.json({ note: updatedNote });
+    }
+
+    await getMongoDb();
     const note = await Note.findOneAndUpdate(
       { _id: id, userId: auth.user.id },
       {
@@ -71,9 +108,20 @@ export async function DELETE(
     if (auth.response || !auth.user) {
       return auth.response as NextResponse;
     }
-    await getMongoDb();
 
     const { id } = await params;
+    const backend = getDataBackendMode();
+    if (backend === "dynamodb") {
+      const { getNoteById, deleteNote } = await import("@/lib/dynamodb/entities/notes");
+      const existing = await getNoteById(auth.user.id, id);
+      if (!existing) {
+        return NextResponse.json({ error: "Note not found" }, { status: 404 });
+      }
+      await deleteNote(auth.user.id, id);
+      return NextResponse.json({ success: true });
+    }
+
+    await getMongoDb();
     const note = await Note.findOneAndDelete({ _id: id, userId: auth.user.id });
 
     if (!note) {

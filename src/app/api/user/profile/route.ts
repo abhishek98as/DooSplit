@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { invalidateUsersCache } from "@/lib/cache";
 import { requireUser } from "@/lib/auth/require-user";
-import { FieldValue, getAdminDb } from "@/lib/firestore/admin";
+import { User } from "@/lib/mongodb/models";
 import { normalizeName } from "@/lib/social/keys";
 
 export const dynamic = "force-dynamic";
@@ -41,12 +41,11 @@ export async function GET(request: NextRequest) {
       return auth.response as NextResponse;
     }
 
-    const db = getAdminDb();
-    const doc = await db.collection("users").doc(auth.user.id).get();
-    if (!doc.exists) {
+    const user = await User.findById(auth.user.id).lean();
+    if (!user) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
-    const row = { id: doc.id, ...((doc.data() as any) || {}) };
+    const row = { id: user._id, ...user };
 
     return NextResponse.json(
       { user: mapUserRow(row) },
@@ -107,17 +106,18 @@ export async function PUT(request: NextRequest) {
     if (pushSubscription !== undefined) {
       updatePayload.push_subscription = pushSubscription || null;
     }
-    updatePayload.updated_at = new Date().toISOString();
-    updatePayload._updated_at = FieldValue.serverTimestamp();
+    updatePayload.updated_at = new Date();
 
-    const db = getAdminDb();
-    const ref = db.collection("users").doc(auth.user.id);
-    await ref.set(updatePayload, { merge: true });
-    const updatedDoc = await ref.get();
-    if (!updatedDoc.exists) {
+    const updated = await User.findOneAndUpdate(
+      { _id: auth.user.id },
+      { $set: updatePayload },
+      { new: true }
+    ).lean();
+
+    if (!updated) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
-    const row = { id: updatedDoc.id, ...(updatedDoc.data() || {}) };
+    const row = { id: updated._id, ...updated };
 
     await invalidateUsersCache(
       [auth.user.id],

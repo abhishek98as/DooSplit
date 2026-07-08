@@ -129,7 +129,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
 
     try {
-      await createServerSessionWithRetry(user);
+      // Force-refresh the ID token to avoid stale-token 401 on page load.
+      // Firebase SDK restores the user from persistence but the cached token
+      // may be expired, causing the initial POST /api/auth/session to 401.
+      const freshToken = await user.getIdToken(true);
+      await createServerSession(freshToken);
       await bootstrapUser(user.displayName || undefined).catch(() => undefined);
 
       const session = await readServerSession();
@@ -280,7 +284,9 @@ export async function signIn(
         };
       }
 
-      await createServerSessionWithRetry(result.user);
+      // Force-refresh to get a guaranteed-fresh token for session creation.
+      const freshToken = await result.user.getIdToken(true);
+      await createServerSession(freshToken);
       await bootstrapUser(result.user.displayName || undefined, options.inviteToken);
 
       const url = options.callbackUrl || "/dashboard";
@@ -293,7 +299,9 @@ export async function signIn(
 
     if (provider === "google") {
       const result = await signInWithPopup(auth, googleProvider);
-      await createServerSessionWithRetry(result.user);
+      // Force-refresh to get a guaranteed-fresh token for session creation.
+      const freshToken = await result.user.getIdToken(true);
+      await createServerSession(freshToken);
       await bootstrapUser(result.user.displayName || undefined, options.inviteToken);
 
       const url = options.callbackUrl || "/dashboard";

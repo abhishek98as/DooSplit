@@ -210,6 +210,56 @@
         { "fieldPath": "expense_id", "order": "ASCENDING" },
         { "fieldPath": "created_at", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "recurring_expense_templates",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "owner_id", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "next_run_at", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "recurring_expense_templates",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "participant_ids", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "next_run_at", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "recurring_expense_runs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "template_id", "order": "ASCENDING" },
+        { "fieldPath": "occurrence_date", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "settlement_allocations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "expense_id", "order": "ASCENDING" },
+        { "fieldPath": "created_at", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "settlement_allocations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "settlement_id", "order": "ASCENDING" },
+        { "fieldPath": "created_at", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "user_nudge_states",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "user_id", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "snoozed_until", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

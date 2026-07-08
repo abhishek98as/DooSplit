@@ -545,6 +545,9 @@ async function getExpenses(input: ExpensesReadInput): Promise<ExpensesPayload> {
       notes: row.notes || "",
       isDeleted: Boolean(row.is_deleted),
       paymentStatus,
+      recurringTemplateId: row.recurring_template_id || undefined,
+      recurringRunId: row.recurring_run_id || undefined,
+      recurrenceOccurrenceDate: toIso(row.recurrence_occurrence_date),
       editHistory: Array.isArray(row.edit_history) ? row.edit_history : [],
       createdAt,
       updatedAt,
@@ -823,6 +826,16 @@ function mapActivityLogToFeedItem(row: any): any {
     description: String(row.description || row.title || "Activity"),
     createdAt,
   };
+
+  if (metadata.actionHref) {
+    activity.actionHref = String(metadata.actionHref);
+  }
+  if (metadata.actionLabel) {
+    activity.actionLabel = String(metadata.actionLabel);
+  }
+  if (metadata.expenseId) {
+    activity.expenseId = String(metadata.expenseId);
+  }
 
   if (metadata.expenseType) {
     activity.expenseType = String(metadata.expenseType);

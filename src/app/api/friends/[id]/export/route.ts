@@ -165,7 +165,7 @@ export async function GET(
         `${symbol}${amount.toFixed(2)}`,
         `${symbol}${userShare.toFixed(2)}`,
         expense.group_id ? groupsMap.get(String(expense.group_id))?.name || "Group" : "Non-Group",
-        toNum(userParticipant.paid_amount) > 0 ? "Paid" : "Owed",
+        toNum(userParticipant.amount_paid) > 0 ? "Paid" : "Owed",
         isSettled ? "Settled" : "Outstanding",
       ]);
     }

@@ -65,6 +65,32 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    match /recurring_expense_templates/{templateId} {
+      allow read: if isAuthenticated() && (
+        resource.data.owner_id == request.auth.uid ||
+        request.auth.uid in resource.data.participant_ids
+      );
+      allow write: if false;
+    }
+
+    match /recurring_expense_runs/{runId} {
+      allow read: if isAuthenticated() && resource.data.owner_id == request.auth.uid;
+      allow write: if false;
+    }
+
+    match /settlement_allocations/{allocationId} {
+      allow read: if isAuthenticated() && (
+        resource.data.from_user_id == request.auth.uid ||
+        resource.data.to_user_id == request.auth.uid
+      );
+      allow write: if false;
+    }
+
+    match /user_nudge_states/{stateId} {
+      allow read: if isAuthenticated() && resource.data.user_id == request.auth.uid;
+      allow write: if false;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

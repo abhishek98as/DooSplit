@@ -78,6 +78,11 @@ export default function AddExpensePage() {
   const [notes, setNotes] = useState("");
   const [images, setImages] = useState<string[]>([]);
   const [currency, setCurrency] = useState("INR");
+  const [repeatEnabled, setRepeatEnabled] = useState(false);
+  const [repeatFrequency, setRepeatFrequency] = useState<"weekly" | "monthly" | "yearly">("monthly");
+  const [repeatInterval, setRepeatInterval] = useState("1");
+  const [repeatReminderEnabled, setRepeatReminderEnabled] = useState(true);
+  const [repeatReminderDaysBefore, setRepeatReminderDaysBefore] = useState("1");
 
   // Participants and split
   const [splitMethod, setSplitMethod] = useState<SplitMethod>("equally");
@@ -319,19 +324,19 @@ export default function AddExpensePage() {
       }
 
       // Prepare expense data
-      const expenseData = {
-        amount: parseFloat(amount),
-        description,
-        category,
-        date,
+        const expenseData = {
+          amount: parseFloat(amount),
+          description,
+          category,
+          date,
         currency,
         groupId: selectedGroup?._id,
         paidBy,
         participants: resolvedParticipants,
         notes,
         images: [], // Empty initially
-        splitMethod
-      };
+          splitMethod
+        };
 
       // Try to create expense using offline store (will queue if offline)
       const expense = await offlineStore.createExpense(expenseData);
@@ -372,6 +377,32 @@ export default function AddExpensePage() {
         // Step 3: Update expense with image references if any were uploaded
         if (finalImageRefs.length > 0) {
           await offlineStore.updateExpense(expense._id, { images: finalImageRefs });
+        }
+
+        if (repeatEnabled) {
+          try {
+            await authFetch("/api/recurring-expenses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                name: description,
+                frequency: repeatFrequency,
+                interval: Number(repeatInterval) || 1,
+                dayOfMonth: new Date(date).getDate(),
+                startDate: date,
+                timezone: "Asia/Kolkata",
+                reminderEnabled: repeatReminderEnabled,
+                reminderDaysBefore: Number(repeatReminderDaysBefore) || 0,
+                expense: {
+                  ...expenseData,
+                  images: finalImageRefs,
+                  paymentStatus: "unpaid",
+                },
+              }),
+            });
+          } catch (recurringError) {
+            console.warn("Expense saved, but recurring template creation failed", recurringError);
+          }
         }
 
         // Signal dashboard to force-refresh when it mounts.
@@ -898,6 +929,63 @@ export default function AddExpensePage() {
               entityId="new-expense" // Will be replaced with actual expense ID after creation
               deferUpload
             />
+
+            {/* Recurring */}
+            <div className="space-y-3 rounded-md border border-neutral-200 dark:border-dark-border p-4 bg-neutral-50 dark:bg-dark-bg-secondary/40">
+              <label className="flex items-center gap-3 text-sm font-medium text-neutral-800 dark:text-dark-text">
+                <input
+                  type="checkbox"
+                  checked={repeatEnabled}
+                  onChange={(e) => setRepeatEnabled(e.target.checked)}
+                  className="rounded border-neutral-300"
+                />
+                Repeat this expense automatically
+              </label>
+
+              {repeatEnabled && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-neutral-600 dark:text-dark-text-secondary mb-1">
+                      Frequency
+                    </label>
+                    <select
+                      value={repeatFrequency}
+                      onChange={(e) => setRepeatFrequency(e.target.value as "weekly" | "monthly" | "yearly")}
+                      className="w-full px-3 py-2 border border-neutral-300 dark:border-dark-border rounded-md bg-white dark:bg-dark-bg-secondary text-neutral-900 dark:text-dark-text"
+                    >
+                      <option value="weekly">Weekly</option>
+                      <option value="monthly">Monthly</option>
+                      <option value="yearly">Yearly</option>
+                    </select>
+                  </div>
+                  <Input
+                    label="Every"
+                    type="number"
+                    min="1"
+                    max="24"
+                    value={repeatInterval}
+                    onChange={(e) => setRepeatInterval(e.target.value)}
+                  />
+                  <label className="flex items-center gap-2 text-sm text-neutral-700 dark:text-dark-text">
+                    <input
+                      type="checkbox"
+                      checked={repeatReminderEnabled}
+                      onChange={(e) => setRepeatReminderEnabled(e.target.checked)}
+                      className="rounded border-neutral-300"
+                    />
+                    Remind before it runs
+                  </label>
+                  <Input
+                    label="Reminder days before"
+                    type="number"
+                    min="0"
+                    max="14"
+                    value={repeatReminderDaysBefore}
+                    onChange={(e) => setRepeatReminderDaysBefore(e.target.value)}
+                  />
+                </div>
+              )}
+            </div>
 
             {/* Notes */}
             <div>

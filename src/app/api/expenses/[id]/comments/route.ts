@@ -190,7 +190,7 @@ export async function POST(
       userIds: affectedUserIds,
       actorId: userId,
       actorName,
-      type: "expense_updated",
+      type: "expense_comment_added",
       title: "Expense Comment Added",
       description: `${actorName} commented on "${String(expense.description || "Expense")}"`,
       metadata: {
@@ -201,6 +201,47 @@ export async function POST(
         mentions,
       },
     });
+
+    if (mentions.length > 0) {
+      void logActivity({
+        userIds: mentions,
+        actorId: userId,
+        actorName,
+        type: "expense_mentioned",
+        title: "Mentioned in Expense",
+        description: `${actorName} mentioned you on "${String(expense.description || "Expense")}"`,
+        metadata: {
+          expenseId: id,
+          expenseDescription: String(expense.description || "Expense"),
+          commentId,
+          commentPreview: rawMessage.slice(0, 120),
+        },
+      });
+
+      const mentionNotificationTargets = mentions.filter((mentionedId) => mentionedId !== userId);
+      if (mentionNotificationTargets.length > 0) {
+        const notificationBatch = db.batch();
+      for (const mentionedUserId of mentionNotificationTargets) {
+        const notificationRef = db.collection(COLLECTIONS.notifications).doc(newAppId());
+        notificationBatch.set(notificationRef, {
+          id: notificationRef.id,
+          user_id: mentionedUserId,
+          type: "expense_mentioned",
+          message: `${actorName} mentioned you on "${String(expense.description || "Expense")}"`,
+          data: {
+            expenseId: id,
+            commentId,
+          },
+          is_read: false,
+          created_at: nowIso,
+          updated_at: nowIso,
+          _created_at: FieldValue.serverTimestamp(),
+          _updated_at: FieldValue.serverTimestamp(),
+        });
+      }
+      await notificationBatch.commit();
+      }
+    }
 
     await invalidateUsersCache(affectedUserIds, [...EXPENSE_MUTATION_CACHE_SCOPES]);
 
