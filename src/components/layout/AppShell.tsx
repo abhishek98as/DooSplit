@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import Link from "next/link";
-import { Settings, Moon, Sun, Search, X } from "lucide-react";
+import { Settings, Moon, Sun, Search, X, UsersRound } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import Sidebar from "./Sidebar";
 import MobileNav from "./MobileNav";
@@ -152,6 +152,17 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
                 {theme === "light" ? <Moon className="h-5 w-5" /> : <Sun className="h-5 w-5" />}
               </button>
               <Link
+                href="/groups"
+                className={`p-2 rounded-lg transition-colors ${
+                  pathname === "/groups"
+                    ? "text-primary bg-primary/10"
+                    : "text-neutral-500 hover:text-neutral-700 hover:bg-neutral-100 dark:hover:bg-dark-bg-tertiary"
+                }`}
+                title="Groups"
+              >
+                <UsersRound className="h-5 w-5" />
+              </Link>
+              <Link
                 href="/expenses?focus=search"
                 className={`p-2 rounded-lg transition-colors ${
                   pathname === "/expenses"
@@ -262,8 +273,8 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
       <MobileNav />
 
       {/* PWA Components */}
-      <OfflineIndicator position="bottom" />
-      <InstallPrompt variant="toast" position="bottom" />
+      <OfflineIndicator position="top" />
+      <InstallPrompt variant="toast" position="top" />
     </div>
   );
 };
