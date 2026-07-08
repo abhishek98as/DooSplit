@@ -1,18 +1,18 @@
 import type { Metadata, Viewport } from "next";
-import { DM_Sans, Syne } from "next/font/google";
+import { Space_Grotesk, Plus_Jakarta_Sans } from "next/font/google";
 import "./globals.css";
 import { Providers } from "@/components/Providers";
 
-const syne = Syne({
+const spaceGrotesk = Space_Grotesk({
   subsets: ["latin"],
-  variable: "--font-syne",
-  weight: ["700", "800"],
+  variable: "--font-space-grotesk",
+  weight: ["400", "500", "600", "700"],
 });
 
-const dmSans = DM_Sans({
+const plusJakarta = Plus_Jakarta_Sans({
   subsets: ["latin"],
-  variable: "--font-dm-sans",
-  weight: ["400", "500", "600", "700"],
+  variable: "--font-plus-jakarta",
+  weight: ["400", "500", "600", "700", "800"],
 });
 
 export const viewport: Viewport = {
@@ -21,7 +21,7 @@ export const viewport: Viewport = {
   maximumScale: 5,
   viewportFit: "cover",
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#00B8A9" },
+    { media: "(prefers-color-scheme: light)", color: "#FF5C39" },
     { media: "(prefers-color-scheme: dark)", color: "#0f172a" },
   ],
 };
@@ -111,7 +111,7 @@ export const metadata: Metadata = {
     "apple-mobile-web-app-capable": "yes",
     "apple-mobile-web-app-status-bar-style": "black-translucent",
     "apple-mobile-web-app-title": "DooSplit",
-    "msapplication-TileColor": "#00B8A9",
+    "msapplication-TileColor": "#FF5C39",
     "msapplication-tap-highlight": "no",
   },
 };
@@ -144,11 +144,11 @@ export default function RootLayout({
         <link rel="apple-touch-icon" sizes="96x96" href="/api/pwa/icon?size=96" />
         <link rel="apple-touch-icon" sizes="72x72" href="/api/pwa/icon?size=72" />
         {/* Microsoft */}
-        <meta name="msapplication-TileColor" content="#00B8A9" />
+        <meta name="msapplication-TileColor" content="#FF5C39" />
         <meta name="msapplication-tap-highlight" content="no" />
       </head>
       <body
-        className={`${syne.variable} ${dmSans.variable} font-sans`}
+        className={`${spaceGrotesk.variable} ${plusJakarta.variable} font-sans`}
         suppressHydrationWarning
       >
         <Providers>{children}</Providers>

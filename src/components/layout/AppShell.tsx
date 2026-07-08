@@ -26,6 +26,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/settlements": "Settlements",
   "/analytics": "Analytics",
   "/activity": "Activity",
+  "/notes": "Notes",
   "/settings": "Settings",
   "/invite": "Invite Friends",
   "/conflicts": "Conflicts",
@@ -203,37 +204,8 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
             </h1>
           </div>
 
-          {/* Right: search + controls */}
+          {/* Right: controls */}
           <div className="flex items-center gap-2 flex-shrink-0">
-            {/* Expanding search */}
-            <form onSubmit={handleSearchSubmit}>
-              <div
-                className={`ds-search ${
-                  theme === "light"
-                    ? "border-neutral-200 bg-neutral-50 text-neutral-600"
-                    : "border-dark-border bg-dark-bg text-dark-text-secondary"
-                }`}
-              >
-                <Search className="h-4 w-4 flex-shrink-0 text-neutral-400" />
-                <input
-                  ref={searchInputRef}
-                  type="text"
-                  placeholder="Search expenses…"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="flex-1 bg-transparent outline-none font-sans text-sm min-w-0 placeholder:text-neutral-400 dark:placeholder:text-dark-text-tertiary"
-                />
-                {searchQuery && (
-                  <button type="button" onClick={() => setSearchQuery("")} className="flex-shrink-0 text-neutral-400 hover:text-neutral-600">
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                )}
-              </div>
-            </form>
-
-            {/* Vertical divider */}
-            <div className={`ds-vdivider ${theme === "light" ? "bg-neutral-200" : "bg-dark-border"}`} />
-
             {/* Theme toggle */}
             <button
               type="button"
@@ -253,6 +225,19 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
 
             {/* Vertical divider */}
             <div className={`ds-vdivider ${theme === "light" ? "bg-neutral-200" : "bg-dark-border"}`} />
+
+            {/* Settings */}
+            <Link
+              href="/settings"
+              className={`ds-icon-btn ${
+                theme === "light"
+                  ? "border-neutral-200 text-neutral-500 hover:bg-neutral-50"
+                  : "border-dark-border text-dark-text-secondary hover:bg-dark-bg"
+              }`}
+              title="Settings"
+            >
+              <Settings className="h-4 w-4" />
+            </Link>
 
             {/* User avatar — links to settings */}
             <Link href="/settings" title={displayName}>

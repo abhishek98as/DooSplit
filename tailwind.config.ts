@@ -10,61 +10,61 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        // Primary Colors
+        // Primary Accent — Warm Coral
         primary: {
-          DEFAULT: "#00B8A9",
-          dark: "#00A896",
-          light: "#E6F7F5",
+          DEFAULT: "#FF5C39",
+          dark: "#E84A28",
+          light: "#FFE8E0",
         },
-        // Secondary Colors
+        // Coral accent for negative values, group types
         coral: {
-          DEFAULT: "#FF6B6B",
-          light: "#FFE5E5",
+          DEFAULT: "#F43F5E",
+          light: "#FCE7EC",
         },
+        // Success — Warm Mint Green
         success: {
-          DEFAULT: "#51CF66",
+          DEFAULT: "#2D9B6B",
           dark: "#10B981",
         },
         // Semantic Colors
-        warning: "#F59E0B",
-        error: "#EF4444",
+        warning: "#E8A33D",
+        error: "#E04848",
         info: "#3B82F6",
-        // Neutral Colors
+        // Neutral — Warm tones
         neutral: {
           50: "#F9FAFB",
           100: "#F3F4F6",
-          200: "#E5E7EB",
+          200: "#E8E0D2",
           300: "#D1D5DB",
           400: "#9CA3AF",
-          500: "#6B7280",
+          500: "#756B5E",
           600: "#4B5563",
           700: "#374151",
           800: "#1F2937",
-          900: "#1A1A1A",
+          900: "#1A1612",
         },
-        // Dark Mode Colors
+        // Dark Mode — Warm blacks/browns (was cool navy/slate)
         dark: {
-          bg: "#0F172A",
-          "bg-secondary": "#1E293B",
-          "bg-tertiary": "#334155",
-          text: "#F1F5F9",
-          "text-secondary": "#CBD5E1",
-          "text-tertiary": "#94A3B8",
-          border: "#334155",
+          bg: "#14110D",
+          "bg-secondary": "#1F1B16",
+          "bg-tertiary": "#28231D",
+          text: "#F5F1EA",
+          "text-secondary": "#968A7B",
+          "text-tertiary": "#8B8275",
+          border: "#2D2620",
         },
-        cream: "#F5F4F0",
+        cream: "#F7F4EE",
         navy: {
-          DEFAULT: "#1A2744",
-          deep: "#111827",
+          DEFAULT: "#1F1B16",
+          deep: "#14110D",
         },
       },
       fontFamily: {
-        display: ["var(--font-syne)", "system-ui", "sans-serif"],
-        sans: ["var(--font-dm-sans)", "system-ui", "sans-serif"],
+        display: ["var(--font-space-grotesk)", "system-ui", "sans-serif"],
+        sans: ["var(--font-plus-jakarta)", "-apple-system", "sans-serif"],
         mono: ["JetBrains Mono", "SF Mono", "monospace"],
       },
       fontSize: {
-        // Mobile first
         h1: ["28px", { lineHeight: "1.2", fontWeight: "700" }],
         h2: ["24px", { lineHeight: "1.3", fontWeight: "600" }],
         h3: ["20px", { lineHeight: "1.4", fontWeight: "600" }],
@@ -93,11 +93,11 @@ const config: Config = {
         "2xl": "24px",
       },
       boxShadow: {
-        xs: "0 1px 2px rgba(0,0,0,0.05)",
-        sm: "0 1px 3px rgba(0,0,0,0.1)",
-        md: "0 4px 6px rgba(0,0,0,0.1)",
-        lg: "0 10px 15px rgba(0,0,0,0.1)",
-        xl: "0 20px 25px rgba(0,0,0,0.1)",
+        xs: "0 1px 2px rgba(28, 24, 20, 0.04)",
+        sm: "0 1px 2px rgba(28, 24, 20, 0.04), 0 4px 12px rgba(28, 24, 20, 0.06)",
+        md: "0 4px 12px rgba(28, 24, 20, 0.06)",
+        lg: "0 8px 24px rgba(28, 24, 20, 0.10), 0 2px 6px rgba(28, 24, 20, 0.06)",
+        xl: "0 12px 32px rgba(28, 24, 20, 0.12)",
       },
     },
   },

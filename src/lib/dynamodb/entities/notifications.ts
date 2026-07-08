@@ -1,4 +1,4 @@
-import { PutCommand, UpdateCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { PutCommand, UpdateCommand, DeleteCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { getDynamoDB } from "../client";
 import { TABLE } from "../tables";
 import { PK, SK, toSortableTs } from "../keys";
@@ -87,5 +87,24 @@ export async function markAllNotificationsRead(userId: string): Promise<void> {
         })
       )
     )
+  );
+}
+
+export async function countUnreadNotifications(userId: string): Promise<number> {
+  const { items } = await queryNotificationsForUser(userId, 200, undefined, true);
+  return items.length;
+}
+
+export async function deleteNotification(
+  userId: string,
+  createdAt: string,
+  notifId: string
+): Promise<void> {
+  const ts = toSortableTs(createdAt);
+  await getDynamoDB().send(
+    new DeleteCommand({
+      TableName: TABLE,
+      Key: { PK: PK.user(userId), SK: SK.notification(ts, notifId) },
+    })
   );
 }

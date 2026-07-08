@@ -76,7 +76,7 @@ const Sidebar: React.FC = () => {
       {/* Decorative teal glow — top left */}
       <div
         className="pointer-events-none absolute top-0 left-0 w-44 h-44"
-        style={{ background: "radial-gradient(circle at top left, rgba(0,201,167,0.10) 0%, transparent 70%)" }}
+        style={{ background: "radial-gradient(circle at top left, rgba(255,92,57,0.10) 0%, transparent 70%)" }}
         aria-hidden
       />
 

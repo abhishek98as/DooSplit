@@ -215,7 +215,7 @@ export default function AnalyticsPage() {
   }
 
   // Colors for charts
-  const COLORS = ['#00B8A9', '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8'];
+  const COLORS = ['#FF5C39', '#E84A28', '#2D9B6B', '#0EA5E9', '#8B5CF6', '#E8A33D', '#F43F5E', '#3B82F6'];
 
   // Prepare chart data
   const pieChartData = analytics.categoryBreakdown.map((cat, index) => ({
@@ -498,10 +498,10 @@ export default function AnalyticsPage() {
                     <Line
                       type="monotone"
                       dataKey="expenses"
-                      stroke="#00B8A9"
+                      stroke="#FF5C39"
                       strokeWidth={3}
-                      dot={{ fill: '#00B8A9', strokeWidth: 2, r: 4 }}
-                      activeDot={{ r: 6, stroke: '#00B8A9', strokeWidth: 2 }}
+                      dot={{ fill: '#FF5C39', strokeWidth: 2, r: 4 }}
+                      activeDot={{ r: 6, stroke: '#FF5C39', strokeWidth: 2 }}
                     />
                   </LineChart>
                 </ResponsiveContainer>

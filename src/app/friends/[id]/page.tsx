@@ -479,7 +479,7 @@ export default function FriendProfilePage() {
                       <XAxis dataKey="month" />
                       <YAxis />
                       <Tooltip formatter={(value) => [`₹${value}`, 'Amount']} />
-                      <Line type="monotone" dataKey="amount" stroke="#00B8A9" strokeWidth={2} />
+                      <Line type="monotone" dataKey="amount" stroke="#FF5C39" strokeWidth={2} />
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
@@ -509,7 +509,7 @@ export default function FriendProfilePage() {
                         dataKey="amount"
                       >
                         {stats.categoryBreakdown.map((entry: any, index: number) => (
-                          <Cell key={`cell-${index}`} fill={['#00B8A9', '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FECA57'][index % 6]} />
+                          <Cell key={`cell-${index}`} fill={['#FF5C39', '#E84A28', '#2D9B6B', '#0EA5E9', '#8B5CF6', '#E8A33D'][index % 6]} />
                         ))}
                       </Pie>
                       <Tooltip formatter={(value) => [`₹${value}`, 'Amount']} />
