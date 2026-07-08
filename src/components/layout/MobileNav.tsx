@@ -10,6 +10,7 @@ import {
   Plus,
   Receipt,
   Wallet,
+  Notebook,
 } from "lucide-react";
 
 const TABS = [
@@ -18,6 +19,7 @@ const TABS = [
   { href: "/friends", icon: Users, label: "Friends" },
   { href: "/activity", icon: Activity, label: "Activity" },
   { href: "/settlements", icon: Wallet, label: "Settlements" },
+  { href: "/notes", icon: Notebook, label: "Notes" },
 ];
 
 const MobileNav: React.FC = () => {

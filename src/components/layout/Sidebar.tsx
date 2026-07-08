@@ -15,7 +15,9 @@ import {
   Wallet,
   UserPlus,
   Receipt,
+  Repeat,
   ChevronRight,
+  Notebook,
 } from "lucide-react";
 import { useSession } from "@/lib/auth/react-session";
 
@@ -27,12 +29,14 @@ const NAV_SECTIONS = [
       { href: "/expenses", icon: Receipt, label: "Expenses", badge: 0 },
       { href: "/friends", icon: Users, label: "Friends" },
       { href: "/groups", icon: UsersRound, label: "Groups" },
+      { href: "/notes", icon: Notebook, label: "Notes" },
     ],
   },
   {
     label: "Finance",
     items: [
       { href: "/settlements", icon: Wallet, label: "Settlements" },
+      { href: "/recurring-expenses", icon: Repeat, label: "Recurring" },
       { href: "/analytics", icon: BarChart3, label: "Analytics" },
     ],
   },
