@@ -57,6 +57,43 @@ export async function PUT(
       return NextResponse.json({ note: updatedNote });
     }
 
+    if (backend === "firestore") {
+      const { getAdminDb } = await import("@/lib/firestore/admin");
+      const { COLLECTIONS } = await import("@/lib/firestore/collections");
+      const db = getAdminDb();
+      const noteRef = db.collection(COLLECTIONS.notes).doc(id);
+      const doc = await noteRef.get();
+      if (!doc.exists || doc.data()?.userId !== auth.user.id) {
+        return NextResponse.json({ error: "Note not found" }, { status: 404 });
+      }
+
+      const existing = doc.data()!;
+      const now = new Date().toISOString();
+      const updatedNote = {
+        ...existing,
+        title: title !== undefined ? String(title).trim() : existing.title,
+        text: text !== undefined ? String(text).trim() : existing.text,
+        type: type !== undefined ? (type === "text" ? ("text" as const) : ("list" as const)) : existing.type,
+        items: Array.isArray(items) ? items.map((i: any) => ({
+          id: i.id || newAppId(),
+          text: String(i.text || ""),
+          done: Boolean(i.done),
+          createdAt: i.createdAt || now,
+          updatedAt: i.updatedAt || now,
+        })) : existing.items,
+        color: color !== undefined ? String(color) : existing.color,
+        pinned: pinned !== undefined ? Boolean(pinned) : existing.pinned,
+        archived: archived !== undefined ? Boolean(archived) : existing.archived,
+        trashed: trashed !== undefined ? Boolean(trashed) : existing.trashed,
+        reminder: reminder !== undefined ? (reminder || null) : existing.reminder,
+        updatedAt: now,
+      };
+
+      await noteRef.set(updatedNote);
+
+      return NextResponse.json({ note: { ...updatedNote, id } });
+    }
+
     await getMongoDb();
     const note = await Note.findOneAndUpdate(
       { _id: id, userId: auth.user.id },
@@ -118,6 +155,19 @@ export async function DELETE(
         return NextResponse.json({ error: "Note not found" }, { status: 404 });
       }
       await deleteNote(auth.user.id, id);
+      return NextResponse.json({ success: true });
+    }
+
+    if (backend === "firestore") {
+      const { getAdminDb } = await import("@/lib/firestore/admin");
+      const { COLLECTIONS } = await import("@/lib/firestore/collections");
+      const db = getAdminDb();
+      const noteRef = db.collection(COLLECTIONS.notes).doc(id);
+      const doc = await noteRef.get();
+      if (!doc.exists || doc.data()?.userId !== auth.user.id) {
+        return NextResponse.json({ error: "Note not found" }, { status: 404 });
+      }
+      await noteRef.delete();
       return NextResponse.json({ success: true });
     }
 

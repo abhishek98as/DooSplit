@@ -35,6 +35,29 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ notes: formattedNotes });
     }
 
+    if (backend === "firestore") {
+      const { getAdminDb } = await import("@/lib/firestore/admin");
+      const { COLLECTIONS } = await import("@/lib/firestore/collections");
+      const db = getAdminDb();
+      const snapshot = await db.collection(COLLECTIONS.notes)
+        .where("userId", "==", auth.user.id)
+        .get();
+
+      const firestoreNotes = snapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          ...data,
+          id: doc.id,
+          createdAt: data.createdAt ? (typeof data.createdAt.toDate === "function" ? data.createdAt.toDate().toISOString() : data.createdAt) : undefined,
+          updatedAt: data.updatedAt ? (typeof data.updatedAt.toDate === "function" ? data.updatedAt.toDate().toISOString() : data.updatedAt) : undefined,
+        };
+      });
+
+      firestoreNotes.sort((a: any, b: any) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime());
+
+      return NextResponse.json({ notes: firestoreNotes });
+    }
+
     await getMongoDb();
     const notes = await Note.find({ userId: auth.user.id }).sort({ updatedAt: -1 }).lean();
     
@@ -97,6 +120,39 @@ export async function POST(request: NextRequest) {
       await putNote(newNote);
 
       return NextResponse.json({ note: newNote }, { status: 201 });
+    }
+
+    if (backend === "firestore") {
+      const { getAdminDb } = await import("@/lib/firestore/admin");
+      const { COLLECTIONS } = await import("@/lib/firestore/collections");
+      const db = getAdminDb();
+      const noteId = newAppId();
+      const now = new Date().toISOString();
+
+      const newNote = {
+        userId: auth.user.id,
+        title: String(title || "").trim(),
+        text: String(text || "").trim(),
+        type: type === "text" ? ("text" as const) : ("list" as const),
+        items: Array.isArray(items) ? items.map((i: any) => ({
+          id: i.id || newAppId(),
+          text: String(i.text || ""),
+          done: Boolean(i.done),
+          createdAt: i.createdAt || now,
+          updatedAt: i.updatedAt || now,
+        })) : [],
+        color: String(color || ""),
+        pinned: Boolean(pinned),
+        archived: Boolean(archived),
+        trashed: Boolean(trashed),
+        reminder: reminder || null,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      await db.collection(COLLECTIONS.notes).doc(noteId).set(newNote);
+
+      return NextResponse.json({ note: { ...newNote, id: noteId } }, { status: 201 });
     }
 
     await getMongoDb();

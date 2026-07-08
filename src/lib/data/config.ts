@@ -7,8 +7,10 @@ export type DataWriteMode = "single";
  */
 export function getDataBackendMode(): DataBackendMode {
   const mode = process.env.DATA_BACKEND;
-  if (mode === "firestore") return "firestore";
-  if (mode === "dynamodb") return "dynamodb";
+  if (!mode) return "mongodb";
+  const cleaned = mode.replace(/['"\r\n]/g, "").trim().toLowerCase();
+  if (cleaned === "firestore") return "firestore";
+  if (cleaned === "dynamodb") return "dynamodb";
   return "mongodb";
 }
 

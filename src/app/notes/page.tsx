@@ -548,241 +548,118 @@ export default function NotesPage() {
 
   return (
     <AppShell>
-      <div className="flex flex-col md:flex-row min-h-[calc(100vh-140px)] w-full relative px-1 py-1">
+      <div className="min-h-[calc(100vh-140px)] w-full relative px-4 py-4 flex flex-col gap-6">
         
-        {/* ── Sub Sidebar Categories & Labels (Desktop) ──────────────────────────── */}
-        <aside className="w-56 shrink-0 border-r border-neutral-200 dark:border-dark-border pr-6 hidden md:block select-none">
-          <button
-            onClick={() => openEditor()}
-            className="w-full mb-6 py-2.5 px-4 bg-primary text-white font-display font-semibold rounded-xl flex items-center justify-center gap-2 hover:bg-primary-dark shadow-sm active:scale-[0.98] transition-all"
-          >
-            <Plus className="h-4.5 w-4.5" />
-            New Note
-          </button>
-
-          <nav className="space-y-1">
-            <button
-              onClick={() => { setCurrentView("all"); setCurrentLabel(null); }}
-              className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-sm font-semibold transition-colors ${
-                currentView === "all" && !currentLabel
-                  ? "bg-primary/10 text-primary"
-                  : "text-neutral-600 dark:text-dark-text-secondary hover:bg-neutral-100 dark:hover:bg-dark-bg-tertiary"
-              }`}
-            >
-              <div className="flex items-center gap-3">
-                <Lightbulb className="h-4.5 w-4.5" />
-                <span>All Notes</span>
-              </div>
-              <span className="text-xs bg-neutral-200/50 dark:bg-dark-bg-tertiary px-2 py-0.5 rounded-full text-neutral-500">{counts.all}</span>
-            </button>
-
-            <button
-              onClick={() => { setCurrentView("reminders"); setCurrentLabel(null); }}
-              className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-sm font-semibold transition-colors ${
-                currentView === "reminders" && !currentLabel
-                  ? "bg-primary/10 text-primary"
-                  : "text-neutral-600 dark:text-dark-text-secondary hover:bg-neutral-100 dark:hover:bg-dark-bg-tertiary"
-              }`}
-            >
-              <div className="flex items-center gap-3">
-                <Bell className="h-4.5 w-4.5" />
-                <span>Reminders</span>
-              </div>
-              <span className="text-xs bg-neutral-200/50 dark:bg-dark-bg-tertiary px-2 py-0.5 rounded-full text-neutral-500">{counts.reminders}</span>
-            </button>
-
-            <button
-              onClick={() => { setCurrentView("archive"); setCurrentLabel(null); }}
-              className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-sm font-semibold transition-colors ${
-                currentView === "archive" && !currentLabel
-                  ? "bg-primary/10 text-primary"
-                  : "text-neutral-600 dark:text-dark-text-secondary hover:bg-neutral-100 dark:hover:bg-dark-bg-tertiary"
-              }`}
-            >
-              <div className="flex items-center gap-3">
-                <FolderArchive className="h-4.5 w-4.5" />
-                <span>Archive</span>
-              </div>
-              <span className="text-xs bg-neutral-200/50 dark:bg-dark-bg-tertiary px-2 py-0.5 rounded-full text-neutral-500">{counts.archive}</span>
-            </button>
-
-            <button
-              onClick={() => { setCurrentView("trash"); setCurrentLabel(null); }}
-              className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-sm font-semibold transition-colors ${
-                currentView === "trash" && !currentLabel
-                  ? "bg-primary/10 text-primary"
-                  : "text-neutral-600 dark:text-dark-text-secondary hover:bg-neutral-100 dark:hover:bg-dark-bg-tertiary"
-              }`}
-            >
-              <div className="flex items-center gap-3">
-                <Trash2 className="h-4.5 w-4.5" />
-                <span>Trash</span>
-              </div>
-              <span className="text-xs bg-neutral-200/50 dark:bg-dark-bg-tertiary px-2 py-0.5 rounded-full text-neutral-500">{counts.trash}</span>
-            </button>
-          </nav>
-
-          {/* Color Labels */}
-          <div className="mt-8">
-            <h4 className="text-[11px] font-bold text-neutral-400 dark:text-dark-text-tertiary uppercase tracking-wider mb-2 px-3">Labels</h4>
-            <div className="space-y-1">
-              {Object.keys(COLOR_SCHEMES).map(colorKey => {
-                const s = COLOR_SCHEMES[colorKey];
-                return (
-                  <button
-                    key={colorKey}
-                    onClick={() => { setCurrentLabel(colorKey); setCurrentView("all"); }}
-                    className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-semibold transition-colors ${
-                      currentLabel === colorKey
-                        ? "bg-primary/10 text-primary font-bold"
-                        : "text-neutral-600 dark:text-dark-text-secondary hover:bg-neutral-100 dark:hover:bg-dark-bg-tertiary"
-                    }`}
-                  >
-                    <span className="h-3 w-3 rounded-md shrink-0 border border-neutral-300 dark:border-neutral-700" style={{ backgroundColor: s.accent }} />
-                    <span>{s.label}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Settings & Storage Indicator */}
-          <div className="mt-8 border-t border-neutral-200 dark:border-dark-border pt-4">
-            <button
-              onClick={() => setSettingsOpen(true)}
-              className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-semibold text-neutral-600 dark:text-dark-text-secondary hover:bg-neutral-100 dark:hover:bg-dark-bg-tertiary transition-colors"
-            >
-              <Settings className="h-4.5 w-4.5" />
-              <span>Notes Settings</span>
-            </button>
-
-            <div className="mt-4 px-3">
-              <div className="flex items-center justify-between text-[11px] font-semibold text-neutral-400 dark:text-dark-text-tertiary mb-1">
-                <span>Storage</span>
-                <span>{storageStats.kb} KB / 10 MB</span>
-              </div>
-              <div className="h-1.5 w-full bg-neutral-200 dark:bg-dark-bg-tertiary rounded-full overflow-hidden">
-                <div className="h-full bg-primary" style={{ width: `${storageStats.percentage}%` }} />
-              </div>
-            </div>
-          </div>
-        </aside>
-
-        {/* ── Horizontal Row Filter Tabs (Mobile View only) ──────────────────────────── */}
-        <div className="md:hidden flex overflow-x-auto gap-2 pb-4 scrollbar-none shrink-0 border-b border-neutral-100 dark:border-dark-border mb-4">
-          <button
-            onClick={() => { setCurrentView("all"); setCurrentLabel(null); }}
-            className={`px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap border ${
-              currentView === "all" && !currentLabel
-                ? "bg-primary text-white border-primary"
-                : "bg-white dark:bg-dark-bg-secondary text-neutral-600 dark:text-dark-text-secondary border-neutral-200 dark:border-dark-border"
-            }`}
-          >
-            All ({counts.all})
-          </button>
-          <button
-            onClick={() => { setCurrentView("reminders"); setCurrentLabel(null); }}
-            className={`px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap border ${
-              currentView === "reminders" && !currentLabel
-                ? "bg-primary text-white border-primary"
-                : "bg-white dark:bg-dark-bg-secondary text-neutral-600 dark:text-dark-text-secondary border-neutral-200 dark:border-dark-border"
-            }`}
-          >
-            Reminders ({counts.reminders})
-          </button>
-          <button
-            onClick={() => { setCurrentView("archive"); setCurrentLabel(null); }}
-            className={`px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap border ${
-              currentView === "archive" && !currentLabel
-                ? "bg-primary text-white border-primary"
-                : "bg-white dark:bg-dark-bg-secondary text-neutral-600 dark:text-dark-text-secondary border-neutral-200 dark:border-dark-border"
-            }`}
-          >
-            Archive ({counts.archive})
-          </button>
-          <button
-            onClick={() => { setCurrentView("trash"); setCurrentLabel(null); }}
-            className={`px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap border ${
-              currentView === "trash" && !currentLabel
-                ? "bg-primary text-white border-primary"
-                : "bg-white dark:bg-dark-bg-secondary text-neutral-600 dark:text-dark-text-secondary border-neutral-200 dark:border-dark-border"
-            }`}
-          >
-            Trash ({counts.trash})
-          </button>
-          
-          <div className="w-[1px] bg-neutral-200 dark:bg-dark-border self-stretch" />
-          
-          {Object.keys(COLOR_SCHEMES).map(colorKey => {
-            const s = COLOR_SCHEMES[colorKey];
-            return (
-              <button
-                key={colorKey}
-                onClick={() => { setCurrentLabel(colorKey); setCurrentView("all"); }}
-                className={`px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap border flex items-center gap-1.5 ${
-                  currentLabel === colorKey
-                    ? "bg-primary text-white border-primary"
-                    : "bg-white dark:bg-dark-bg-secondary text-neutral-600 dark:text-dark-text-secondary border-neutral-200 dark:border-dark-border"
-                }`}
-              >
-                <span className="h-2 w-2 rounded-full border border-white" style={{ backgroundColor: s.accent }} />
-                <span>{s.label}</span>
-              </button>
-            );
-          })}
-        </div>
-
-        {/* ── Main Notes Grid Pane ──────────────────────────── */}
-        <div className="flex-1 min-w-0 md:pl-6">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+        {/* ── Redesigned Header Row ──────────────────────────── */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-neutral-200 dark:border-dark-border pb-4">
+          <div>
             <h1 className="text-2xl font-bold font-display text-neutral-900 dark:text-dark-text flex items-center gap-3">
-              {currentLabel ? (
-                <>
-                  <Tag className="h-6 w-6 text-primary" />
-                  <span>{COLOR_SCHEMES[currentLabel]?.label || "Notes"}</span>
-                </>
-              ) : currentView === "reminders" ? (
-                <>
-                  <Bell className="h-6 w-6 text-primary" />
-                  <span>Reminders</span>
-                </>
-              ) : currentView === "archive" ? (
-                <>
-                  <FolderArchive className="h-6 w-6 text-primary" />
-                  <span>Archive</span>
-                </>
-              ) : currentView === "trash" ? (
-                <>
-                  <Trash2 className="h-6 w-6 text-primary" />
-                  <span>Trash</span>
-                </>
-              ) : (
-                <>
-                  <Notebook className="h-6 w-6 text-primary" />
-                  <span>All Notes</span>
-                </>
-              )}
+              <Notebook className="h-6 w-6 text-primary" />
+              <span>Notes</span>
               <span className="text-xs font-semibold px-2 py-0.5 bg-neutral-200 dark:bg-dark-bg-tertiary rounded-full text-neutral-500">
                 {filteredNotes.length} {filteredNotes.length === 1 ? "note" : "notes"}
               </span>
             </h1>
+            <p className="text-xs text-neutral-500 mt-1">Keep track of your lists, reminders, and quick thoughts.</p>
+          </div>
 
-            <div className="flex items-center gap-2">
-              <div className="relative flex-1 sm:w-56 max-w-xs">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-neutral-400" />
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => openEditor()}
+              className="py-2.5 px-4 bg-primary hover:bg-primary-dark text-white font-display font-semibold rounded-xl flex items-center justify-center gap-2 shadow-sm active:scale-[0.98] transition-all text-xs"
+            >
+              <Plus className="h-4 w-4" />
+              <span>New Note</span>
+            </button>
+            
+            <button
+              onClick={() => setSettingsOpen(true)}
+              className="p-2 border border-neutral-200 dark:border-dark-border bg-white dark:bg-dark-bg-secondary text-neutral-600 dark:text-dark-text-secondary hover:bg-neutral-50 dark:hover:bg-dark-bg-tertiary rounded-xl transition-colors"
+              title="Notes Settings"
+            >
+              <Settings className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+
+        {/* ── Filters & Category Tabs (Redesigned) ──────────────────────────── */}
+        <div className="flex flex-col gap-4 bg-white dark:bg-dark-bg-secondary p-4 rounded-2xl border border-neutral-200 dark:border-dark-border shadow-sm">
+          
+          {/* Row 1: Views and Search */}
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            
+            {/* View Categories (Tabs) */}
+            <div className="flex flex-wrap gap-1 p-1 bg-neutral-100 dark:bg-dark-bg-tertiary rounded-xl w-fit">
+              <button
+                onClick={() => { setCurrentView("all"); setCurrentLabel(null); }}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  currentView === "all" && !currentLabel
+                    ? "bg-white dark:bg-dark-bg-secondary text-primary shadow-sm"
+                    : "text-neutral-600 dark:text-dark-text-secondary hover:text-neutral-900 dark:hover:text-dark-text"
+                }`}
+              >
+                <Lightbulb className="h-3.5 w-3.5" />
+                <span>All Notes</span>
+                <span className="text-[10px] px-1.5 py-0.2 bg-neutral-200/50 dark:bg-dark-bg-secondary rounded text-neutral-500">{counts.all}</span>
+              </button>
+              
+              <button
+                onClick={() => { setCurrentView("reminders"); setCurrentLabel(null); }}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  currentView === "reminders" && !currentLabel
+                    ? "bg-white dark:bg-dark-bg-secondary text-primary shadow-sm"
+                    : "text-neutral-600 dark:text-dark-text-secondary hover:text-neutral-900 dark:hover:text-dark-text"
+                }`}
+              >
+                <Bell className="h-3.5 w-3.5" />
+                <span>Reminders</span>
+                <span className="text-[10px] px-1.5 py-0.2 bg-neutral-200/50 dark:bg-dark-bg-secondary rounded text-neutral-500">{counts.reminders}</span>
+              </button>
+
+              <button
+                onClick={() => { setCurrentView("archive"); setCurrentLabel(null); }}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  currentView === "archive" && !currentLabel
+                    ? "bg-white dark:bg-dark-bg-secondary text-primary shadow-sm"
+                    : "text-neutral-600 dark:text-dark-text-secondary hover:text-neutral-900 dark:hover:text-dark-text"
+                }`}
+              >
+                <FolderArchive className="h-3.5 w-3.5" />
+                <span>Archive</span>
+                <span className="text-[10px] px-1.5 py-0.2 bg-neutral-200/50 dark:bg-dark-bg-secondary rounded text-neutral-500">{counts.archive}</span>
+              </button>
+
+              <button
+                onClick={() => { setCurrentView("trash"); setCurrentLabel(null); }}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  currentView === "trash" && !currentLabel
+                    ? "bg-white dark:bg-dark-bg-secondary text-primary shadow-sm"
+                    : "text-neutral-600 dark:text-dark-text-secondary hover:text-neutral-900 dark:hover:text-dark-text"
+                }`}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                <span>Trash</span>
+                <span className="text-[10px] px-1.5 py-0.2 bg-neutral-200/50 dark:bg-dark-bg-secondary rounded text-neutral-500">{counts.trash}</span>
+              </button>
+            </div>
+
+            {/* Search and Sort controls */}
+            <div className="flex items-center gap-2 flex-1 max-w-md lg:justify-end">
+              <div className="relative flex-1 max-w-xs">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-neutral-400" />
                 <input
                   type="text"
                   placeholder="Search notes..."
                   value={searchQuery}
                   onChange={e => setSearchQuery(e.target.value)}
-                  className="w-full pl-9 pr-4 py-1.5 text-xs bg-white dark:bg-dark-bg-secondary border border-neutral-200 dark:border-dark-border rounded-xl focus:outline-none focus:border-primary transition-colors text-neutral-800 dark:text-dark-text"
+                  className="w-full pl-9 pr-4 py-2 text-xs bg-neutral-50 dark:bg-dark-bg-tertiary border border-neutral-200 dark:border-dark-border rounded-xl focus:outline-none focus:border-primary transition-colors text-neutral-800 dark:text-dark-text"
                 />
               </div>
 
               <select
                 value={sortBy}
                 onChange={e => setSortBy(e.target.value as any)}
-                className="py-1.5 px-3 border border-neutral-200 dark:border-dark-border bg-white dark:bg-dark-bg-secondary text-xs rounded-xl font-bold focus:outline-none cursor-pointer text-neutral-800 dark:text-dark-text"
+                className="py-2 px-3 border border-neutral-200 dark:border-dark-border bg-neutral-50 dark:bg-dark-bg-tertiary text-xs rounded-xl font-bold focus:outline-none cursor-pointer text-neutral-800 dark:text-dark-text"
               >
                 <option value="updated">Last edited</option>
                 <option value="created">Date created</option>
@@ -792,15 +669,52 @@ export default function NotesPage() {
               {currentView === "trash" && (
                 <button
                   onClick={emptyTrash}
-                  className="py-1.5 px-3 bg-red-500 hover:bg-red-600 text-white font-bold rounded-xl text-xs flex items-center gap-1 active:scale-[0.98] transition-all"
+                  className="py-2 px-3 bg-red-500 hover:bg-red-600 text-white font-bold rounded-xl text-xs flex items-center gap-1 active:scale-[0.98] transition-all shrink-0"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
-                  <span>Empty Trash</span>
+                  <span>Empty</span>
                 </button>
               )}
             </div>
           </div>
 
+          {/* Row 2: Label Filters */}
+          <div className="border-t border-neutral-100 dark:border-dark-border pt-3 flex flex-wrap items-center gap-2">
+            <span className="text-[10px] font-bold text-neutral-400 dark:text-dark-text-tertiary uppercase tracking-wider pr-1">Labels:</span>
+            <button
+              onClick={() => setCurrentLabel(null)}
+              className={`px-3 py-1 rounded-xl text-xs font-bold transition-all border ${
+                !currentLabel
+                  ? "bg-primary text-white border-primary shadow-sm"
+                  : "bg-neutral-50 dark:bg-dark-bg-tertiary text-neutral-600 dark:text-dark-text-secondary border-neutral-200 dark:border-dark-border hover:bg-neutral-100 dark:hover:bg-dark-bg-secondary"
+              }`}
+            >
+              All Labels
+            </button>
+            {Object.keys(COLOR_SCHEMES).map(colorKey => {
+              const s = COLOR_SCHEMES[colorKey];
+              return (
+                <button
+                  key={colorKey}
+                  onClick={() => { setCurrentLabel(colorKey); }}
+                  className={`px-3 py-1 rounded-xl text-xs font-bold transition-all border flex items-center gap-1.5 ${
+                    currentLabel === colorKey
+                      ? "bg-primary text-white border-primary shadow-sm"
+                      : "bg-neutral-50 dark:bg-dark-bg-tertiary text-neutral-600 dark:text-dark-text-secondary border-neutral-200 dark:border-dark-border hover:bg-neutral-100 dark:hover:bg-dark-bg-secondary"
+                  }`}
+                >
+                  <span className="h-2 w-2 rounded-full border border-white" style={{ backgroundColor: s.accent }} />
+                  <span>{s.label}</span>
+                </button>
+              );
+            })}
+          </div>
+
+        </div>
+
+        {/* ── Main Notes Grid Pane ──────────────────────────── */}
+        <div className="flex-1 min-w-0">
+          
           {/* Grid Layout */}
           {filteredNotes.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 px-4 text-center">
@@ -928,7 +842,7 @@ export default function NotesPage() {
       {/* ── Mobile Floating Add Button ──────────────────────────── */}
       <button
         onClick={() => openEditor()}
-        className="md:hidden fixed bottom-36 right-4 h-14 w-14 bg-primary text-white rounded-full flex items-center justify-center shadow-2xl hover:scale-105 active:scale-95 transition-transform z-35"
+        className="fixed bottom-24 right-4 h-14 w-14 bg-primary text-white rounded-full flex items-center justify-center shadow-2xl hover:scale-105 active:scale-95 transition-transform z-30"
         aria-label="Add Note"
       >
         <Plus className="h-6 w-6" />

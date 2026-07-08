@@ -15,6 +15,7 @@ export const COLLECTIONS = {
   invitations: "invitations",
   paymentReminders: "payment_reminders",
   userNudgeStates: "user_nudge_states",
+  notes: "notes",
 } as const;
 
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
