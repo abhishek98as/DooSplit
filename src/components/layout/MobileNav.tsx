@@ -30,14 +30,16 @@ const MobileNav: React.FC = () => {
 
   return (
     <>
-      {/* ── Floating Action Button (Add Expense) ────────────────────────── */}
-      <Link
-        href="/expenses/add"
-        className="md:hidden fixed bottom-20 right-4 h-14 w-14 bg-primary text-white rounded-full flex items-center justify-center shadow-xl hover:scale-105 active:scale-95 transition-transform z-35"
-        aria-label="Add expense"
-      >
-        <Plus className="h-6 w-6" />
-      </Link>
+      {/* ── Floating Action Button (Add Expense) — hidden on Notes page ──── */}
+      {!isActive("/notes") && (
+        <Link
+          href="/expenses/add"
+          className="md:hidden fixed bottom-20 right-4 h-14 w-14 bg-primary text-white rounded-full flex items-center justify-center shadow-xl hover:scale-105 active:scale-95 transition-transform z-35"
+          aria-label="Add expense"
+        >
+          <Plus className="h-6 w-6" />
+        </Link>
+      )}
 
       {/* ── Bottom Navigation Bar ──────────────────────────────────────── */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white dark:bg-dark-bg-secondary border-t border-neutral-200 dark:border-dark-border shadow-lg z-40 safe-area-inset-bottom">

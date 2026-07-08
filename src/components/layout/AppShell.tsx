@@ -163,17 +163,7 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
               >
                 <UsersRound className="h-5 w-5" />
               </Link>
-              <Link
-                href="/expenses?focus=search"
-                className={`p-2 rounded-lg transition-colors ${
-                  pathname === "/expenses"
-                    ? "text-primary bg-primary/10"
-                    : "text-neutral-500 hover:text-neutral-700 hover:bg-neutral-100 dark:hover:bg-dark-bg-tertiary"
-                }`}
-                aria-label="Search expenses"
-              >
-                <Search className="h-5 w-5" />
-              </Link>
+              <NotificationDropdown />
               <Link
                 href="/settings"
                 className={`p-2 rounded-lg transition-colors ${
@@ -184,7 +174,6 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
               >
                 <Settings className="h-5 w-5" />
               </Link>
-              <NotificationDropdown />
             </div>
           </div>
         </header>
