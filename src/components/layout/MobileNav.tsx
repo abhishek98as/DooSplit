@@ -42,8 +42,8 @@ const MobileNav: React.FC = () => {
       )}
 
       {/* ── Bottom Navigation Bar ──────────────────────────────────────── */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white dark:bg-dark-bg-secondary border-t border-neutral-200 dark:border-dark-border shadow-lg z-40 safe-area-inset-bottom">
-        <div className="flex items-center justify-around h-16">
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white dark:bg-dark-bg-secondary border-t border-neutral-200 dark:border-dark-border shadow-lg z-40 safe-area-inset-bottom overflow-x-auto">
+        <div className="flex items-center justify-around h-16 min-w-max px-2">
           {TABS.map((item) => {
             const Icon = item.icon;
             const active = isActive(item.href);
@@ -51,14 +51,14 @@ const MobileNav: React.FC = () => {
               <Link
                 key={item.href}
                 href={item.href}
-                className={`flex flex-col items-center justify-center flex-1 h-full space-y-1 transition-colors ${
+                className={`flex flex-col items-center justify-center flex-1 h-full space-y-1 transition-colors px-1 min-w-[52px] ${
                   active
                     ? "text-primary font-semibold"
                     : "text-neutral-500 dark:text-dark-text-tertiary hover:text-neutral-700 dark:hover:text-dark-text"
                 }`}
               >
                 <Icon className="h-5 w-5" />
-                <span className="text-[10px] font-medium leading-none">{item.label}</span>
+                <span className="text-[9px] font-medium leading-none whitespace-nowrap">{item.label}</span>
               </Link>
             );
           })}

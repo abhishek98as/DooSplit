@@ -75,8 +75,11 @@ export default function NoteCard({
               </span>
               <div className="flex flex-col min-w-0">
                 <span className="truncate">{item.text}</span>
-                <span className="text-[8px] text-neutral-400/80 leading-none mt-0.5">
-                  Added {formatTime(item.createdAt)}
+                <span className="text-[8px] text-neutral-400/80 leading-none mt-0.5 flex items-center gap-1.5">
+                  <span>Created {formatTime(item.createdAt)}</span>
+                  {item.updatedAt && item.updatedAt !== item.createdAt && (
+                    <span>· Edited {formatTime(item.updatedAt)}</span>
+                  )}
                 </span>
               </div>
             </li>

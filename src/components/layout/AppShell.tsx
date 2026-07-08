@@ -126,7 +126,7 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
       <Sidebar />
 
       {/* Main Content Area */}
-      <div className="md:pl-64">
+      <div className="md:pl-64 overflow-x-hidden">
         {/* ── Mobile Header (hidden on desktop) ──────────────────────────── */}
         <header className="md:hidden sticky top-0 z-30 min-h-14 bg-white dark:bg-dark-bg-secondary border-b border-neutral-200 dark:border-dark-border py-2">
           <div className="flex items-center justify-between h-full px-4 gap-2">
@@ -238,7 +238,7 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
         </header>
 
         {/* Page Content */}
-        <main className="pb-20 md:pb-6">
+        <main className="pb-20 md:pb-6 min-w-0">
           {children}
         </main>
       </div>
