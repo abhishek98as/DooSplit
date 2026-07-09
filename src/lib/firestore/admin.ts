@@ -170,105 +170,77 @@ async function handleSettlementsCollection(_filters?: any[]) {
 
 // ── Main proxy ──────────────────────────────────────────────────────────────
 
-export function getAdminDb(): any {
+type FilterClause = { field: string; op: string; value: any };
+
+function makeQueryHandler(collectionName: string, filters: FilterClause[]) {
   const handler: ProxyHandler<any> = {
-    get(_target, prop: string) {
-      if (prop === "collection") {
-        return (name: string) => {
-          const collectionProxy: any = new Proxy({ _name: name, _filters: [] as any[] }, {
-            get(_c, cProp: string) {
-              if (cProp === "doc") {
-                return (id: string) => ({
-                  get: async () => {
-                    switch (name) {
-                      case "users": return handleUsersCollection("doc", id);
-                      case "groups": return handleGroupsCollection("doc", undefined, id);
-                      case "invitations": return handleInvitationsCollection("doc", undefined, id);
-                      default: return createDdbDoc(null, id);
-                    }
-                  },
-                  set: async (_data: any, _opts?: any) => {},
-                  update: async (_data: any) => {},
-                  delete: async () => {},
-                  ref: { id },
-                });
-              }
-              if (cProp === "where") {
-                return (field: string, _op: string, value: any) => {
-                  const newFilters = [...(_c._filters || []), { field, op: _op, value }];
-                  const whereProxy = new Proxy({ ..._c, _filters: newFilters }, {
-                    get(w, wProp: string) {
-                      if (wProp === "where") return (f: string, o: string, v: any) => {
-                        const f2 = [...newFilters, { field: f, op: o, value: v }];
-                        return new Proxy({ ...w, _filters: f2 }, this as any);
-                      };
-                      if (wProp === "orderBy") return () => whereProxy;
-                      if (wProp === "limit") return () => whereProxy;
-                      if (wProp === "get") {
-                        return async () => {
-                          switch (name) {
-                            case "users": return handleUsersCollection("where", undefined, newFilters);
-                            case "notifications": return handleNotificationsCollection("where", newFilters);
-                            case "friendships": return handleFriendshipsCollection("where", newFilters);
-                            case "groups": return handleGroupsCollection("where", newFilters);
-                            case "group_members": return handleGroupMembersCollection(newFilters);
-                            case "expenses": return handleExpensesCollection(newFilters);
-                            case "invitations": return handleInvitationsCollection("where", newFilters);
-                            case "activity_logs": return handleActivitiesCollection(newFilters);
-                            case "settlements": return handleSettlementsCollection(newFilters);
-                            default: return createDdbQueryResult([]);
-                          }
-                        };
-                      }
-                      return undefined;
-                    }
-                  });
-                  return whereProxy;
-                };
-              }
-              if (cProp === "orderBy") return () => collectionProxy;
-              if (cProp === "limit") return () => collectionProxy;
-              if (cProp === "get") {
-                return async () => {
-                  switch (name) {
-                    case "groups": {
-                      const { listGroupsForUser } = await import("@/lib/dynamodb/entities/groups");
-                      // This gets called without a user filter — return empty for safety
-                      return createDdbQueryResult([]);
-                    }
-                    default: return createDdbQueryResult([]);
-                  }
-                };
-              }
-              return undefined;
-            }
-          });
-          return collectionProxy;
-        };
+    get(_t, prop: string) {
+      if (prop === "where") {
+        return (field: string, op: string, value: any) =>
+          makeQueryHandler(collectionName, [...filters, { field, op, value }]);
       }
-      if (prop === "batch") {
-        return () => ({
-          set: (..._args: any[]) => {},
-          commit: async () => {},
-          delete: (..._args: any[]) => {},
-          update: (..._args: any[]) => {},
-        });
-      }
-      if (prop === "runTransaction") {
-        return async (fn: (t: any) => Promise<any>) => {
-          const tx = {
-            get: async (_ref: any) => createDdbDoc(null, "tx"),
-            set: (..._args: any[]) => {},
-            update: (..._args: any[]) => {},
-            delete: (..._args: any[]) => {},
-          };
-          return fn(tx);
+      if (prop === "orderBy") return () => makeQueryHandler(collectionName, filters);
+      if (prop === "limit") return () => makeQueryHandler(collectionName, filters);
+      if (prop === "get") {
+        return async () => {
+          switch (collectionName) {
+            case "users": return handleUsersCollection("where", undefined, filters);
+            case "notifications": return handleNotificationsCollection("where", filters);
+            case "friendships": return handleFriendshipsCollection("where", filters);
+            case "groups": return handleGroupsCollection("where", filters);
+            case "group_members": return handleGroupMembersCollection(filters);
+            case "expenses": return handleExpensesCollection(filters);
+            case "expense_participants": return handleExpensesCollection(filters);
+            case "invitations": return handleInvitationsCollection("where", filters);
+            case "activity_logs": return handleActivitiesCollection(filters);
+            case "settlements": return handleSettlementsCollection(filters);
+            default: return createDdbQueryResult([]);
+          }
         };
       }
       return undefined;
     }
   };
+  return new Proxy({ _name: collectionName, _filters: filters }, handler);
+}
 
+export function getAdminDb(): any {
+  const handler: ProxyHandler<any> = {
+    get(_target, prop: string) {
+      if (prop === "collection") {
+        return (name: string) => ({
+          doc: (id: string) => ({
+            get: async () => {
+              switch (name) {
+                case "users": return handleUsersCollection("doc", id);
+                case "groups": return handleGroupsCollection("doc", undefined, id);
+                case "invitations": return handleInvitationsCollection("doc", undefined, id);
+                default: return createDdbDoc(null, id);
+              }
+            },
+            set: async (..._args: any[]) => {},
+            update: async (..._args: any[]) => {},
+            delete: async () => {},
+            ref: { id, path: `${name}/${id}` },
+          }),
+          where: (field: string, op: string, value: any) =>
+            makeQueryHandler(name, [{ field, op, value }]),
+          orderBy: () => makeQueryHandler(name, []),
+          limit: () => makeQueryHandler(name, []),
+          get: async () => createDdbQueryResult([]),
+        });
+      }
+      if (prop === "batch") {
+        return () => ({
+          set: (..._args: any[]) => ({} as any),
+          commit: async () => {},
+          delete: (..._args: any[]) => ({} as any),
+          update: (..._args: any[]) => ({} as any),
+        });
+      }
+      return undefined;
+    }
+  };
   return new Proxy({}, handler);
 }
 
