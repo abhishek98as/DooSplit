@@ -364,23 +364,43 @@ export function useNotes(): UseNotesReturn {
 
     switch (format) {
       case "csv": {
-        // Excel-compatible CSV with BOM
-        const rows = [["Title", "Type", "Color", "Pinned", "Archived", "Content", "Reminder", "Created", "Updated"]];
+        // Excel-compatible CSV with BOM — each checklist item gets its own row
+        const headers = ["Title", "Type", "Color", "Pinned", "Archived", "Item Text", "Item Done", "Item Created", "Item Updated", "Note Reminder", "Note Created", "Note Updated"];
+        const rows = [headers];
         for (const n of notes) {
-          const body = n.type === "list"
-            ? (n.items || []).map(i => `${i.done ? "[✓]" : "[ ]"} ${i.text}`).join("; ")
-            : n.text || "";
-          rows.push([
-            n.title || "Untitled",
-            n.type,
-            n.color || "none",
-            n.pinned ? "Yes" : "No",
-            n.archived ? "Yes" : "No",
-            body,
-            n.reminder || "",
-            n.createdAt || "",
-            n.updatedAt || "",
-          ]);
+          if (n.type === "list" && (n.items || []).length > 0) {
+            for (const item of n.items || []) {
+              rows.push([
+                n.title || "Untitled",
+                "list",
+                n.color || "none",
+                n.pinned ? "Yes" : "No",
+                n.archived ? "Yes" : "No",
+                item.text || "",
+                item.done ? "Yes" : "No",
+                item.createdAt ? new Date(item.createdAt).toLocaleString() : "",
+                item.updatedAt ? new Date(item.updatedAt).toLocaleString() : "",
+                n.reminder ? new Date(n.reminder).toLocaleString() : "",
+                n.createdAt ? new Date(n.createdAt).toLocaleString() : "",
+                n.updatedAt ? new Date(n.updatedAt).toLocaleString() : "",
+              ]);
+            }
+          } else {
+            rows.push([
+              n.title || "Untitled",
+              n.type,
+              n.color || "none",
+              n.pinned ? "Yes" : "No",
+              n.archived ? "Yes" : "No",
+              n.text || "",
+              "",
+              n.createdAt ? new Date(n.createdAt).toLocaleString() : "",
+              n.updatedAt ? new Date(n.updatedAt).toLocaleString() : "",
+              n.reminder ? new Date(n.reminder).toLocaleString() : "",
+              n.createdAt ? new Date(n.createdAt).toLocaleString() : "",
+              n.updatedAt ? new Date(n.updatedAt).toLocaleString() : "",
+            ]);
+          }
         }
         content = "﻿" + rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
         mimeType = "text/csv;charset=utf-8";
@@ -397,6 +417,7 @@ export function useNotes(): UseNotesReturn {
           if (n.type === "list") {
             for (const item of n.items || []) {
               lines.push(`  ${item.done ? "[✓]" : "[ ]"} ${item.text}`);
+              lines.push(`     Created: ${item.createdAt ? new Date(item.createdAt).toLocaleString() : "?"} | Updated: ${item.updatedAt ? new Date(item.updatedAt).toLocaleString() : "?"}`);
             }
           } else {
             lines.push(n.text || "(empty)");
