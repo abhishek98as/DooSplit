@@ -15,16 +15,20 @@ export async function GET(request: NextRequest) {
     if (auth.response || !auth.user) {
       return auth.response as NextResponse;
     }
-
     const userId = auth.user.id;
     const cacheKey = buildUserScopedCacheKey("nudges", userId, "v2");
-    const payload = await getOrSetCacheJson(cacheKey, CACHE_TTL.analytics, async () =>
-      getSmartNudges(userId)
-    );
+    const payload = await getOrSetCacheJson(cacheKey, CACHE_TTL.analytics, async () => {
+      try {
+        return await getSmartNudges(userId);
+      } catch (err) {
+        console.error("getSmartNudges internal error:", err);
+        return { nudges: [], generatedAt: new Date().toISOString() };
+      }
+    });
 
     return NextResponse.json(payload, { status: 200 });
   } catch (error) {
     console.error("Get nudges error:", error);
-    return NextResponse.json({ error: "Failed to fetch nudges" }, { status: 500 });
+    return NextResponse.json({ nudges: [], generatedAt: new Date().toISOString() }, { status: 200 });
   }
 }
