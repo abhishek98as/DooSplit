@@ -1,14 +1,14 @@
 // DynamoDB-only — re-export from DynamoDB entities for API route compatibility
-export { getUserById as User_findById, getUserByEmail, getUsersByIds, putUser, queryUsers } from "@/lib/dynamodb/entities/users";
+export { getUserById as User_findById, getUserByEmail, getUsersByIds, putUser, searchUsersByName as queryUsers } from "@/lib/dynamodb/entities/users";
 export { getGroupById, listGroupsForUser, listGroupMembers, putGroup, putGroupMember, deleteGroupMember } from "@/lib/dynamodb/entities/groups";
-export { getExpenseById, listExpensesForUser, queryExpenseParticipants, putExpense, putExpenseParticipant } from "@/lib/dynamodb/entities/expenses";
+export { getExpenseById, queryUserExpenseFeed as listExpensesForUser, listExpenseParticipants as queryExpenseParticipants, putExpenseMeta as putExpense, putExpenseParticipant } from "@/lib/dynamodb/entities/expenses";
 export { getSettlementById, listSettlementsForUser, putSettlement } from "@/lib/dynamodb/entities/settlements";
-export { getFriendship, listFriendshipsForUser, putFriendship } from "@/lib/dynamodb/entities/friendships";
+export { getFriendship, listFriendshipsForUser, putFriendshipBidirectional as putFriendship } from "@/lib/dynamodb/entities/friendships";
 export { putNotification, queryNotificationsForUser } from "@/lib/dynamodb/entities/notifications";
-export { listInvitationsForUser, putInvitation, getInvitationByToken } from "@/lib/dynamodb/entities/invitations";
-export { putActivity } from "@/lib/dynamodb/entities/activities";
-export { queryPaymentReminders, putPaymentReminder, deletePaymentReminder } from "@/lib/dynamodb/entities/reminders";
-export { getRecurringTemplate, listRecurringTemplatesForUser, putRecurringTemplate, putRecurringRun } from "@/lib/dynamodb/entities/recurring";
+export { listInvitationsByOwner as listInvitationsForUser, putInvitation, getInvitationByToken } from "@/lib/dynamodb/entities/invitations";
+export { putActivityLog as putActivity } from "@/lib/dynamodb/entities/activities";
+export { listRemindersBySender as queryPaymentReminders, putReminder as putPaymentReminder, deleteReminder as deletePaymentReminder } from "@/lib/dynamodb/entities/reminders";
+export { getRecurringTemplateById as getRecurringTemplate, listRecurringTemplatesByOwner as listRecurringTemplatesForUser, putRecurringTemplate, putRecurringRun } from "@/lib/dynamodb/entities/recurring";
 
 // Stub models — throw if code tries to use Mongoose methods
 function createStubModel(name: string): any {

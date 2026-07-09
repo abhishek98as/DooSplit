@@ -134,7 +134,16 @@ class OfflineStore {
       });
 
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        let errMsg = `HTTP ${response.status}: ${response.statusText || ""}`;
+        try {
+          const errBody = await response.json();
+          if (errBody && errBody.error) {
+            errMsg = `HTTP ${response.status}: ${errBody.error}${errBody.details ? ` - ${errBody.details}` : ""}`;
+          }
+        } catch {
+          // Fall back to statusText if body is not JSON
+        }
+        throw new Error(errMsg);
       }
 
       return await response.json();

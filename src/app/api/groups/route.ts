@@ -49,7 +49,10 @@ export async function GET(request: NextRequest) {
     });
   } catch (error: any) {
     console.error("Fetch groups error:", error);
-    return NextResponse.json({ error: "Failed to fetch groups" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Failed to fetch groups", details: error.message },
+      { status: 500 }
+    );
   }
 }
 

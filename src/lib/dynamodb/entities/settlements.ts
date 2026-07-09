@@ -206,3 +206,11 @@ export async function listSettlementAllocations(
     },
   });
 }
+
+export async function listSettlementsForUser(userId: string): Promise<DdbSettlementFeed[]> {
+  const { items } = await queryUserSettlementFeed(userId, 5000);
+  return items;
+}
+
+export { putSettlementMeta as putSettlement };
+

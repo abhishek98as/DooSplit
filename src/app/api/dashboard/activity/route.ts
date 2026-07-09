@@ -44,9 +44,8 @@ export async function GET(request: NextRequest) {
   } catch (error: any) {
     console.error("Dashboard activity error:", error);
     return NextResponse.json(
-      { error: "Failed to fetch dashboard activities" },
+      { error: "Failed to fetch dashboard activities", details: error.message },
       { status: 500 }
     );
   }
 }
-

@@ -86,6 +86,29 @@ export async function GET(request: NextRequest) {
   }
   results.tests.session = sessionTest;
 
+  const dynamoDbTest: Record<string, any> = {
+    name: "DynamoDB Connection",
+  };
+  try {
+    const start = Date.now();
+    const { getRawDynamoDB } = await import("@/lib/dynamodb/client");
+    const { TABLE } = await import("@/lib/dynamodb/tables");
+    const { ListTablesCommand } = await import("@aws-sdk/client-dynamodb");
+    const rawDb = getRawDynamoDB();
+    const tables = await rawDb.send(new ListTablesCommand({}));
+    dynamoDbTest.passed = true;
+    dynamoDbTest.connectionTimeMs = Date.now() - start;
+    dynamoDbTest.tables = tables.TableNames;
+    dynamoDbTest.tableName = TABLE;
+    dynamoDbTest.hasCredentials = Boolean(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY);
+  } catch (error: any) {
+    dynamoDbTest.passed = false;
+    dynamoDbTest.error = error.message;
+    dynamoDbTest.hasCredentials = Boolean(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY);
+    allPassed = false;
+  }
+  results.tests.dynamoDb = dynamoDbTest;
+
   const testNames = Object.keys(results.tests);
   const passedCount = testNames.filter((name) => results.tests[name].passed).length;
   const failedCount = testNames.filter((name) => !results.tests[name].passed).length;
