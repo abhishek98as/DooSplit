@@ -1081,9 +1081,10 @@ export default function FriendsPage() {
           </Card>
         )}
 
+        {/* Floating Add Expense — hidden on mobile (FAB handles it), visible on desktop */}
         <Link
           href="/expenses/add"
-          className="fixed bottom-24 right-4 z-40 group flex items-center gap-2 rounded-2xl bg-navy px-4 py-3 text-sm font-semibold text-primary shadow-xl transition-all duration-300 hover:-translate-y-0.5 hover:shadow-2xl"
+          className="hidden md:flex fixed bottom-8 right-8 z-40 group items-center gap-2 rounded-2xl bg-navy px-4 py-3 text-sm font-semibold text-primary shadow-xl transition-all duration-300 hover:-translate-y-0.5 hover:shadow-2xl"
         >
           <Receipt className="h-4 w-4" />
           Add Expense

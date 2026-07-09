@@ -51,7 +51,7 @@ export default function NotesFilterBar({
               <button
                 key={view.key}
                 onClick={() => { onViewChange(view.key); onLabelChange(null); }}
-                className={`relative flex items-center gap-1.5 px-3 py-2.5 text-xs font-bold whitespace-nowrap transition-colors border-b-2 ${
+                className={`relative flex items-center gap-1.5 px-3 py-2.5 text-sm font-bold whitespace-nowrap transition-colors border-b-2 ${
                   active
                     ? "text-primary border-primary"
                     : "text-neutral-500 border-transparent hover:text-neutral-700 dark:hover:text-dark-text hover:border-neutral-300"
@@ -59,7 +59,7 @@ export default function NotesFilterBar({
               >
                 <Icon className="h-3.5 w-3.5" />
                 <span className="hidden sm:inline">{view.label}</span>
-                <span className="text-[10px] text-neutral-400 ml-0.5">({counts[view.countKey]})</span>
+                <span className="text-xs text-neutral-400 ml-0.5">({counts[view.countKey]})</span>
               </button>
             );
           })}
@@ -105,10 +105,10 @@ export default function NotesFilterBar({
 
       {/* Row 2: Compact label chips */}
       <div className="flex items-center gap-1.5 pb-2.5 overflow-x-auto scrollbar-hide">
-        <span className="text-[10px] font-semibold text-neutral-400 dark:text-dark-text-tertiary uppercase tracking-wider mr-1 shrink-0">Labels:</span>
+        <span className="text-xs font-semibold text-neutral-400 dark:text-dark-text-tertiary uppercase tracking-wider mr-1 shrink-0">Labels:</span>
         <button
           onClick={() => onLabelChange(null)}
-          className={`px-2.5 py-1 rounded-full text-[10px] font-bold transition-colors shrink-0 ${
+          className={`px-2.5 py-1 rounded-full text-xs font-bold transition-colors shrink-0 ${
             !currentLabel
               ? "bg-primary text-white"
               : "bg-neutral-100 dark:bg-dark-bg-tertiary text-neutral-500 hover:text-neutral-700 dark:hover:text-dark-text hover:bg-neutral-200 dark:hover:bg-dark-bg-secondary"
@@ -122,7 +122,7 @@ export default function NotesFilterBar({
             <button
               key={colorKey}
               onClick={() => onLabelChange(currentLabel === colorKey ? null : colorKey)}
-              className={`px-2.5 py-1 rounded-full text-[10px] font-bold transition-colors flex items-center gap-1 shrink-0 ${
+              className={`px-2.5 py-1 rounded-full text-xs font-bold transition-colors flex items-center gap-1 shrink-0 ${
                 currentLabel === colorKey
                   ? "bg-primary text-white"
                   : "bg-neutral-100 dark:bg-dark-bg-tertiary text-neutral-500 hover:text-neutral-700 dark:hover:text-dark-text hover:bg-neutral-200 dark:hover:bg-dark-bg-secondary"

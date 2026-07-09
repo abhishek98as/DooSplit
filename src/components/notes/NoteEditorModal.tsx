@@ -44,7 +44,7 @@ export default function NoteEditorModal({
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-white dark:bg-dark-bg-secondary w-full max-w-3xl rounded-2xl flex flex-col shadow-2xl animate-scale-in max-h-[90vh]">
+      <div className="bg-white dark:bg-dark-bg-secondary w-[95vw] max-w-5xl h-[92vh] rounded-2xl flex flex-col shadow-2xl animate-scale-in">
         {/* Modal Header */}
         <div className="p-4 border-b border-neutral-100 dark:border-dark-border flex items-center justify-between">
           <input

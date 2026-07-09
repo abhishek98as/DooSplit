@@ -48,7 +48,7 @@ export default function NoteCard({
 
       {/* Title */}
       {note.title && (
-        <h3 className="font-bold text-[15px] leading-tight text-neutral-900 dark:text-dark-text mb-2 pr-6">
+        <h3 className="font-bold text-base leading-tight text-neutral-900 dark:text-dark-text mb-2 pr-6">
           {note.title}
         </h3>
       )}
@@ -60,7 +60,7 @@ export default function NoteCard({
             <li
               key={item.id}
               onClick={e => { e.stopPropagation(); onToggleItemDone(note.id, item.id); }}
-              className={`flex items-start gap-2 text-xs py-0.5 leading-snug cursor-pointer ${
+              className={`flex items-start gap-2 text-sm py-0.5 leading-snug cursor-pointer ${
                 item.done ? "text-neutral-400 dark:text-dark-text-tertiary line-through" : "text-neutral-700 dark:text-dark-text-secondary"
               }`}
             >
@@ -91,7 +91,7 @@ export default function NoteCard({
           )}
         </ul>
       ) : (
-        <p className="text-xs text-neutral-600 dark:text-dark-text-secondary leading-relaxed mb-3 whitespace-pre-wrap truncate max-h-36">
+        <p className="text-sm text-neutral-600 dark:text-dark-text-secondary leading-relaxed mb-3 whitespace-pre-wrap truncate max-h-36">
           {note.text}
         </p>
       )}
