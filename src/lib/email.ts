@@ -41,90 +41,168 @@ function buildInviteEmailTemplate(
 ): InviteEmailTemplate {
   const safeInviterName = escapeHtml(inviterName || "Your friend");
   const safeInviteLink = escapeHtml(inviteLink);
-  const preheader =
-    "Join DooSplit and start splitting expenses with your friends in seconds.";
   const subjectName = sanitizeHeaderValue(inviterName || "Your friend");
+  
   let inviteOrigin = "";
-  try {
-    inviteOrigin = new URL(inviteLink).origin;
-  } catch {
-    inviteOrigin = "";
-  }
+  try { inviteOrigin = new URL(inviteLink).origin; } catch { inviteOrigin = ""; }
+  const appUrl = inviteOrigin || "https://doosplit.vercel.app";
+  const safeAppUrl = escapeHtml(appUrl);
   const logoUrl = inviteOrigin ? `${inviteOrigin}/api/pwa/icon?size=96` : "";
-  const safeLogoUrl = escapeHtml(logoUrl);
+
+  // Warm Modern theme colors matching the app
+  const coral = "#FF5C39";
+  const coralDark = "#E84A28";
+  const warmBg = "#F7F4EE";
+  const warmText = "#1A1612";
+  const warmMuted = "#756B5E";
+  const warmBorder = "#E8E0D2";
+
+  const preheader = `${safeInviterName} invited you to split expenses on DooSplit.`;
 
   return {
     subject: `${subjectName} invited you to join DooSplit`,
-    text: `${subjectName} invited you to join DooSplit.\n\nCreate your account: ${inviteLink}\n\nThis invitation link expires in 7 days.`,
+    text: [
+      `${subjectName} invited you to join DooSplit — the easy way to split expenses with friends.`,
+      ``,
+      `Accept your invitation here:`,
+      `${inviteLink}`,
+      ``,
+      `This invitation link expires in 7 days.`,
+      ``,
+      `What is DooSplit?`,
+      `Track shared expenses, see exactly who owes what, and settle up without confusion — all in one place.`,
+      ``,
+      `— The DooSplit Team`,
+      `${appUrl}`,
+    ].join("\n"),
     html: `
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>DooSplit Invitation</title>
+  <meta name="color-scheme" content="light" />
+  <title>You're invited to DooSplit</title>
 </head>
-<body style="margin:0;padding:0;background-color:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">
-  <div style="display:none;overflow:hidden;line-height:1px;opacity:0;max-height:0;max-width:0;">
-    ${preheader}
+<body style="margin:0;padding:0;background-color:${warmBg};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">
+  <!-- Hidden preheader for email clients -->
+  <div style="display:none;overflow:hidden;line-height:1px;opacity:0;max-height:0;max-width:0;font-size:1px;color:${warmBg};">
+    ${preheader}&#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847;
   </div>
-  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color:#f1f5f9;padding:28px 12px;">
+
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color:${warmBg};padding:32px 16px;">
     <tr>
       <td align="center">
-        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:600px;background-color:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #dbe5eb;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background-color:#ffffff;border-radius:16px;overflow:hidden;border:1px solid ${warmBorder};">
+
+          <!-- Header -->
           <tr>
-            <td style="background:linear-gradient(135deg,#0f766e,#0f766e 55%,#115e59);padding:36px 32px;text-align:center;">
-              ${safeLogoUrl
-                ? `<img src="${safeLogoUrl}" alt="DooSplit" width="46" height="46" style="display:inline-block;width:46px;height:46px;border-radius:12px;margin-bottom:12px;background-color:rgba(255,255,255,0.16);" />`
-                : `<div style="height:46px;width:46px;border-radius:12px;background-color:rgba(255,255,255,0.16);display:inline-block;line-height:46px;text-align:center;color:#ffffff;font-size:20px;font-weight:700;margin-bottom:12px;">DS</div>`}
-              <h1 style="margin:0;color:#ffffff;font-size:30px;line-height:1.2;font-weight:700;">You are invited</h1>
-              <p style="margin:10px 0 0 0;color:#d6f5f1;font-size:15px;line-height:1.5;">
-                Split expenses clearly, settle faster, stay organized.
+            <td style="background:linear-gradient(135deg,${coral},${coralDark});padding:40px 36px;text-align:center;">
+              <div style="display:inline-block;width:52px;height:52px;border-radius:14px;background-color:rgba(255,255,255,0.18);line-height:52px;text-align:center;margin-bottom:14px;">
+                <span style="color:#ffffff;font-size:26px;font-weight:700;letter-spacing:-1px;">DS</span>
+              </div>
+              <h1 style="margin:0;color:#ffffff;font-size:28px;line-height:1.2;font-weight:700;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+                You're Invited!
+              </h1>
+              <p style="margin:8px 0 0 0;color:rgba(255,255,255,0.85);font-size:15px;line-height:1.5;">
+                Split expenses. Stay friends. It's that simple.
               </p>
             </td>
           </tr>
+
+          <!-- Body -->
           <tr>
-            <td style="padding:30px 32px 16px 32px;">
-              <p style="margin:0 0 14px 0;color:#0f172a;font-size:16px;line-height:1.6;">
-                <strong>${safeInviterName}</strong> invited you to join <strong>DooSplit</strong>.
+            <td style="padding:32px 36px 20px 36px;">
+              <p style="margin:0 0 12px 0;color:${warmText};font-size:16px;line-height:1.6;">
+                Hi there,
               </p>
-              <p style="margin:0 0 22px 0;color:#334155;font-size:15px;line-height:1.6;">
-                Track shared expenses, see exactly who owes what, and settle up without confusion.
+              <p style="margin:0 0 20px 0;color:${warmText};font-size:16px;line-height:1.6;">
+                <strong>${safeInviterName}</strong> has invited you to join <strong>DooSplit</strong> — the easiest way to track and split expenses with friends, roommates, and groups.
               </p>
+
+              <!-- Feature highlights -->
               <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin:0 0 24px 0;">
                 <tr>
-                  <td style="padding:12px 14px;border:1px solid #dbe5eb;border-radius:8px;background-color:#f8fafc;">
-                    <p style="margin:0;color:#334155;font-size:14px;line-height:1.5;">
-                      Invitation link expires in <strong>7 days</strong>.
-                    </p>
+                  <td style="padding:10px 0;">
+                    <span style="color:${coral};font-size:13px;font-weight:600;">✓</span>
+                    <span style="color:${warmMuted};font-size:14px;padding-left:8px;">Track who owes what — instantly</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:10px 0;">
+                    <span style="color:${coral};font-size:13px;font-weight:600;">✓</span>
+                    <span style="color:${warmMuted};font-size:14px;padding-left:8px;">Split equally or by custom amounts</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:10px 0;">
+                    <span style="color:${coral};font-size:13px;font-weight:600;">✓</span>
+                    <span style="color:${warmMuted};font-size:14px;padding-left:8px;">Settle up in one tap — no awkwardness</span>
                   </td>
                 </tr>
               </table>
-              <table role="presentation" cellspacing="0" cellpadding="0" style="margin:0 auto 18px auto;">
+
+              <!-- CTA Button -->
+              <table role="presentation" cellspacing="0" cellpadding="0" style="margin:0 auto 20px auto;">
                 <tr>
-                  <td align="center" style="border-radius:10px;background-color:#0f766e;">
-                    <a href="${safeInviteLink}" target="_blank" style="display:inline-block;padding:14px 28px;color:#ffffff;font-size:15px;font-weight:600;text-decoration:none;">
-                      Accept Invitation
+                  <td align="center" style="border-radius:12px;background:linear-gradient(135deg,${coral},${coralDark});box-shadow:0 4px 14px rgba(255,92,57,0.35);">
+                    <a href="${safeInviteLink}" target="_blank" style="display:inline-block;padding:15px 36px;color:#ffffff;font-size:16px;font-weight:600;text-decoration:none;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+                      Accept Invitation →
                     </a>
                   </td>
                 </tr>
               </table>
-              <p style="margin:0;color:#64748b;font-size:13px;line-height:1.6;">
-                If the button does not work, copy and paste this link into your browser:
+
+              <!-- Expiry notice -->
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin:0 0 20px 0;">
+                <tr>
+                  <td style="padding:14px 16px;border:1px solid ${warmBorder};border-radius:10px;background-color:${warmBg};">
+                    <p style="margin:0;color:${warmMuted};font-size:13px;line-height:1.5;text-align:center;">
+                      ⏳ This invitation expires in <strong>7 days</strong>.
+                    </p>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- Fallback link -->
+              <p style="margin:0 0 4px 0;color:${warmMuted};font-size:13px;line-height:1.5;text-align:center;">
+                Button not working? Copy this link:
               </p>
-              <p style="margin:8px 0 0 0;color:#0f766e;font-size:13px;line-height:1.6;word-break:break-all;">
-                <a href="${safeInviteLink}" target="_blank" style="color:#0f766e;text-decoration:underline;">${safeInviteLink}</a>
+              <p style="margin:0;color:${coral};font-size:13px;line-height:1.5;text-align:center;word-break:break-all;">
+                ${safeInviteLink}
               </p>
             </td>
           </tr>
+
+          <!-- Footer -->
           <tr>
-            <td style="padding:18px 32px 22px 32px;background-color:#f8fafc;border-top:1px solid #e2e8f0;text-align:center;">
-              <p style="margin:0;color:#64748b;font-size:12px;line-height:1.5;">
-                DooSplit - Split expenses, not friendships
+            <td style="padding:20px 36px;background-color:#FAF8F5;border-top:1px solid ${warmBorder};text-align:center;">
+              <p style="margin:0 0 6px 0;color:${warmText};font-size:13px;font-weight:600;">
+                DooSplit
+              </p>
+              <p style="margin:0 0 8px 0;color:${warmMuted};font-size:12px;line-height:1.5;">
+                Split expenses, not friendships.
+              </p>
+              <p style="margin:0;color:#B0A89A;font-size:11px;line-height:1.5;">
+                You received this email because ${safeInviterName} invited you to DooSplit.<br/>
+                If you don't want to receive these emails, you can ignore this invitation.
+              </p>
+            </td>
+          </tr>
+
+        </table>
+
+        <!-- Legal footer outside card -->
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;margin-top:16px;">
+          <tr>
+            <td style="text-align:center;">
+              <p style="margin:0;color:#B0A89A;font-size:11px;line-height:1.5;">
+                DooSplit &middot; ${safeAppUrl}
               </p>
             </td>
           </tr>
         </table>
+
       </td>
     </tr>
   </table>
@@ -141,12 +219,23 @@ export async function sendInviteEmail({
 }: SendInviteEmailParams) {
   const template = buildInviteEmailTemplate(inviterName, inviteLink);
 
+  const fromAddress = process.env.SMTP_FROM || process.env.SMTP_USER || "";
+  const messageId = `<invite-${Date.now()}-${Math.random().toString(36).slice(2, 10)}@doosplit.vercel.app>`;
+
   await transporter.sendMail({
-    from: `"DooSplit" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`,
+    from: `"DooSplit" <${fromAddress}>`,
     to,
     subject: template.subject,
     text: template.text,
     html: template.html,
+    // Anti-spam headers
+    headers: {
+      "Message-ID": messageId,
+      "X-Mailer": "DooSplit",
+      "X-Priority": "3",
+      "Precedence": "bulk",
+      "List-Unsubscribe": `<mailto:${fromAddress}?subject=unsubscribe>`,
+    },
   });
 }
 /**
