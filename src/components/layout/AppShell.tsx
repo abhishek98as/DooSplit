@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import Link from "next/link";
-import { Settings, Moon, Sun, Search, X, UsersRound } from "lucide-react";
+import { Settings, Moon, Sun, Search, X, UsersRound, Sparkles, RefreshCw, Activity, UserPlus, Menu, ArrowRightLeft, BarChart3 } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import Sidebar from "./Sidebar";
 import MobileNav from "./MobileNav";
@@ -59,6 +59,7 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
 
   const [mounted, setMounted] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { setMounted(true); }, []);
@@ -131,8 +132,12 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
         <header className="md:hidden sticky top-0 z-30 min-h-14 bg-white dark:bg-dark-bg-secondary border-b border-neutral-200 dark:border-dark-border py-2">
           <div className="flex items-center justify-between h-full px-4 gap-2">
             <div className="flex items-center gap-2 min-w-0 flex-1">
-              <Link href="/settings" className="flex items-center shrink-0">
-                <div className="h-9 w-9 rounded-full overflow-hidden flex items-center justify-center bg-primary text-white text-xs font-bold shadow-sm border border-neutral-200 dark:border-dark-border">
+              <button
+                type="button"
+                onClick={() => setIsMobileMenuOpen(true)}
+                className="flex items-center shrink-0 focus:outline-none"
+              >
+                <div className="h-9 w-9 rounded-full overflow-hidden flex items-center justify-center bg-primary text-white text-xs font-bold shadow-sm border border-neutral-200 dark:border-dark-border active:scale-95 transition-transform">
                   {session?.user?.image ? (
                     <img
                       src={session.user.image}
@@ -144,7 +149,7 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
                     <span>{initials}</span>
                   )}
                 </div>
-              </Link>
+              </button>
               <Link href="/dashboard" className="min-w-0 flex flex-col leading-tight">
                 <span className="text-h4 font-bold font-display text-neutral-900 dark:text-dark-text truncate">
                   DooSplit
@@ -177,16 +182,18 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
                 <UsersRound className="h-5 w-5" />
               </Link>
               <NotificationDropdown />
-              <Link
-                href="/settings"
+              <button
+                type="button"
+                onClick={() => setIsMobileMenuOpen(true)}
                 className={`p-2 rounded-lg transition-colors ${
-                  pathname === "/settings"
+                  isMobileMenuOpen
                     ? "text-primary bg-primary/10"
                     : "text-neutral-500 hover:text-neutral-700 hover:bg-neutral-100 dark:hover:bg-dark-bg-tertiary"
                 }`}
+                title="Menu"
               >
-                <Settings className="h-5 w-5" />
-              </Link>
+                <Menu className="h-5 w-5" />
+              </button>
             </div>
           </div>
         </header>
@@ -271,6 +278,98 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
       {/* PWA Components */}
       <OfflineIndicator position="top" />
       <InstallPrompt variant="toast" position="top" />
+      {/* Mobile Drawer Navigation Menu */}
+      {isMobileMenuOpen && (
+        <div className="md:hidden fixed inset-0 z-50 flex">
+          <style>{`
+            @keyframes slideIn {
+              from { transform: translateX(-100%); }
+              to { transform: translateX(0); }
+            }
+            .animate-slide-in {
+              animation: slideIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+            }
+          `}</style>
+
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 bg-neutral-900/60 backdrop-blur-xs transition-opacity duration-300"
+            onClick={() => setIsMobileMenuOpen(false)}
+          />
+
+          {/* Drawer Content */}
+          <div className="relative flex w-full max-w-xs flex-col bg-white dark:bg-dark-bg-secondary p-6 shadow-2xl transition-transform duration-300 animate-slide-in">
+            {/* Header: Profile & Close */}
+            <div className="flex items-start justify-between border-b border-neutral-100 dark:border-dark-border pb-4 mb-6">
+              <div className="flex items-center gap-3">
+                <div className="h-12 w-12 rounded-full overflow-hidden flex items-center justify-center bg-primary text-white text-sm font-bold border border-neutral-200 dark:border-dark-border">
+                  {session?.user?.image ? (
+                    <img
+                      src={session.user.image}
+                      alt={displayName}
+                      className="h-full w-full object-cover"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : (
+                    <span>{initials}</span>
+                  )}
+                </div>
+                <div className="min-w-0 flex flex-col">
+                  <span className="font-semibold text-neutral-950 dark:text-dark-text truncate">
+                    {displayName}
+                  </span>
+                  <span className="text-xs text-neutral-500 dark:text-dark-text-tertiary truncate">
+                    {session?.user?.email}
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsMobileMenuOpen(false)}
+                className="p-1 rounded-lg text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-dark-bg-tertiary"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Menu Links */}
+            <div className="flex-1 overflow-y-auto space-y-1">
+              {[
+                { href: "/ai-chat", label: "AI Chats", icon: Sparkles },
+                { href: "/settlements", label: "Settlements", icon: ArrowRightLeft },
+                { href: "/recurring-expenses", label: "Recurring Expenses", icon: RefreshCw },
+                { href: "/analytics", label: "Analytics", icon: BarChart3 },
+                { href: "/activity", label: "Activity Logs", icon: Activity },
+                { href: "/invite", label: "Invite Friends", icon: UserPlus },
+                { href: "/settings", label: "Settings", icon: Settings },
+              ].map((item) => {
+                const Icon = item.icon;
+                const active = pathname === item.href;
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    onClick={() => setIsMobileMenuOpen(false)}
+                    className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${
+                      active
+                        ? "bg-primary text-white font-medium shadow-md shadow-primary/10"
+                        : "text-neutral-700 dark:text-dark-text-secondary hover:bg-neutral-50 dark:hover:bg-dark-bg-tertiary"
+                    }`}
+                  >
+                    <Icon className="h-5 w-5 shrink-0" />
+                    <span className="text-sm">{item.label}</span>
+                  </Link>
+                );
+              })}
+            </div>
+
+            {/* Footer */}
+            <div className="pt-4 border-t border-neutral-100 dark:border-dark-border text-center">
+              <span className="text-xs text-neutral-400">DooSplit v0.1.0</span>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
