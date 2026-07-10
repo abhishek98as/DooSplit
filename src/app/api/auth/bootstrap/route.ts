@@ -390,12 +390,13 @@ export async function POST(request: NextRequest) {
 
     const fallbackName = rawName || auth.user.name || "User";
     const fallbackEmail = auth.user.email || "";
+    const fallbackPhoto = auth.user.profilePicture || "";
 
     const backend = getDataBackendMode();
     let isNewUser = false;
 
     if (backend === "dynamodb") {
-      const { getUserById, putUser, updateUser } = await import("@/lib/dynamodb/entities/users");
+       const { getUserById, putUser, updateUser } = await import("@/lib/dynamodb/entities/users");
       const existing = await getUserById(auth.user.id);
       isNewUser = !existing;
       const now = new Date().toISOString();
@@ -403,6 +404,7 @@ export async function POST(request: NextRequest) {
         await updateUser(auth.user.id, {
           name: fallbackName,
           name_normalized: normalizeName(fallbackName),
+          photo_url: fallbackPhoto || existing.photo_url || undefined,
           updated_at: now,
         });
       } else {
@@ -412,6 +414,7 @@ export async function POST(request: NextRequest) {
           email_normalized: normalizeEmail(fallbackEmail),
           name: fallbackName,
           name_normalized: normalizeName(fallbackName),
+          photo_url: fallbackPhoto,
           is_active: true,
           created_at: now,
           updated_at: now,
@@ -439,12 +442,12 @@ export async function POST(request: NextRequest) {
             language: existing?.language || "en",
             push_notifications_enabled: existing?.push_notifications_enabled || false,
             email_notifications_enabled: existing?.email_notifications_enabled !== false,
+            profile_picture: fallbackPhoto || existing?.profile_picture || null,
             updated_at: new Date(),
           },
           $setOnInsert: {
             _id: auth.user.id,
             phone: null,
-            profile_picture: null,
             fcm_tokens: [],
             created_by: null,
             created_at: existing?.created_at || new Date(),

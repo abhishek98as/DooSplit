@@ -32,6 +32,7 @@ export interface ServerAppUser {
   authUid?: string;
   email?: string | null;
   name?: string | null;
+  profilePicture?: string | null;
   role?: string | null;
   source: SessionSource;
 }
@@ -40,6 +41,7 @@ interface DecodedIdentity {
   uid: string;
   email?: string | null;
   name?: string | null;
+  picture?: string | null;
 }
 
 function parseBearerToken(request: NextRequest): string | null {
@@ -73,6 +75,7 @@ async function resolveUserFromUid(identity: DecodedIdentity): Promise<ServerAppU
       authUid: identity.uid,
       email: user?.email || identity.email || null,
       name: user?.name || identity.name || null,
+      profilePicture: user?.photo_url || identity.picture || null,
       role: user?.role || "user",
       source: "firebase",
     };
@@ -80,6 +83,7 @@ async function resolveUserFromUid(identity: DecodedIdentity): Promise<ServerAppU
     return {
       id: identity.uid, authUid: identity.uid,
       email: identity.email || null, name: identity.name || null,
+      profilePicture: identity.picture || null,
       role: "user", source: "firebase",
     };
   }
@@ -92,7 +96,7 @@ async function resolveUserFromUid(identity: DecodedIdentity): Promise<ServerAppU
  */
 export async function verifyFirebaseIdTokenClaims(
   idToken: string
-): Promise<{ uid: string; email?: string | null; name?: string | null } | null> {
+): Promise<{ uid: string; email?: string | null; name?: string | null; picture?: string | null } | null> {
   const projectId = getFirebaseProjectId();
   if (!projectId) {
     console.error("[server-session] FIREBASE_PROJECT_ID is not set — cannot verify Firebase token");
@@ -115,6 +119,7 @@ export async function verifyFirebaseIdTokenClaims(
       uid,
       email: ((payload as any).email as string | undefined) || null,
       name: ((payload as any).name as string | undefined) || null,
+      picture: ((payload as any).picture as string | undefined) || null,
     };
   } catch (err: any) {
     if (err?.code !== "ERR_JWT_EXPIRED") {
@@ -132,6 +137,7 @@ async function verifyIdToken(idToken: string): Promise<ServerAppUser | null> {
       uid: decoded.uid,
       email: decoded.email || null,
       name: (decoded.name as string | undefined) || null,
+      picture: (decoded as any).picture as string | undefined || null,
     });
   } catch (err: any) {
     const isNotInitialized = err?.message?.includes("not initialized");
@@ -158,6 +164,7 @@ async function verifySessionCookie(sessionCookie: string): Promise<ServerAppUser
       uid,
       email: (payload.email as string | null | undefined) || null,
       name: null,
+      picture: (payload.picture as string | null | undefined) || null,
     });
   } catch (err: any) {
     if (err?.code !== "ERR_JWT_EXPIRED") {

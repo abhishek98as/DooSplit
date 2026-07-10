@@ -18,6 +18,7 @@ export async function getServerFirebaseUser(request: NextRequest) {
       id: user.id,
       email: user.email || undefined,
       name: user.name || undefined,
+      profilePicture: user.profilePicture || undefined,
     };
   } catch (error) {
     console.error("Firebase auth error:", error);

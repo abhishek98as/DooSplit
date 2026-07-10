@@ -22,10 +22,10 @@ function getSessionSecret(): Uint8Array {
 
 export const dynamic = "force-dynamic";
 
-async function ensureUserDoc(decoded: { uid: string; email?: string; name?: string | null }) {
+async function ensureUserDoc(decoded: { uid: string; email?: string; name?: string | null; picture?: string | null }) {
   const backend = getDataBackendMode();
   if (backend === "dynamodb") {
-    const { getUserById, putUser } = await import("@/lib/dynamodb/entities/users");
+    const { getUserById, putUser, updateUser } = await import("@/lib/dynamodb/entities/users");
     const existing = await getUserById(decoded.uid);
     if (!existing) {
       const now = new Date().toISOString();
@@ -35,8 +35,15 @@ async function ensureUserDoc(decoded: { uid: string; email?: string; name?: stri
         email_normalized: normalizeEmail(decoded.email || ""),
         name: decoded.name || "User",
         name_normalized: normalizeName(decoded.name || "User"),
+        photo_url: decoded.picture || "",
         is_active: true,
         created_at: now,
+        updated_at: now,
+      });
+    } else if (decoded.picture && existing.photo_url !== decoded.picture) {
+      const now = new Date().toISOString();
+      await updateUser(decoded.uid, {
+        photo_url: decoded.picture,
         updated_at: now,
       });
     }
@@ -52,7 +59,7 @@ async function ensureUserDoc(decoded: { uid: string; email?: string; name?: stri
           name: decoded.name || "User",
           name_normalized: normalizeName(decoded.name || "User"),
           phone: null,
-          profile_picture: null,
+          profile_picture: decoded.picture || null,
           default_currency: "INR",
           timezone: "Asia/Kolkata",
           language: "en",
@@ -68,6 +75,7 @@ async function ensureUserDoc(decoded: { uid: string; email?: string; name?: stri
           created_at: new Date(),
           updated_at: new Date(),
         },
+        $set: decoded.picture ? { profile_picture: decoded.picture } : {},
       },
       { upsert: true, new: false }
     );
@@ -90,7 +98,7 @@ export async function POST(request: NextRequest) {
   // --- Step 2: verify the Firebase ID token ---
   // Try Admin SDK first (authoritative, handles token revocation).
   // Fall back to Firebase public JWKs if Admin is not configured.
-  let claims: { uid: string; email?: string | null; name?: string | null } | null = null;
+  let claims: { uid: string; email?: string | null; name?: string | null; picture?: string | null } | null = null;
 
   try {
     const adminAuthInstance = getAdminAuth();
@@ -99,6 +107,7 @@ export async function POST(request: NextRequest) {
       uid: decoded.uid,
       email: decoded.email || null,
       name: (decoded as any).name as string | undefined || null,
+      picture: (decoded as any).picture as string | undefined || null,
     };
   } catch (adminErr: any) {
     const isNotInit = adminErr?.message?.includes("not initialized");
@@ -122,6 +131,7 @@ export async function POST(request: NextRequest) {
       uid: claims.uid,
       email: claims.email || undefined,
       name: claims.name,
+      picture: claims.picture,
     });
   } catch (docErr: any) {
     console.error("[session] ensureUserDoc failed (non-fatal):", docErr?.message || docErr);
@@ -175,6 +185,7 @@ export async function GET(request: NextRequest) {
       email: user.email,
       name: user.name,
       role: user.role,
+      image: user.profilePicture || null,
     },
   });
 }

@@ -3,7 +3,7 @@ import { getServerFirebaseUser } from "./firebase-session";
 import { validateAppCheckRequest } from "./app-check";
 
 export interface RequireUserResult {
-  user: { id: string; email?: string; name?: string } | null;
+  user: { id: string; email?: string; name?: string; profilePicture?: string } | null;
   response?: NextResponse;
 }
 
@@ -35,6 +35,7 @@ export async function requireUser(request: NextRequest): Promise<RequireUserResu
           id: legacyUser.id,
           email: legacyUser.email || undefined,
           name: legacyUser.name || undefined,
+          profilePicture: legacyUser.profilePicture || undefined,
         }
       };
     }

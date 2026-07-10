@@ -130,9 +130,22 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
         {/* ── Mobile Header (hidden on desktop) ──────────────────────────── */}
         <header className="md:hidden sticky top-0 z-30 min-h-14 bg-white dark:bg-dark-bg-secondary border-b border-neutral-200 dark:border-dark-border py-2">
           <div className="flex items-center justify-between h-full px-4 gap-2">
-            <Link href="/dashboard" className="flex items-center gap-2 min-w-0 flex-1">
-              <BrandLogo size={32} className="h-8 w-8 rounded-lg" priority />
-              <div className="min-w-0 flex flex-col leading-tight">
+            <div className="flex items-center gap-2 min-w-0 flex-1">
+              <Link href="/settings" className="flex items-center shrink-0">
+                <div className="h-9 w-9 rounded-full overflow-hidden flex items-center justify-center bg-primary text-white text-xs font-bold shadow-sm border border-neutral-200 dark:border-dark-border">
+                  {session?.user?.image ? (
+                    <img
+                      src={session.user.image}
+                      alt={displayName}
+                      className="h-full w-full object-cover"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : (
+                    <span>{initials}</span>
+                  )}
+                </div>
+              </Link>
+              <Link href="/dashboard" className="min-w-0 flex flex-col leading-tight">
                 <span className="text-h4 font-bold font-display text-neutral-900 dark:text-dark-text truncate">
                   DooSplit
                 </span>
@@ -141,8 +154,8 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
                     Hi, {firstName}
                   </span>
                 ) : null}
-              </div>
-            </Link>
+              </Link>
+            </div>
             <div className="flex items-center space-x-1 shrink-0">
               <button
                 onClick={toggleTheme}
@@ -230,8 +243,17 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
 
             {/* User avatar — links to settings */}
             <Link href="/settings" title={displayName}>
-              <div className="ds-topbar-avatar">
-                {initials}
+              <div className="ds-topbar-avatar overflow-hidden flex items-center justify-center border border-neutral-200 dark:border-dark-border bg-primary/10">
+                {session?.user?.image ? (
+                  <img
+                    src={session.user.image}
+                    alt={displayName}
+                    className="h-full w-full object-cover"
+                    referrerPolicy="no-referrer"
+                  />
+                ) : (
+                  <span className="text-white dark:text-dark-text font-bold text-sm">{initials}</span>
+                )}
               </div>
             </Link>
           </div>
