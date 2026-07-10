@@ -18,6 +18,7 @@ import {
   Repeat,
   ChevronRight,
   Notebook,
+  Sparkles,
 } from "lucide-react";
 import { useSession } from "@/lib/auth/react-session";
 
@@ -29,6 +30,7 @@ const NAV_SECTIONS = [
       { href: "/expenses", icon: Receipt, label: "Expenses", badge: 0 },
       { href: "/friends", icon: Users, label: "Friends" },
       { href: "/groups", icon: UsersRound, label: "Groups" },
+      { href: "/ai-chat", icon: Sparkles, label: "AI Chat" },
       { href: "/notes", icon: Notebook, label: "Notes" },
     ],
   },

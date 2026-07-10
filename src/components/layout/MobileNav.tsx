@@ -9,16 +9,18 @@ import {
   Activity,
   Plus,
   Receipt,
-  Wallet,
+  UsersRound,
   Notebook,
+  Sparkles,
 } from "lucide-react";
 
 const TABS = [
   { href: "/dashboard", icon: Home, label: "Home" },
   { href: "/expenses", icon: Receipt, label: "Expenses" },
   { href: "/friends", icon: Users, label: "Friends" },
+  { href: "/groups", icon: UsersRound, label: "Groups" },
+  { href: "/ai-chat", icon: Sparkles, label: "AI Chat" },
   { href: "/activity", icon: Activity, label: "Activity" },
-  { href: "/settlements", icon: Wallet, label: "Settlements" },
   { href: "/notes", icon: Notebook, label: "Notes" },
 ];
 
@@ -33,7 +35,8 @@ const MobileNav: React.FC = () => {
     !isActive("/expenses") &&
     !isActive("/friends") &&
     !isActive("/activity") &&
-    !isActive("/settlements");
+    !isActive("/groups") &&
+    !isActive("/ai-chat");
 
   return (
     <>

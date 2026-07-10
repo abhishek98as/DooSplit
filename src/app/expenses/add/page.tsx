@@ -21,7 +21,9 @@ import {
   StickyNote,
   X,
   Check,
-  Plus
+  Plus,
+  Sparkles,
+  Loader2
 } from "lucide-react";
 import { ImageType } from "@/lib/storage/image-types";
 import getOfflineStore from "@/lib/offline-store";
@@ -69,6 +71,53 @@ export default function AddExpensePage() {
   const { data: session } = useSession();
   const router = useRouter();
   const { trackEvent } = useAnalytics();
+
+  const [scanLoading, setScanLoading] = useState(false);
+
+  const handleReceiptScan = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      setScanLoading(true);
+      const reader = new FileReader();
+      reader.onloadend = async () => {
+        try {
+          const base64Data = reader.result as string;
+          const res = await fetch("/api/ai/scan", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              image: base64Data,
+              mimeType: file.type || "image/jpeg"
+            })
+          });
+
+          const data = await res.json();
+          if (data.data) {
+            const parsed = data.data;
+            if (parsed.amount) setAmount(parsed.amount.toString());
+            if (parsed.title) setDescription(parsed.title);
+            if (parsed.category) setCategory(parsed.category.toLowerCase());
+            if (parsed.date) setDate(parsed.date);
+            alert("AI has successfully scanned and populated the receipt details!");
+          } else {
+            alert(data.error || "Failed to scan receipt with AI.");
+          }
+        } catch (innerErr) {
+          console.error(innerErr);
+          alert("Error sending file to AI scanner.");
+        } finally {
+          setScanLoading(false);
+        }
+      };
+      reader.readAsDataURL(file);
+    } catch (err) {
+      console.error(err);
+      alert("Error reading file.");
+      setScanLoading(false);
+    }
+  };
 
   // Form state
   const [amount, setAmount] = useState("");
@@ -597,6 +646,35 @@ export default function AddExpensePage() {
 
         <Card>
           <form onSubmit={handleSubmit} className="space-y-6">
+            {/* AI Receipt Scanner Widget */}
+            <div className="p-4 bg-gradient-to-br from-primary/5 to-coral/5 border-2 border-dashed border-primary/20 rounded-xl relative overflow-hidden dark:bg-dark-bg-secondary">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center text-primary shrink-0">
+                  {scanLoading ? (
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                  ) : (
+                    <Sparkles className="h-5 w-5 text-primary" />
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-xs font-bold text-neutral-800 dark:text-dark-text">AI Receipt Scanner</h3>
+                  <p className="text-[10px] text-neutral-500 dark:text-dark-text-tertiary mt-0.5">
+                    Upload a receipt or screenshot to auto-fill this form instantly
+                  </p>
+                </div>
+                <label className="py-1.5 px-3 bg-primary hover:bg-primary-dark text-white rounded-lg text-xs font-bold shadow-sm cursor-pointer transition-all active:scale-[0.98] shrink-0">
+                  <span>{scanLoading ? "Scanning..." : "Upload Bill"}</span>
+                  <input
+                    type="file"
+                    accept="image/*,application/pdf"
+                    onChange={handleReceiptScan}
+                    disabled={scanLoading}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+            </div>
+
             {/* Amount */}
             <div>
               <label className="block text-sm font-medium text-neutral-700 dark:text-dark-text mb-2">

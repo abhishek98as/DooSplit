@@ -2,7 +2,7 @@
 
 import React from "react";
 import {
-  X, Plus, Check, Pin, Bell, Palette, FileText, ListTodo
+  X, Plus, Check, Pin, Bell, Palette, FileText, ListTodo, Sparkles, Loader2
 } from "lucide-react";
 import type { NoteDraft } from "./types";
 import { COLOR_SCHEMES } from "./types";
@@ -40,6 +40,46 @@ export default function NoteEditorModal({
   onToggleDraftItem,
   onRemoveDraftItem,
 }: NoteEditorModalProps) {
+  const [showAiMenu, setShowAiMenu] = React.useState(false);
+  const [aiLoading, setAiLoading] = React.useState(false);
+  const [customPromptText, setCustomPromptText] = React.useState("");
+
+  const handleAiAction = async (action: string) => {
+    try {
+      setAiLoading(true);
+      setShowAiMenu(false);
+      const res = await fetch("/api/ai/notes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          note: draft,
+          action,
+          customPrompt: action === "custom" ? customPromptText : undefined
+        })
+      });
+      const data = await res.json();
+      if (data.data) {
+        onDraftChange(prev => ({
+          ...prev,
+          title: data.data.title || prev.title,
+          type: data.data.type || prev.type,
+          text: data.data.text || prev.text,
+          items: data.data.items || prev.items
+        }));
+        if (action === "custom") {
+          setCustomPromptText("");
+        }
+      } else {
+        alert(data.error || "AI failed to process note.");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("An error occurred calling the AI notes assistant.");
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -217,6 +257,79 @@ export default function NoteEditorModal({
                       className="flex-1 py-1 text-center bg-primary hover:bg-primary-dark text-white font-bold rounded-lg text-[10px]"
                     >
                       Done
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* AI Assistant Button */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAiMenu(!showAiMenu);
+                  if (showColorPicker) onToggleColorPicker();
+                  if (showReminderPicker) onToggleReminderPicker();
+                }}
+                disabled={aiLoading}
+                className={`p-2 rounded-lg transition-colors hover:bg-neutral-200 dark:hover:bg-dark-bg-secondary ${
+                  showAiMenu ? "text-primary bg-primary/10" : "text-neutral-500"
+                }`}
+                title="AI Assistant"
+              >
+                {aiLoading ? (
+                  <Loader2 className="h-[18px] w-[18px] animate-spin text-primary" />
+                ) : (
+                  <Sparkles className="h-[18px] w-[18px] text-primary" />
+                )}
+              </button>
+              {showAiMenu && (
+                <div className="absolute bottom-12 left-0 bg-white dark:bg-dark-bg-secondary border border-neutral-200 dark:border-dark-border rounded-xl p-3 shadow-2xl z-50 w-72 flex flex-col gap-2">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-400">AI Note Assistant</span>
+                  <button
+                    type="button"
+                    onClick={() => handleAiAction("summarize")}
+                    className="w-full text-left px-2 py-1.5 hover:bg-neutral-100 dark:hover:bg-dark-bg-tertiary rounded-lg text-xs font-medium text-neutral-700 dark:text-dark-text"
+                  >
+                    📝 Summarize Note
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleAiAction("checklist")}
+                    className="w-full text-left px-2 py-1.5 hover:bg-neutral-100 dark:hover:bg-dark-bg-tertiary rounded-lg text-xs font-medium text-neutral-700 dark:text-dark-text"
+                  >
+                    ✅ Convert to Checklist
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleAiAction("grammar")}
+                    className="w-full text-left px-2 py-1.5 hover:bg-neutral-100 dark:hover:bg-dark-bg-tertiary rounded-lg text-xs font-medium text-neutral-700 dark:text-dark-text"
+                  >
+                    ✍️ Fix Spelling & Grammar
+                  </button>
+                  <div className="border-t border-neutral-100 dark:border-dark-border my-1" />
+                  <div className="flex gap-1.5">
+                    <input
+                      type="text"
+                      placeholder="Ask AI to change note..."
+                      value={customPromptText}
+                      onChange={e => setCustomPromptText(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === "Enter" && customPromptText.trim()) {
+                          e.preventDefault();
+                          handleAiAction("custom");
+                        }
+                      }}
+                      className="flex-1 px-2.5 py-1.5 bg-neutral-100 dark:bg-dark-bg-tertiary border border-neutral-200 dark:border-dark-border rounded-lg text-xs focus:outline-none text-neutral-800 dark:text-dark-text"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleAiAction("custom")}
+                      disabled={!customPromptText.trim()}
+                      className="px-3 py-1.5 bg-primary hover:bg-primary-dark disabled:bg-neutral-300 disabled:dark:bg-neutral-700 text-white rounded-lg text-xs font-bold transition-all"
+                    >
+                      Go
                     </button>
                   </div>
                 </div>
