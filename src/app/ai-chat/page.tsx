@@ -81,7 +81,7 @@ export default function AiChatPage() {
 
   return (
     <AppShell>
-      <div className="flex flex-col h-[calc(100vh-136px)] md:h-[calc(100vh-88px)] w-full max-w-4xl mx-auto bg-neutral-50 dark:bg-dark-bg border border-neutral-200 dark:border-dark-border md:rounded-2xl md:shadow-lg overflow-hidden transition-all">
+      <div className="flex flex-col h-[calc(100vh-120px)] md:h-[calc(100vh-64px)] mb-[-80px] md:mb-[-24px] w-full bg-neutral-50 dark:bg-dark-bg overflow-hidden transition-all">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 bg-white dark:bg-dark-bg-secondary border-b border-neutral-200 dark:border-dark-border">
           <div className="flex items-center gap-3">
