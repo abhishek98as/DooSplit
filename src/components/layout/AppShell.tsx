@@ -17,27 +17,27 @@ interface AppShellProps {
   children: React.ReactNode;
 }
 
-const PAGE_TITLES: Record<string, string> = {
-  "/dashboard": "Dashboard",
-  "/expenses": "Expenses",
-  "/expenses/add": "Add Expense",
-  "/friends": "Friends",
-  "/groups": "Groups",
-  "/settlements": "Settlements",
-  "/analytics": "Analytics",
-  "/activity": "Activity",
-  "/notes": "Notes",
-  "/settings": "Settings",
-  "/invite": "Invite Friends",
-  "/conflicts": "Conflicts",
+const PAGE_META: Record<string, { title: string; subtitle: string }> = {
+  "/dashboard": { title: "Dashboard", subtitle: "" },
+  "/expenses": { title: "Expenses", subtitle: "Track and manage shared expenses" },
+  "/expenses/add": { title: "Add Expense", subtitle: "Record a new shared expense" },
+  "/friends": { title: "Friends", subtitle: "Manage your friends and connections" },
+  "/groups": { title: "Groups", subtitle: "Organize expenses by groups" },
+  "/settlements": { title: "Settlements", subtitle: "Settle up and clear balances" },
+  "/analytics": { title: "Analytics", subtitle: "Insights into your spending" },
+  "/activity": { title: "Activity", subtitle: "Recent actions and updates" },
+  "/notes": { title: "Notes", subtitle: "Lists, reminders & quick thoughts" },
+  "/settings": { title: "Settings", subtitle: "Manage your account and preferences" },
+  "/invite": { title: "Invite Friends", subtitle: "Invite others to join DooSplit" },
+  "/conflicts": { title: "Conflicts", subtitle: "Resolve expense discrepancies" },
 };
 
-function getPageTitle(pathname: string): string {
-  if (PAGE_TITLES[pathname]) return PAGE_TITLES[pathname];
-  const match = Object.entries(PAGE_TITLES).find(([key]) =>
+function getPageMeta(pathname: string): { title: string; subtitle: string } {
+  if (PAGE_META[pathname]) return PAGE_META[pathname];
+  const match = Object.entries(PAGE_META).find(([key]) =>
     key !== "/dashboard" && pathname.startsWith(key + "/")
   );
-  return match ? match[1] : "DooSplit";
+  return match ? match[1] : { title: "DooSplit", subtitle: "" };
 }
 
 function getInitials(name: string): string {
@@ -64,7 +64,7 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
 
   useEffect(() => { setMounted(true); }, []);
 
-  const pageTitle = getPageTitle(pathname);
+  const pageMeta = getPageMeta(pathname);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -100,7 +100,7 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
 
           {/* Desktop Topbar — SSR placeholder (no theme toggle) */}
           <header className="hidden md:flex ds-topbar bg-white/90 border-neutral-200">
-            <h1 className="font-display font-bold text-[22px] text-neutral-900 tracking-tight">{pageTitle}</h1>
+            <h1 className="font-display font-bold text-[22px] text-neutral-900 tracking-tight">{pageMeta.title}</h1>
             <div className="flex items-center gap-2">
               <div className="ds-search border-neutral-200 bg-neutral-50">
                 <Search className="h-4 w-4 text-neutral-400 flex-shrink-0" />
@@ -206,11 +206,16 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
               : "bg-dark-bg-secondary/90 border-dark-border text-dark-text"
           }`}
         >
-          {/* Left: page title */}
-          <div className="flex items-center gap-3 min-w-0">
+          {/* Left: page title + subtitle */}
+          <div className="flex flex-col min-w-0">
             <h1 className="font-display font-bold text-[22px] tracking-tight truncate">
-              {pageTitle}
+              {pageMeta.title}
             </h1>
+            {pageMeta.subtitle && pageMeta.title !== "Dashboard" && (
+              <p className="text-xs text-neutral-500 dark:text-dark-text-tertiary truncate mt-0.5">
+                {pageMeta.subtitle}
+              </p>
+            )}
           </div>
 
           {/* Right: controls */}

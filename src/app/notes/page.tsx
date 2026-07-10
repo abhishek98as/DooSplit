@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { Loader2, Plus, Settings, Notebook } from "lucide-react";
+import { Loader2, Plus, Settings } from "lucide-react";
 import AppShell from "@/components/layout/AppShell";
 import { useNotes } from "@/components/notes/useNotes";
 import NoteCard from "@/components/notes/NoteCard";
@@ -28,18 +28,10 @@ export default function NotesPage() {
     <AppShell>
       <div className="min-h-[calc(100vh-140px)] w-full relative px-4 py-4 flex flex-col gap-4">
         {/* ── Header Row ──────────────────────────── */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <Notebook className="h-5 w-5 text-primary shrink-0" />
-            <div>
-              <h1 className="text-xl font-bold font-display text-neutral-900 dark:text-dark-text">
-                Notes
-              </h1>
-              <p className="text-[11px] text-neutral-500 dark:text-dark-text-tertiary mt-0.5">
-                {notes.filteredNotes.length} {notes.filteredNotes.length === 1 ? "note" : "notes"} · Keep track of lists, reminders & quick thoughts
-              </p>
-            </div>
-          </div>
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-xs text-neutral-500 dark:text-dark-text-tertiary">
+            {notes.filteredNotes.length} {notes.filteredNotes.length === 1 ? "note" : "notes"} · Keep track of lists, reminders & quick thoughts
+          </p>
 
           <div className="flex items-center gap-2 shrink-0">
             <button
