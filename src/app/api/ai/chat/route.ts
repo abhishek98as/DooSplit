@@ -70,7 +70,7 @@ export async function POST(request: NextRequest) {
     `;
 
     const result = streamText({
-      model: google("gemini-1.5-flash") as any,
+      model: google("gemini-2.5-flash") as any,
       messages,
       system: systemPrompt,
     });
