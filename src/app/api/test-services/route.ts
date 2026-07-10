@@ -134,6 +134,23 @@ export async function GET(request: NextRequest) {
   }
   results.tests.gemini = geminiTest;
 
+  // Vercel AI SDK Test
+  const aiSdkTest: Record<string, any> = {
+    name: "Vercel AI SDK Imports",
+  };
+  try {
+    const ai = await import("ai");
+    const googleSdk = await import("@ai-sdk/google");
+    aiSdkTest.passed = true;
+    aiSdkTest.aiVersion = ai ? "present" : "missing";
+    aiSdkTest.googleSdk = googleSdk ? "present" : "missing";
+  } catch (error: any) {
+    aiSdkTest.passed = false;
+    aiSdkTest.error = error.message;
+    allPassed = false;
+  }
+  results.tests.aiSdk = aiSdkTest;
+
   const testNames = Object.keys(results.tests);
   const passedCount = testNames.filter((name) => results.tests[name].passed).length;
   const failedCount = testNames.filter((name) => !results.tests[name].passed).length;
