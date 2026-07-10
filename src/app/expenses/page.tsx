@@ -621,8 +621,8 @@ export default function ExpensesPage() {
 
         {/* Search and Filters */}
         <div className="mb-6 space-y-3">
-          <div className="flex gap-3">
-            <div className="flex-1">
+          <div className="flex flex-col md:flex-row gap-3">
+            <div className="w-full md:flex-1">
               <Input
                 ref={searchInputRef}
                 icon={<Search className="w-4 h-4" />}
@@ -631,48 +631,55 @@ export default function ExpensesPage() {
                 onChange={(e) => handleSearch(e.target.value)}
               />
             </div>
-            <Button
-              variant="secondary"
-              onClick={() => setShowFilters(!showFilters)}
-              className="flex items-center gap-2"
-            >
-              <Filter className="w-4 h-4" />
-              Filters
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => setShowExportModal(true)}
-              className="flex items-center gap-2"
-              disabled={filteredExpenses.length === 0}
-            >
-              <Download className="w-4 h-4" />
-              Export
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={saveCurrentView}
-              className="flex items-center gap-2"
-            >
-              Save View
-            </Button>
-            <Button
-              variant={showSettled ? "secondary" : "outline"}
-              onClick={() => {
-                setShowSettled(!showSettled);
-                localStorage.setItem('showSettledExpenses', (!showSettled).toString());
-              }}
-              className="flex items-center gap-2"
-            >
-              <Eye className="w-4 h-4" />
-              {showSettled ? "Hide" : "Show"} Settled
-            </Button>
-            <Button
-              onClick={() => router.push("/expenses/add")}
-              className="flex items-center gap-2"
-            >
-              <Plus className="w-4 h-4" />
-              <span className="hidden md:inline">Add Expense</span>
-            </Button>
+            <div className="flex flex-wrap gap-2 md:gap-3 items-center">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setShowFilters(!showFilters)}
+                className="flex items-center gap-1.5 text-xs md:text-sm h-8 md:h-9 px-2.5 md:px-3"
+              >
+                <Filter className="w-3.5 h-3.5 md:w-4 md:h-4" />
+                Filters
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setShowExportModal(true)}
+                className="flex items-center gap-1.5 text-xs md:text-sm h-8 md:h-9 px-2.5 md:px-3"
+                disabled={filteredExpenses.length === 0}
+              >
+                <Download className="w-3.5 h-3.5 md:w-4 md:h-4" />
+                Export
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={saveCurrentView}
+                className="flex items-center gap-1.5 text-xs md:text-sm h-8 md:h-9 px-2.5 md:px-3"
+              >
+                Save View
+              </Button>
+              <Button
+                variant={showSettled ? "secondary" : "outline"}
+                size="sm"
+                onClick={() => {
+                  setShowSettled(!showSettled);
+                  localStorage.setItem('showSettledExpenses', (!showSettled).toString());
+                }}
+                className="flex items-center gap-1.5 text-xs md:text-sm h-8 md:h-9 px-2.5 md:px-3"
+              >
+                <Eye className="w-3.5 h-3.5 md:w-4 md:h-4" />
+                {showSettled ? "Hide" : "Show"} Settled
+              </Button>
+              <Button
+                onClick={() => router.push("/expenses/add")}
+                size="sm"
+                className="flex items-center gap-1.5 text-xs md:text-sm h-8 md:h-9 px-2.5 md:px-3"
+              >
+                <Plus className="w-3.5 h-3.5 md:w-4 md:h-4" />
+                <span className="hidden md:inline">Add Expense</span>
+              </Button>
+            </div>
           </div>
 
           {savedViews.length > 0 && (

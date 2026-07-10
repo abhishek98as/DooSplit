@@ -1,37 +1,30 @@
 import { createHash } from "crypto";
+import { Redis } from "@upstash/redis";
 
 /**
- * Lightweight in-process cache for DooSplit.
+ * Multi-layer caching system for DooSplit on Vercel/DynamoDB:
  *
- * Redis has been intentionally removed for this deployment scale (5-10 users).
- * Reasons:
- *  - Direct Firestore reads are 10-50ms; Redis added 50-120ms of network overhead.
- *  - Free-tier Redis (100 ops/sec) was a bottleneck, not a benefit.
- *  - Serverless instances don't share memory anyway, so Redis was the only
- *    cross-instance cache — but with only 5-10 users it's not needed.
- *
- * What we keep:
- *  - A short-lived in-process memory cache (5s) to deduplicate rapid burst
- *    requests within the same serverless invocation (e.g. dashboard parallel fetches).
- *  - On mutation (invalidateUsersCache), affected keys are cleared immediately.
+ * Layer 1: Short-lived in-process memory cache (5s TTL)
+ *   - Prevents duplicate reads during burst operations (e.g. parallel dashboard requests).
+ * Layer 2: Globally shared Upstash Redis Cache (REST-based, serverless friendly)
+ *   - Persists cache state across serverless instances to save DynamoDB read costs.
+ * Layer 3: DynamoDB Database (Fresh read query)
  */
 
-const CACHE_PREFIX = process.env.CACHE_PREFIX || "doosplit:v1";
-
-// 5 seconds: deduplicates burst requests in the same invocation,
-// but data is never more than 5s stale even if invalidation is skipped.
+const CACHE_PREFIX = process.env.CACHE_PREFIX || "doosplit:v2";
 const MEMORY_CACHE_MAX_TTL_SECONDS = 5;
 
+// Cache TTLs in seconds for the shared cache
 export const CACHE_TTL = {
-  expenses: 5,            // 5 seconds — always fetch fresh from Firestore
-  friends: 5,             // 5 seconds
-  groups: 5,              // 5 seconds
-  activities: 5,          // 5 seconds
-  dashboardActivity: 5,   // 5 seconds
-  settlements: 5,         // 5 seconds
-  settlement: 5,          // 5 seconds
-  analytics: 30,          // 30 seconds — less critical
-  userBalance: 5,         // 5 seconds
+  expenses: 30,            // 30 seconds
+  friends: 30,             // 30 seconds
+  groups: 30,              // 30 seconds
+  activities: 30,          // 30 seconds
+  dashboardActivity: 30,   // 30 seconds
+  settlements: 30,         // 30 seconds
+  settlement: 30,          // 30 seconds
+  analytics: 300,          // 5 minutes
+  userBalance: 30,         // 30 seconds
 };
 
 export type CacheStatus = "HIT" | "MISS";
@@ -65,9 +58,20 @@ if (!global.__doosplitMemoryRegistry) {
   global.__doosplitMemoryRegistry = memoryRegistry;
 }
 
+// Initialize Upstash Redis client with safety checks
+const redisUrl = process.env.UPSTASH_REDIS_REST_URL?.replace(/"/g, "");
+const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN?.replace(/"/g, "");
+
+const redisClient =
+  redisUrl && redisToken
+    ? new Redis({
+        url: redisUrl,
+        token: redisToken,
+      })
+    : null;
+
 /**
  * Build a deterministic, user-scoped cache key.
- * Format: PREFIX:scope:user:userId:sha1(input)
  */
 export function buildUserScopedCacheKey(
   scope: string,
@@ -144,7 +148,7 @@ export async function getOrSetCacheJsonWithMeta<T>(
   ttlSeconds: number,
   loader: () => Promise<T>
 ): Promise<CacheResult<T>> {
-  // Check in-process memory cache first (deduplicates burst requests)
+  // 1. Check in-process memory cache first (0ms overhead)
   const memoryCached = memoryGet<T>(key);
   if (memoryCached !== null) {
     return {
@@ -153,11 +157,45 @@ export async function getOrSetCacheJsonWithMeta<T>(
     };
   }
 
-  // Always fetch fresh from Firestore
+  // 2. Check Upstash Redis global cache (shared across instances)
+  if (redisClient) {
+    try {
+      const redisCached = await redisClient.get(key);
+      if (redisCached) {
+        const parsed = typeof redisCached === "string" ? JSON.parse(redisCached) : redisCached;
+        memorySet(key, parsed, ttlSeconds);
+        return {
+          data: parsed as T,
+          cacheStatus: "HIT",
+        };
+      }
+    } catch (redisErr: any) {
+      console.warn("[cache] Upstash Redis get error:", redisErr?.message || redisErr);
+    }
+  }
+
+  // 3. Fallback to database loader
   const fresh = await loader();
 
-  // Store briefly to deduplicate simultaneous requests
+  // 4. Cache in memory (short TTL to deduplicate next requests)
   memorySet(key, fresh, ttlSeconds);
+
+  // 5. Cache in Upstash Redis
+  if (redisClient) {
+    try {
+      await redisClient.set(key, JSON.stringify(fresh), { ex: ttlSeconds });
+
+      // Register this key in the scope registry so we can invalidate it
+      const parsed = parseKeyParts(key);
+      if (parsed) {
+        const regKey = registryKey(parsed.scope, parsed.userId);
+        await redisClient.sadd(regKey, key);
+        await redisClient.expire(regKey, ttlSeconds);
+      }
+    } catch (redisErr: any) {
+      console.warn("[cache] Upstash Redis set error:", redisErr?.message || redisErr);
+    }
+  }
 
   return {
     data: fresh,
@@ -166,8 +204,7 @@ export async function getOrSetCacheJsonWithMeta<T>(
 }
 
 /**
- * Invalidate all in-process cache entries for the given users and scopes.
- * Instant — no network hop needed.
+ * Invalidate all cache entries (local memory and Upstash Redis) for given users and scopes.
  */
 export async function invalidateUsersCache(
   userIds: Array<string>,
@@ -181,6 +218,7 @@ export async function invalidateUsersCache(
     new Set(userIds.map((id) => id.toString()).filter(Boolean))
   );
 
+  // Clear in-process memory cache
   for (const userId of uniqueUsers) {
     for (const scope of scopes) {
       const regKey = registryKey(scope, userId);
@@ -191,6 +229,28 @@ export async function invalidateUsersCache(
         }
         memoryRegistry.delete(regKey);
       }
+    }
+  }
+
+  // Clear Upstash Redis global cache
+  if (redisClient) {
+    try {
+      await Promise.all(
+        uniqueUsers.flatMap((userId) =>
+          scopes.map(async (scope) => {
+            const regKey = registryKey(scope, userId);
+            const keys = await redisClient!.smembers(regKey);
+            if (keys && keys.length > 0) {
+              const pipeline = redisClient!.pipeline();
+              pipeline.del(...keys);
+              pipeline.del(regKey);
+              await pipeline.exec();
+            }
+          })
+        )
+      );
+    } catch (redisErr: any) {
+      console.warn("[cache] Upstash Redis invalidation error:", redisErr?.message || redisErr);
     }
   }
 }

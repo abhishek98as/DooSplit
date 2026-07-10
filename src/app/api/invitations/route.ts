@@ -99,6 +99,17 @@ export async function POST(request: NextRequest) {
 
     await putInvitation(invitation);
 
+    try {
+      const { logFriendRequestSent } = await import("@/lib/activity-logger");
+      void logFriendRequestSent({
+        actorId: auth.user.id,
+        actorName: inviterName,
+        friendEmail: email,
+      });
+    } catch (logErr) {
+      console.error("Failed to log friend request sent activity:", logErr);
+    }
+
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://doosplit.vercel.app";
     const inviteLink = `${appUrl}/invite/${token}`;
 

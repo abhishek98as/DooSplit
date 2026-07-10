@@ -89,9 +89,10 @@ export async function POST(request: NextRequest) {
       currency: currency || "INR",
       created_by: userId,
       is_active: true,
+      members: allMemberIds,
     };
 
-    const groupId = await createGroupInFirestore(groupData, allMemberIds);
+    const groupId = await createGroupInFirestore(groupData);
     const db = getAdminDb();
 
     const [groupDoc, membersSnap] = await Promise.all([
@@ -100,7 +101,7 @@ export async function POST(request: NextRequest) {
     ]);
 
     const groupRow = groupDoc.exists ? groupDoc.data() || {} : {};
-    const members = membersSnap.docs.map((doc) => {
+    const members = membersSnap.docs.map((doc: any) => {
       const row = doc.data() || {};
       return {
         _id: doc.id,

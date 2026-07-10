@@ -72,12 +72,39 @@ export async function logActivity(input: LogActivityInput): Promise<void> {
       createdAtIso: nowIso,
     }));
 
-    await ActivityLog.insertMany(docs, { ordered: false });
+    // Try MongoDB
+    try {
+      await ActivityLog.insertMany(docs, { ordered: false });
+    } catch (mongoErr: any) {
+      console.warn("[activity-logger] Mongo write skipped or failed:", mongoErr?.message || mongoErr);
+    }
+
+    // Try DynamoDB
+    try {
+      const { putActivityLog } = await import("@/lib/dynamodb/entities/activities");
+      await Promise.all(
+        docs.map((doc) =>
+          putActivityLog({
+            id: doc._id,
+            userId: doc.userId,
+            type: doc.type,
+            description: doc.description,
+            actorId: doc.actorId,
+            actorName: doc.actorName,
+            metadata: doc.metadata,
+            createdAt: doc.createdAtIso,
+          })
+        )
+      );
+    } catch (dynamoErr: any) {
+      console.error("[activity-logger] Failed to write to DynamoDB:", dynamoErr?.message || dynamoErr);
+    }
   } catch (err) {
     // Never block the main operation
-    console.error("[activity-logger] Failed to write activity log:", err);
+    console.error("[activity-logger] general error:", err);
   }
 }
+
 
 /**
  * Convenience: log an expense_added event for all participants.
@@ -330,3 +357,24 @@ export async function logSettlementAdded(params: {
     },
   });
 }
+
+/**
+ * Convenience: log a friend_request_sent (invitation) event.
+ */
+export async function logFriendRequestSent(params: {
+  actorId: string;
+  actorName: string;
+  friendEmail: string;
+}) {
+  const { actorId, actorName, friendEmail } = params;
+  await logActivity({
+    userIds: [actorId],
+    actorId,
+    actorName,
+    type: "friend_request_sent",
+    title: "Invitation Sent",
+    description: `You sent an invitation to join DooSplit to ${friendEmail}`,
+    metadata: { friendEmail },
+  });
+}
+

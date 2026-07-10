@@ -28,10 +28,17 @@ const MobileNav: React.FC = () => {
   const isActive = (href: string) =>
     pathname === href || (href !== "/dashboard" && pathname.startsWith(href + "/"));
 
+  const showFab =
+    !isActive("/notes") &&
+    !isActive("/expenses") &&
+    !isActive("/friends") &&
+    !isActive("/activity") &&
+    !isActive("/settlements");
+
   return (
     <>
-      {/* ── Floating Action Button (Add Expense) — hidden on Notes page ──── */}
-      {!isActive("/notes") && (
+      {/* ── Floating Action Button (Add Expense) — hidden on specific pages ──── */}
+      {showFab && (
         <Link
           href="/expenses/add"
           className="md:hidden fixed bottom-20 right-4 h-14 w-14 bg-primary text-white rounded-full flex items-center justify-center shadow-xl hover:scale-105 active:scale-95 transition-transform z-35"
