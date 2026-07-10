@@ -151,6 +151,35 @@ export async function GET(request: NextRequest) {
   }
   results.tests.aiSdk = aiSdkTest;
 
+  // AI SDK Streaming Test
+  const aiSdkStreamTest: Record<string, any> = {
+    name: "Vercel AI SDK Streaming",
+  };
+  if (process.env.GEMINI_API_KEY) {
+    try {
+      const { createGoogleGenerativeAI } = await import("@ai-sdk/google");
+      const { streamText } = await import("ai");
+      const google = createGoogleGenerativeAI({ apiKey: process.env.GEMINI_API_KEY });
+      
+      const result = streamText({
+        model: google("gemini-2.5-flash") as any,
+        messages: [{ role: "user", content: "Say OK" }],
+      });
+      
+      aiSdkStreamTest.passed = true;
+      aiSdkStreamTest.response = "Stream initialized successfully";
+    } catch (error: any) {
+      aiSdkStreamTest.passed = false;
+      aiSdkStreamTest.error = error.message;
+      allPassed = false;
+    }
+  } else {
+    aiSdkStreamTest.passed = false;
+    aiSdkStreamTest.error = "GEMINI_API_KEY is not defined in the environment variables.";
+    allPassed = false;
+  }
+  results.tests.aiSdkStream = aiSdkStreamTest;
+
   const testNames = Object.keys(results.tests);
   const passedCount = testNames.filter((name) => results.tests[name].passed).length;
   const failedCount = testNames.filter((name) => !results.tests[name].passed).length;
