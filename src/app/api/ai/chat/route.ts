@@ -25,16 +25,28 @@ export async function POST(request: NextRequest) {
 
     const { messages } = await request.json();
 
-    const repository = await getActiveRepository();
-    const [expensesData, groupsData, friendsData, settlementsData] = await Promise.all([
-      repository.getExpenses({ userId, page: 1, limit: 150 }),
-      repository.getGroups({ userId, requestSearch: "" }),
-      repository.getFriends({ userId, requestSearch: "" }),
-      repository.getSettlements({ userId, page: 1, limit: 50 }),
-    ]);
+     const repository = await getActiveRepository();
+     const [expensesData, groupsData, friendsData, settlementsData] = await Promise.all([
+       repository.getExpenses({ userId, page: 1, limit: 150 }).catch((e) => {
+         console.error("[ai/chat] Failed to fetch expenses:", e);
+         return null;
+       }),
+       repository.getGroups({ userId, requestSearch: "" }).catch((e) => {
+         console.error("[ai/chat] Failed to fetch groups:", e);
+         return null;
+       }),
+       repository.getFriends({ userId, requestSearch: "" }).catch((e) => {
+         console.error("[ai/chat] Failed to fetch friends:", e);
+         return null;
+       }),
+       repository.getSettlements({ userId, page: 1, limit: 50 }).catch((e) => {
+         console.error("[ai/chat] Failed to fetch settlements:", e);
+         return null;
+       }),
+     ]);
 
     const contextData = {
-      currentUser: { id: userId, name: auth.user.name, email: auth.user.email },
+      currentUser: { id: userId, name: auth?.user?.name || "Guest", email: auth?.user?.email || "" },
       friends: (friendsData?.friends || []).map((f: any) => ({ id: f.id, name: f.name, status: f.status })),
       groups: (groupsData?.groups || []).map((g: any) => ({ id: g.id, name: g.name, memberCount: g.members?.length || 0 })),
       expenses: (expensesData?.expenses || []).slice(0, 150).map((e: any) => ({
