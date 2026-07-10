@@ -109,6 +109,31 @@ export async function GET(request: NextRequest) {
   }
   results.tests.dynamoDb = dynamoDbTest;
 
+  // Gemini Test
+  const geminiTest: Record<string, any> = {
+    name: "Google Gemini Connection",
+    hasApiKey: Boolean(process.env.GEMINI_API_KEY),
+  };
+  if (process.env.GEMINI_API_KEY) {
+    try {
+      const { GoogleGenerativeAI } = await import("@google/generative-ai");
+      const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+      const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+      const testResult = await model.generateContent("Test connection: Say OK");
+      geminiTest.passed = true;
+      geminiTest.response = testResult.response.text().trim();
+    } catch (error: any) {
+      geminiTest.passed = false;
+      geminiTest.error = error.message;
+      allPassed = false;
+    }
+  } else {
+    geminiTest.passed = false;
+    geminiTest.error = "GEMINI_API_KEY is not defined in the environment variables.";
+    allPassed = false;
+  }
+  results.tests.gemini = geminiTest;
+
   const testNames = Object.keys(results.tests);
   const passedCount = testNames.filter((name) => results.tests[name].passed).length;
   const failedCount = testNames.filter((name) => !results.tests[name].passed).length;
