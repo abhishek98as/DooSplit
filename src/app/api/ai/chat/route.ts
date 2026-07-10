@@ -26,18 +26,18 @@ export async function POST(request: NextRequest) {
     const { messages } = await request.json();
 
     const repository = await getActiveRepository();
-    const [expenses, groups, friends, settlements] = await Promise.all([
-      repository.getExpenses({ userId }),
-      repository.getGroups({ userId }),
-      repository.getFriends({ userId }),
-      repository.getSettlements({ userId }),
+    const [expensesData, groupsData, friendsData, settlementsData] = await Promise.all([
+      repository.getExpenses({ userId, page: 1, limit: 150 }),
+      repository.getGroups({ userId, requestSearch: "" }),
+      repository.getFriends({ userId, requestSearch: "" }),
+      repository.getSettlements({ userId, page: 1, limit: 50 }),
     ]);
 
     const contextData = {
       currentUser: { id: userId, name: auth.user.name, email: auth.user.email },
-      friends: friends.map((f: any) => ({ id: f.id, name: f.name, status: f.status })),
-      groups: groups.map((g: any) => ({ id: g.id, name: g.name, memberCount: g.members?.length || 0 })),
-      expenses: expenses.slice(0, 150).map((e: any) => ({
+      friends: (friendsData?.friends || []).map((f: any) => ({ id: f.id, name: f.name, status: f.status })),
+      groups: (groupsData?.groups || []).map((g: any) => ({ id: g.id, name: g.name, memberCount: g.members?.length || 0 })),
+      expenses: (expensesData?.expenses || []).slice(0, 150).map((e: any) => ({
         description: e.description,
         amount: e.amount,
         category: e.category,
@@ -45,7 +45,7 @@ export async function POST(request: NextRequest) {
         paidBy: e.paidById,
         groupId: e.groupId,
       })),
-      settlements: settlements.slice(0, 50).map((s: any) => ({
+      settlements: (settlementsData?.settlements || []).slice(0, 50).map((s: any) => ({
         amount: s.amount,
         from: s.fromUserId,
         to: s.toUserId,
@@ -70,7 +70,7 @@ export async function POST(request: NextRequest) {
     `;
 
     const result = streamText({
-      model: google("gemini-1.5-flash"),
+      model: google("gemini-1.5-flash") as any,
       messages,
       system: systemPrompt,
     });

@@ -3,7 +3,7 @@
 import React, { useRef, useEffect } from "react";
 
 export const dynamic = "force-dynamic";
-import { useChat } from "@ai-sdk/react";
+import { useChat } from "ai/react";
 import { Sparkles, Send, Loader2, RefreshCw, ArrowLeft, Bot, User } from "lucide-react";
 import Link from "next/link";
 import AppShell from "@/components/layout/AppShell";
