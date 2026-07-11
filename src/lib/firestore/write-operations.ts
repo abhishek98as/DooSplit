@@ -40,7 +40,30 @@ export async function createExpenseInFirestore(expenseData: any, participants: a
 
 export const createGroupInFirestore = async (groupData: any) => {
   const id = newAppId();
-  await createGroupInDynamo({ group: { id, ...groupData }, members: groupData.members || [] });
+  const now = new Date().toISOString();
+  const memberIds: string[] = groupData.members || [];
+  await createGroupInDynamo({
+    group: {
+      id,
+      name: String(groupData.name || "").trim(),
+      description: groupData.description || "",
+      created_by: groupData.created_by || "",
+      currency: groupData.currency || "INR",
+      is_active: true,
+      member_count: memberIds.length + 1,
+      created_at: now,
+      updated_at: now,
+    },
+    members: memberIds.map((userId: string) => ({
+      group_id: id,
+      user_id: userId,
+      role: userId === groupData.created_by ? "admin" : "member",
+      status: "active",
+      joined_at: now,
+      created_at: now,
+      updated_at: now,
+    })),
+  });
   return id;
 };
 

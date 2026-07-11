@@ -32,5 +32,14 @@ export async function createExpense(expenseData: any, participants: any[]) {
 }
 
 export const createExpenseInMongo = createExpense;
-export const createGroup = async (data: any) => { const id = newAppId(); await createGroupInDynamo({ group: { id, ...data }, members: data.members || [] }); return id; };
+export const createGroup = async (data: any) => {
+  const id = newAppId();
+  const now = new Date().toISOString();
+  const memberIds: string[] = data.members || [];
+  await createGroupInDynamo({
+    group: { id, name: String(data.name || "").trim(), description: data.description || "", created_by: data.created_by || "", currency: data.currency || "INR", is_active: true, member_count: memberIds.length + 1, created_at: now, updated_at: now },
+    members: memberIds.map((userId: string) => ({ group_id: id, user_id: userId, role: userId === data.created_by ? "admin" : "member", status: "active", joined_at: now, created_at: now, updated_at: now })),
+  });
+  return id;
+};
 export const createSettlement = async (data: any) => { const id = newAppId(); await createSettlementInDynamo({ settlement: { id, ...data, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }, allocations: data.allocations || [] }); return id; };
