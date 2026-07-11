@@ -1,11 +1,11 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useState } from "react";
 import { useSession } from "@/lib/auth/react-session";
 import AppShell from "@/components/layout/AppShell";
 import Card, { CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
-import { TrendingUp, PieChart, Calendar, Download } from "lucide-react";
+import { TrendingUp, PieChart, Calendar, Download, FileText, Loader2 } from "lucide-react";
 import {
   LineChart,
   Line,
@@ -87,6 +87,7 @@ export default function AnalyticsPage() {
   );
   const [loading, setLoading] = useState(true);
   const [timeframe, setTimeframe] = useState("month");
+  const [exportingPdf, setExportingPdf] = useState(false);
 
   useEffect(() => {
     if (status === "unauthenticated") {
@@ -167,6 +168,39 @@ export default function AnalyticsPage() {
     }
   };
 
+  const handleExportPdf = async () => {
+    if (!analytics) return;
+    setExportingPdf(true);
+    try {
+      const { generatePersonalReport } = await import("@/lib/reportGenerator");
+      const timeframeLabel =
+        timeframe === "week" ? "Last Week"
+        : timeframe === "month" ? "Last Month"
+        : timeframe === "quarter" ? "Last Quarter"
+        : timeframe === "year" ? "This Year"
+        : "All Time";
+      await generatePersonalReport({
+        userName: session?.user?.name || "You",
+        timeframe: timeframeLabel,
+        generatedAt: new Date().toLocaleDateString("en-IN", {
+          day: "2-digit",
+          month: "long",
+          year: "numeric",
+        }),
+        totalSpent: analytics.summary.totalSpent,
+        totalPaid: analytics.summary.totalPaid,
+        averageExpense: analytics.summary.averageExpense,
+        categoryBreakdown: analytics.categoryBreakdown,
+        monthlyTrend: analytics.monthlyTrend,
+      });
+    } catch (error) {
+      console.error("Failed to export PDF:", error);
+      alert("Failed to generate PDF. Please try again.");
+    } finally {
+      setExportingPdf(false);
+    }
+  };
+
   if (status === "loading" || loading) {
     return (
       <AppShell>
@@ -243,14 +277,26 @@ export default function AnalyticsPage() {
               View insights and spending patterns
             </p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button
+              variant="secondary"
+              onClick={handleExportPdf}
+              disabled={exportingPdf}
+              className="flex items-center gap-2"
+            >
+              {exportingPdf ? (
+                <><Loader2 className="h-4 w-4 animate-spin" />Generating...</>
+              ) : (
+                <><FileText className="h-4 w-4" />PDF Report</>
+              )}
+            </Button>
             <Button
               variant="secondary"
               onClick={handleExportAnalytics}
               className="flex items-center gap-2"
             >
               <Download className="h-4 w-4" />
-              Export
+              CSV
             </Button>
             <select
               value={timeframe}

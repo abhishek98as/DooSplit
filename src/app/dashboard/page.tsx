@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import getOfflineStore from "@/lib/offline-store";
+import QuickAdd from "@/components/dashboard/QuickAdd";
 
 interface BalanceData {
   total: number;
@@ -1007,6 +1008,7 @@ export default function DashboardPage() {
           </Card>
         )}
       </div>
+      <QuickAdd />
     </AppShell>
   );
 }

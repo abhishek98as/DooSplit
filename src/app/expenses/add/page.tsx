@@ -65,7 +65,15 @@ interface SimulatorRow {
   percentage?: number;
 }
 
-type SplitMethod = "equally" | "exact" | "percentage" | "shares";
+interface ItemizedItem {
+  id: string;
+  name: string;
+  amount: string;
+  assignedTo: string[];
+  isShared: boolean;
+}
+
+type SplitMethod = "equally" | "exact" | "percentage" | "shares" | "itemized";
 
 export default function AddExpensePage() {
   const { data: session } = useSession();
@@ -142,6 +150,11 @@ export default function AddExpensePage() {
   const [simulatorMethod, setSimulatorMethod] = useState<"equally" | "exact" | "percentage">("equally");
   const [simPercentageByUser, setSimPercentageByUser] = useState<Record<string, string>>({});
   const [simExactByUser, setSimExactByUser] = useState<Record<string, string>>({});
+
+  // Itemized split state
+  const [itemizedItems, setItemizedItems] = useState<ItemizedItem[]>([
+    { id: "1", name: "", amount: "", assignedTo: [], isShared: false },
+  ]);
 
   // Modal states
   const [showFriendModal, setShowFriendModal] = useState(false);
@@ -249,6 +262,100 @@ export default function AddExpensePage() {
   // Helper: round to 2 decimal places
   const round2 = (num: number) => Math.round(num * 100) / 100;
 
+  // Itemized helpers
+  const addItemizedItem = () => {
+    const newItem: ItemizedItem = {
+      id: Date.now().toString(),
+      name: "",
+      amount: "",
+      assignedTo: [],
+      isShared: false,
+    };
+    setItemizedItems((prev) => [...prev, newItem]);
+  };
+
+  const removeItemizedItem = (id: string) => {
+    setItemizedItems((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  const updateItemizedItem = (id: string, updates: Partial<ItemizedItem>) => {
+    setItemizedItems((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, ...updates } : item))
+    );
+  };
+
+  const toggleItemizedAssignee = (itemId: string, userId: string) => {
+    setItemizedItems((prev) =>
+      prev.map((item) =>
+        item.id === itemId
+          ? {
+              ...item,
+              assignedTo: item.assignedTo.includes(userId)
+                ? item.assignedTo.filter((uid) => uid !== userId)
+                : [...item.assignedTo, userId],
+            }
+          : item
+      )
+    );
+  };
+
+  const itemizedTotal = itemizedItems.reduce(
+    (sum, item) => sum + (parseFloat(item.amount) || 0),
+    0
+  );
+
+  const calculateItemizedSplit = (): Participant[] => {
+    const allPeople = [
+      ...(session?.user?.id
+        ? [{ id: session.user.id, name: "You" }]
+        : []),
+      ...selectedFriends.map((f) => ({ id: String(f.friend.id || ""), name: f.friend.name })),
+    ].filter((p) => Boolean(p.id));
+
+    const owedMap: Record<string, number> = {};
+    for (const person of allPeople) {
+      owedMap[person.id] = 0;
+    }
+
+    for (const item of itemizedItems) {
+      const itemAmount = parseFloat(item.amount) || 0;
+      if (itemAmount <= 0) continue;
+
+      if (item.isShared) {
+        // Split equally among all participants
+        const share = round2(itemAmount / allPeople.length);
+        const remainder = round2(itemAmount - share * allPeople.length);
+        allPeople.forEach((person, idx) => {
+          owedMap[person.id] = round2(
+            (owedMap[person.id] || 0) + share + (idx === 0 ? remainder : 0)
+          );
+        });
+      } else {
+        // Split among assigned people
+        const assignees =
+          item.assignedTo.length > 0
+            ? item.assignedTo.filter((uid) => owedMap[uid] !== undefined)
+            : allPeople.map((p) => p.id);
+        if (assignees.length === 0) continue;
+        const share = round2(itemAmount / assignees.length);
+        const remainder = round2(itemAmount - share * assignees.length);
+        assignees.forEach((uid, idx) => {
+          owedMap[uid] = round2(
+            (owedMap[uid] || 0) + share + (idx === 0 ? remainder : 0)
+          );
+        });
+      }
+    }
+
+    const totalAmount = itemizedTotal;
+    return allPeople.map((person) => ({
+      userId: person.id,
+      name: person.name,
+      owedAmount: owedMap[person.id] || 0,
+      paidAmount: paidBy === person.id ? totalAmount : 0,
+    }));
+  };
+
   // Bug 7 fix: compute correct owedAmount per participant on client side
   const calculateSplit = () => {
     const totalAmount = parseFloat(amount) || 0;
@@ -350,7 +457,22 @@ export default function AddExpensePage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!amount || !description) {
+    // For itemized splits, validate items and auto-fill amount
+    if (splitMethod === "itemized") {
+      const hasItems = itemizedItems.some((item) => parseFloat(item.amount) > 0);
+      if (!hasItems) {
+        alert("Please add at least one item with an amount.");
+        return;
+      }
+      if (!description) {
+        alert("Please enter a description.");
+        return;
+      }
+      // Auto-set amount from item total
+      if (!amount || parseFloat(amount) !== itemizedTotal) {
+        setAmount(itemizedTotal.toFixed(2));
+      }
+    } else if (!amount || !description) {
       alert("Please fill in all required fields");
       return;
     }
@@ -362,30 +484,33 @@ export default function AddExpensePage() {
 
       // Build personal expense participants if none selected yet
       let resolvedParticipants = participants;
-      if (selectedFriends.length === 0 && resolvedParticipants.length === 0 && session?.user?.id) {
-        const totalAmount = parseFloat(amount) || 0;
+      if (splitMethod === "itemized") {
+        resolvedParticipants = calculateItemizedSplit();
+      } else if (selectedFriends.length === 0 && resolvedParticipants.length === 0 && session?.user?.id) {
+        const totalAmountFallback = parseFloat(amount) || 0;
         resolvedParticipants = [{
           userId: session.user.id,
           name: "You",
-          owedAmount: totalAmount,
-          paidAmount: totalAmount,
+          owedAmount: totalAmountFallback,
+          paidAmount: totalAmountFallback,
         }];
       }
 
       // Prepare expense data
-        const expenseData = {
-          amount: parseFloat(amount),
-          description,
-          category,
-          date,
+      const finalAmount = splitMethod === "itemized" ? itemizedTotal : parseFloat(amount);
+      const expenseData = {
+        amount: finalAmount,
+        description,
+        category,
+        date,
         currency,
         groupId: selectedGroup?._id,
         paidBy,
         participants: resolvedParticipants,
         notes,
         images: [], // Empty initially
-          splitMethod
-        };
+        splitMethod: splitMethod === "itemized" ? "exact" : splitMethod,
+      };
 
       // Try to create expense using offline store (will queue if offline)
       const expense = await offlineStore.createExpense(expenseData);
@@ -845,7 +970,7 @@ export default function AddExpensePage() {
               <label className="block text-sm font-medium text-neutral-700 dark:text-dark-text mb-2">
                 Split method
               </label>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-3 gap-2">
                 <button
                   type="button"
                   onClick={() => setSplitMethod("equally")}
@@ -866,8 +991,165 @@ export default function AddExpensePage() {
                 >
                   Exact Amounts
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setSplitMethod("itemized")}
+                  className={`p-3 rounded-lg border-2 text-sm font-medium transition-all ${splitMethod === "itemized"
+                      ? "border-primary bg-primary/10 text-primary"
+                      : "border-neutral-200 dark:border-dark-border text-neutral-700 dark:text-dark-text hover:border-primary"
+                    }`}
+                >
+                  By Item 🍽️
+                </button>
               </div>
             </div>
+
+            {/* Itemized Split Section */}
+            {splitMethod === "itemized" && (
+              <div className="rounded-xl border-2 border-primary/30 p-4 space-y-4 bg-primary/5 dark:bg-primary/10">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-sm font-semibold text-neutral-900 dark:text-dark-text">🍽️ Item-level Split</h3>
+                    <p className="text-xs text-neutral-500 dark:text-dark-text-secondary mt-0.5">
+                      Assign each item to the person who ordered it.
+                    </p>
+                  </div>
+                  {itemizedTotal > 0 && (
+                    <span className="text-sm font-bold font-mono text-primary">
+                      ₹{itemizedTotal.toFixed(2)}
+                    </span>
+                  )}
+                </div>
+
+                {/* Participant pills for selection */}
+                {selectedFriends.length === 0 && (
+                  <p className="text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 px-3 py-2 rounded-lg">
+                    💡 Select friends above to assign items to specific people.
+                  </p>
+                )}
+
+                <div className="space-y-3">
+                  {itemizedItems.map((item, idx) => {
+                    const allPeople = [
+                      ...(session?.user?.id ? [{ id: session.user.id, name: "You" }] : []),
+                      ...selectedFriends.map((f) => ({ id: String(f.friend.id || ""), name: f.friend.name })),
+                    ].filter((p) => Boolean(p.id));
+
+                    return (
+                      <div
+                        key={item.id}
+                        className="bg-white dark:bg-dark-bg-secondary rounded-xl p-3 border border-neutral-200 dark:border-dark-border space-y-2"
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="text-neutral-400 text-xs font-medium w-5 shrink-0">{idx + 1}.</span>
+                          <input
+                            type="text"
+                            value={item.name}
+                            onChange={(e) => updateItemizedItem(item.id, { name: e.target.value })}
+                            placeholder="Item name (e.g. Pasta)"
+                            className="flex-1 min-w-0 px-2 py-1.5 text-sm border border-neutral-200 dark:border-dark-border rounded-lg bg-white dark:bg-dark-bg-secondary text-neutral-900 dark:text-dark-text focus:outline-none focus:border-primary"
+                          />
+                          <div className="relative shrink-0">
+                            <span className="absolute left-2 top-1/2 -translate-y-1/2 text-neutral-400 text-xs">₹</span>
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              value={item.amount}
+                              onChange={(e) => updateItemizedItem(item.id, { amount: e.target.value })}
+                              placeholder="0.00"
+                              className="w-24 pl-5 pr-2 py-1.5 text-sm border border-neutral-200 dark:border-dark-border rounded-lg bg-white dark:bg-dark-bg-secondary text-neutral-900 dark:text-dark-text focus:outline-none focus:border-primary font-mono"
+                            />
+                          </div>
+                          {itemizedItems.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => removeItemizedItem(item.id)}
+                              className="shrink-0 h-7 w-7 flex items-center justify-center rounded-full text-neutral-400 hover:text-error hover:bg-error/10 transition-colors"
+                            >
+                              <X className="h-4 w-4" />
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Assignment section */}
+                        <div className="flex flex-wrap items-center gap-1.5 pl-5">
+                          <label className="flex items-center gap-1.5 text-xs text-neutral-500 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={item.isShared}
+                              onChange={(e) => updateItemizedItem(item.id, { isShared: e.target.checked, assignedTo: [] })}
+                              className="rounded border-neutral-300"
+                            />
+                            Shared (split equally)
+                          </label>
+                          {!item.isShared && allPeople.length > 1 && (
+                            <>
+                              <span className="text-neutral-300 text-xs">|</span>
+                              {allPeople.map((person) => {
+                                const isAssigned = item.assignedTo.includes(person.id);
+                                return (
+                                  <button
+                                    key={person.id}
+                                    type="button"
+                                    onClick={() => toggleItemizedAssignee(item.id, person.id)}
+                                    className={`px-2 py-0.5 rounded-full text-xs font-medium transition-all ${
+                                      isAssigned
+                                        ? "bg-primary text-white"
+                                        : "bg-neutral-100 dark:bg-dark-bg-tertiary text-neutral-600 dark:text-dark-text-secondary hover:bg-primary/20"
+                                    }`}
+                                  >
+                                    {person.name}
+                                  </button>
+                                );
+                              })}
+                            </>
+                          )}
+                          {!item.isShared && item.assignedTo.length === 0 && allPeople.length > 1 && (
+                            <span className="text-xs text-neutral-400 italic">Tap names to assign →</span>
+                          )}
+                          {!item.isShared && item.assignedTo.length === 0 && allPeople.length <= 1 && (
+                            <span className="text-xs text-neutral-400 italic">Assigned to you</span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={addItemizedItem}
+                  className="w-full py-2 px-4 border-2 border-dashed border-primary/30 rounded-xl text-sm font-medium text-primary hover:border-primary hover:bg-primary/5 transition-all flex items-center justify-center gap-2"
+                >
+                  <Plus className="h-4 w-4" />
+                  Add Item
+                </button>
+
+                {/* Per-person summary */}
+                {itemizedTotal > 0 && (() => {
+                  const preview = calculateItemizedSplit();
+                  return preview.length > 0 ? (
+                    <div className="rounded-lg bg-white dark:bg-dark-bg-secondary border border-neutral-200 dark:border-dark-border overflow-hidden">
+                      <div className="grid grid-cols-2 px-3 py-2 text-xs font-semibold bg-neutral-100 dark:bg-dark-bg-tertiary">
+                        <span>Person</span>
+                        <span className="text-right">Owes</span>
+                      </div>
+                      {preview.map((row) => (
+                        <div key={row.userId} className="grid grid-cols-2 px-3 py-2 text-sm border-t border-neutral-100 dark:border-dark-border">
+                          <span>{row.name}</span>
+                          <span className="text-right font-mono">₹{Number(row.owedAmount).toFixed(2)}</span>
+                        </div>
+                      ))}
+                      <div className="grid grid-cols-2 px-3 py-2 text-xs font-semibold border-t border-neutral-200 dark:border-dark-border bg-neutral-50 dark:bg-dark-bg-tertiary">
+                        <span>Total</span>
+                        <span className="text-right font-mono">₹{itemizedTotal.toFixed(2)}</span>
+                      </div>
+                    </div>
+                  ) : null;
+                })()}
+              </div>
+            )}
 
             {/* What-if Split Simulator */}
             {selectedFriends.length > 0 && (

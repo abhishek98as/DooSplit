@@ -82,6 +82,19 @@
   ],
   "shortcuts": [
     {
+      "name": "Quick Add Expense",
+      "short_name": "Quick Add",
+      "description": "Log an expense in 2 taps — no forms, just amount and category",
+      "url": "/quick-add",
+      "icons": [
+        {
+          "src": "/api/pwa/icon?size=96",
+          "sizes": "96x96",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
       "name": "Add Expense",
       "short_name": "Add Expense",
       "description": "Quickly add a new expense",

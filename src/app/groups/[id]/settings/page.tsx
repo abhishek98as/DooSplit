@@ -20,6 +20,9 @@ import {
   LogOut,
   Trash2,
   Users,
+  FileText,
+  Share2,
+  Loader2,
 } from "lucide-react";
 
 interface GroupMember {
@@ -135,6 +138,7 @@ export default function GroupSettingsPage() {
 
   const [processingLeave, setProcessingLeave] = useState(false);
   const [processingDelete, setProcessingDelete] = useState(false);
+  const [exportingReport, setExportingReport] = useState(false);
 
   useEffect(() => {
     const timer = window.setTimeout(() => setIsReady(true), 20);
@@ -394,6 +398,97 @@ export default function GroupSettingsPage() {
     }
   };
 
+  const generateGroupPdf = async () => {
+    if (!group) return;
+    setExportingReport(true);
+    try {
+      // Fetch all expenses for this group (up to 200)
+      const expRes = await fetch(`/api/expenses?groupId=${groupId}&limit=200&page=1`, {
+        cache: "no-store",
+      });
+      const expData = expRes.ok ? await expRes.json() : { expenses: [] };
+      const rawExpenses = Array.isArray(expData.expenses) ? expData.expenses : [];
+
+      // Fetch simplified debts
+      let simplifiedTransactions: { fromName: string; toName: string; amount: number }[] = [];
+      try {
+        const sdRes = await fetch(`/api/groups/${groupId}/simplified-debts`, { cache: "no-store" });
+        if (sdRes.ok) {
+          const sdData = await sdRes.json();
+          simplifiedTransactions = (sdData.transactions || []).map((tx: {
+            from: { name: string };
+            to: { name: string };
+            amount: number;
+          }) => ({
+            fromName: tx.from.name,
+            toName: tx.to.name,
+            amount: tx.amount,
+          }));
+        }
+      } catch {
+        // non-critical
+      }
+
+      const { generateGroupReport } = await import("@/lib/reportGenerator");
+      await generateGroupReport({
+        groupName: group.name,
+        groupType: group.type,
+        currency: group.currency,
+        generatedAt: new Date().toLocaleDateString("en-IN", {
+          day: "2-digit",
+          month: "long",
+          year: "numeric",
+        }),
+        members: (group.balances || []).map((b) => ({
+          name: b.userName,
+          balance: toNumber(b.balance),
+        })),
+        expenses: rawExpenses.map((e: {
+          date?: string;
+          description?: string;
+          category?: string;
+          amount?: number;
+          currency?: string;
+          createdBy?: { name?: string } | null;
+          splitMethod?: string;
+        }) => ({
+          date: e.date || new Date().toISOString(),
+          description: e.description || "",
+          category: e.category || "other",
+          amount: toNumber(e.amount),
+          currency: e.currency || group.currency,
+          paidByName: e.createdBy?.name || "Unknown",
+          splitMethod: e.splitMethod || "equally",
+        })),
+        simplifiedTransactions,
+        totalSpent: rawExpenses.reduce((sum: number, e: { amount?: number }) => sum + toNumber(e.amount), 0),
+      });
+    } catch (error) {
+      console.error("Failed to generate report:", error);
+      alert("Failed to generate report. Please try again.");
+    } finally {
+      setExportingReport(false);
+    }
+  };
+
+  const handleShareReport = async () => {
+    // Attempt Web Share API first (mobile)
+    if (typeof navigator !== "undefined" && navigator.share) {
+      try {
+        await navigator.share({
+          title: `${group?.name} — DooSplit Expense Report`,
+          text: `Here's the expense report for ${group?.name} from DooSplit. Total: ${formatCurrency(group?.balances?.reduce((sum, b) => sum + (b.balance > 0 ? b.balance : 0), 0) || 0, group?.currency || "INR")}`,
+          url: window.location.origin + `/groups/${groupId}`,
+        });
+        return;
+      } catch {
+        // user cancelled or not supported — fall through
+      }
+    }
+    // Fallback: generate PDF
+    await generateGroupPdf();
+  };
+
   if (loading || status === "loading" || !group) {
     return (
       <AppShell>
@@ -594,6 +689,47 @@ export default function GroupSettingsPage() {
               <Wand2 className="mr-2 h-4 w-4" />
               Simplify group debts
             </Button>
+          </CardContent>
+        </Card>
+
+        {/* Expense Report */}
+        <Card className="transition-shadow duration-200 hover:shadow-md border-primary/20">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <FileText className="h-4 w-4 text-primary" />
+              Expense Report
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="mb-4 text-sm text-neutral-500 dark:text-dark-text-secondary">
+              Generate a shareable PDF with all expenses, member balances, and the Smart Settle Up plan. Share via WhatsApp, email, or download directly.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                onClick={generateGroupPdf}
+                disabled={exportingReport}
+              >
+                {exportingReport ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Generating PDF...
+                  </>
+                ) : (
+                  <>
+                    <FileText className="mr-2 h-4 w-4" />
+                    Download PDF
+                  </>
+                )}
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={handleShareReport}
+                disabled={exportingReport}
+              >
+                <Share2 className="mr-2 h-4 w-4" />
+                Share
+              </Button>
+            </div>
           </CardContent>
         </Card>
 
