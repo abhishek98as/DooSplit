@@ -769,114 +769,45 @@ export async function DELETE(
     const routeStart = Date.now();
     const { id } = await params;
     const auth = await requireUser(request);
-    if (auth.response || !auth.user) {
-      return auth.response as NextResponse;
-    }
+    if (auth.response || !auth.user) return auth.response as NextResponse;
     const currentUserId = auth.user.id;
-    const db = getAdminDb();
 
-    const expense = await getExpenseRow(id);
-    if (!expense) {
-      return NextResponse.json({ error: "Expense not found" }, { status: 404 });
+    // Use DynamoDB directly
+    const { getExpenseById, updateExpense } = await import("@/lib/dynamodb/entities/expenses");
+    const expense = await getExpenseById(id);
+    if (!expense) return NextResponse.json({ error: "Expense not found" }, { status: 404 });
+
+    const { listExpenseParticipants } = await import("@/lib/dynamodb/entities/expenses");
+    const participants = await listExpenseParticipants(id);
+    const isParticipant = participants.some((p: any) => p.user_id === currentUserId);
+    if (!isParticipant) {
+      return NextResponse.json({ error: "Only expense participants can delete" }, { status: 403 });
     }
 
-    const participantCheck = await isExpenseParticipant(id, currentUserId);
-    if (!participantCheck) {
-      return NextResponse.json(
-        { error: "Only expense participants can delete" },
-        { status: 403 }
-      );
-    }
-
-    const participants = await getExpenseParticipants(id);
-    const participantUserIds = (participants || [])
-      .map((participant: any) => String(participant.user_id || ""))
-      .filter(Boolean);
     const nowIso = new Date().toISOString();
-    await db.collection("expenses").doc(id).set(
-      {
-        is_deleted: true,
-        deleted_by: currentUserId,
-        deleted_at: nowIso,
-        updated_at: nowIso,
-        _updated_at: FieldValue.serverTimestamp(),
-      },
-      { merge: true }
+    const participantUserIds = participants.map((p: any) => p.user_id).filter(Boolean);
+
+    await updateExpense(id, { is_deleted: true, updated_at: nowIso });
+
+    await invalidateUsersCache(
+      [...new Set([currentUserId, ...participantUserIds])],
+      EXPENSE_MUTATION_CACHE_SCOPES
     );
-
-    // Touch expense_participants so the Firestore realtime listener fires
-    // for every participant. Without this, soft-delete only updates the `expenses`
-    // doc which is not watched by the client's onSnapshot queries.
-    if (participants.length > 0) {
-      const participantBatch = db.batch();
-      for (const participant of participants) {
-        const pRef = db.collection("expense_participants").doc(participant.id);
-        participantBatch.update(pRef, {
-          updated_at: nowIso,
-          _updated_at: FieldValue.serverTimestamp(),
-        });
-      }
-      await participantBatch.commit();
-    }
-
-    let deleterName = auth.user.name || "Someone";
 
     try {
-      const deleterDoc = await db.collection("users").doc(currentUserId).get();
-      deleterName =
-        String(deleterDoc.data()?.name || "").trim() || deleterName;
-      await notifyExpenseDeleted(
-        String(expense.description || "Expense"),
-        { id: currentUserId, name: deleterName },
-        participantUserIds
-      );
-    } catch (notifError) {
-      console.error("Failed to send notifications:", notifError);
-    }
+      const { logExpenseDeleted } = await import("@/lib/activity-logger");
+      await logExpenseDeleted({
+        actorId: currentUserId,
+        expenseId: id,
+        expenseDescription: expense.description || "Untitled",
+        amount: expense.amount || 0,
+        currency: expense.currency || "INR",
+      });
+    } catch (e) { console.error("Failed to log delete:", e); }
 
-    void logExpenseDeleted({
-      actorId: currentUserId,
-      actorName: deleterName,
-      expenseId: String(expense.id || id),
-      description: String(expense.description || "Expense"),
-      amount: toNum(expense.amount),
-      currency: String(expense.currency || "INR"),
-      participantIds: participantUserIds,
-      before: {
-        description: String(expense.description || "Expense"),
-        amount: toNum(expense.amount),
-        category: String(expense.category || "other"),
-        date: toIso(expense.date || expense.created_at || expense._created_at),
-        groupId: String(expense.group_id || ""),
-        paymentStatus: String(expense.payment_status || "unpaid"),
-      },
-      after: {
-        isDeleted: true,
-      },
-    });
-
-    const affectedUserIds = uniqueStrings([
-      currentUserId,
-      ...participantUserIds,
-    ]);
-
-    await invalidateUsersCache(affectedUserIds, [...EXPENSE_MUTATION_CACHE_SCOPES]);
-
-    const routeMs = logSlowRoute("/api/expenses/[id]#DELETE", routeStart);
-    return NextResponse.json(
-      { message: "Expense deleted successfully" },
-      {
-        status: 200,
-        headers: {
-          "X-Doosplit-Route-Ms": String(routeMs),
-        },
-      }
-    );
+    return NextResponse.json({ message: "Expense deleted" }, { status: 200, headers: { "X-Doosplit-Route-Ms": String(Date.now() - routeStart) } });
   } catch (error: any) {
     console.error("Delete expense error:", error);
-    return NextResponse.json(
-      { error: "Failed to delete expense" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to delete expense" }, { status: 500 });
   }
 }

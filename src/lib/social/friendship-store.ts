@@ -277,35 +277,19 @@ export async function deleteBidirectionalFriendship(
   userId: string,
   friendId: string
 ): Promise<void> {
-  const db = getAdminDb();
-  const pair = await getFriendshipPair(userId, friendId);
-  const refs = new Map<string, DocumentReference>();
+  const { listFriendshipsForUser, putFriendship } = await import("@/lib/dynamodb/entities/friendships");
+  const userFriends = await listFriendshipsForUser(userId);
+  const friendFriends = await listFriendshipsForUser(friendId);
 
-  const addEdge = (edge: FriendshipEdge | null) => {
-    if (!edge) {
-      return;
-    }
-    refs.set(edge.id, edge.ref);
-  };
+  const now = new Date().toISOString();
+  const toRemove = [...userFriends, ...friendFriends].filter(
+    (f: any) => (f.user_id === userId && f.friend_id === friendId) ||
+               (f.user_id === friendId && f.friend_id === userId)
+  );
 
-  addEdge(pair.forward);
-  addEdge(pair.reverse);
-  for (const duplicate of pair.forwardDuplicates) {
-    refs.set(duplicate.id, duplicate.ref);
+  for (const f of toRemove) {
+    await putFriendship({ ...f, status: "removed", updated_at: now });
   }
-  for (const duplicate of pair.reverseDuplicates) {
-    refs.set(duplicate.id, duplicate.ref);
-  }
-
-  if (refs.size === 0) {
-    return;
-  }
-
-  const batch = db.batch();
-  for (const ref of refs.values()) {
-    batch.delete(ref);
-  }
-  await batch.commit();
 }
 
 export async function resolveFriendshipPairByAnyId(friendshipId: string): Promise<{
