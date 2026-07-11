@@ -218,9 +218,100 @@ export function getAdminDb(): any {
                 default: return createDdbDoc(null, id);
               }
             },
-            set: async (..._args: any[]) => {},
-            update: async (..._args: any[]) => {},
-            delete: async () => {},
+            set: async (data: any, _opts?: any) => {
+              try {
+                const now = new Date().toISOString();
+                switch (name) {
+                  case "expenses": {
+                    const { putExpenseMeta } = await import("@/lib/dynamodb/entities/expenses");
+                    await putExpenseMeta({ id, ...data, updated_at: now });
+                    return;
+                  }
+                  case "expense_participants": {
+                    const { putExpenseParticipant } = await import("@/lib/dynamodb/entities/expenses");
+                    await putExpenseParticipant({ id, ...data });
+                    return;
+                  }
+                  case "users": {
+                    const { putUser } = await import("@/lib/dynamodb/entities/users");
+                    await putUser({ id, ...data, updated_at: now });
+                    return;
+                  }
+                  case "groups": {
+                    const { putGroup } = await import("@/lib/dynamodb/entities/groups");
+                    await putGroup({ id, ...data, updated_at: now });
+                    return;
+                  }
+                  case "group_members": {
+                    const { putGroupMember } = await import("@/lib/dynamodb/entities/groups");
+                    await putGroupMember({ id, ...data });
+                    return;
+                  }
+                  case "invitations": {
+                    const { putInvitation } = await import("@/lib/dynamodb/entities/invitations");
+                    await putInvitation({ id, ...data, updated_at: now });
+                    return;
+                  }
+                  case "settlements": {
+                    const { putSettlement } = await import("@/lib/dynamodb/entities/settlements");
+                    await putSettlement({ id, ...data, updated_at: now });
+                    return;
+                  }
+                  case "friendships": {
+                    const { putFriendship } = await import("@/lib/dynamodb/entities/friendships");
+                    await putFriendship({ id, ...data });
+                    return;
+                  }
+                }
+              } catch (e) { console.error(`[proxy] set ${name}/${id}:`, e); }
+            },
+            update: async (data: any) => {
+              try {
+                const now = new Date().toISOString();
+                switch (name) {
+                  case "expenses": {
+                    const { putExpenseMeta, getExpenseById } = await import("@/lib/dynamodb/entities/expenses");
+                    const existing = await getExpenseById(id);
+                    if (existing) await putExpenseMeta({ ...existing, ...data, updated_at: now });
+                    return;
+                  }
+                  case "invitations": {
+                    const { putInvitation, getInvitationById } = await import("@/lib/dynamodb/entities/invitations");
+                    const existing = await getInvitationById(id);
+                    if (existing) await putInvitation({ ...existing, ...data, updated_at: now });
+                    return;
+                  }
+                  case "users": {
+                    const { putUser, getUserById } = await import("@/lib/dynamodb/entities/users");
+                    const existing = await getUserById(id);
+                    if (existing) await putUser({ ...existing, ...data, updated_at: now });
+                    return;
+                  }
+                }
+              } catch (e) { console.error(`[proxy] update ${name}/${id}:`, e); }
+            },
+            delete: async () => {
+              try {
+                const now = new Date().toISOString();
+                switch (name) {
+                  case "expenses": {
+                    const { updateExpense } = await import("@/lib/dynamodb/entities/expenses");
+                    await updateExpense(id, { is_deleted: true, updated_at: now });
+                    return;
+                  }
+                  case "invitations": {
+                    const { updateInvitationStatus } = await import("@/lib/dynamodb/entities/invitations");
+                    await updateInvitationStatus(id, "cancelled");
+                    return;
+                  }
+                  case "friendships": {
+                    const { putFriendship } = await import("@/lib/dynamodb/entities/friendships");
+                    await putFriendship({ id, status: "removed", updated_at: now } as any);
+                    return;
+                  }
+                }
+              } catch (e) { console.error(`[proxy] delete ${name}/${id}:`, e); }
+            },
             ref: { id, path: `${name}/${id}` },
           }),
           where: (field: string, op: string, value: any) =>
