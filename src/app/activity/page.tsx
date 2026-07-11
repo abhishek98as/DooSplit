@@ -18,6 +18,8 @@ import {
   UserMinus,
   FolderPlus,
   FolderMinus,
+  Layers,
+  SlidersHorizontal,
 } from "lucide-react";
 
 interface Activity {
@@ -422,6 +424,15 @@ export default function ActivityPage() {
     );
   }
 
+  // Tab definitions
+  const tabs = [
+    { id: "all", label: "All", icon: Layers },
+    { id: "expense", label: "Expenses", icon: Receipt },
+    { id: "settlement", label: "Settlements", icon: DollarSign },
+    { id: "friend", label: "Friends", icon: UserPlus },
+    { id: "group", label: "Groups", icon: Users },
+  ];
+
   return (
     <AppShell>
       <div className="p-4 md:p-8 space-y-6">
@@ -434,16 +445,41 @@ export default function ActivityPage() {
           </p>
         </div>
 
-        {/* Filters */}
+        {/* Quick-filter tab bar */}
+        <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-hide">
+          {tabs.map((tab) => {
+            const Icon = tab.icon;
+            const active = typeFilter === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setTypeFilter(tab.id)}
+                className={`flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-all duration-200 ${
+                  active
+                    ? "bg-primary text-white shadow-sm shadow-primary/30"
+                    : "bg-white dark:bg-dark-bg-secondary border border-neutral-200 dark:border-dark-border text-neutral-600 dark:text-dark-text-secondary hover:border-primary/50 hover:text-primary"
+                }`}
+              >
+                <Icon className="h-4 w-4" />
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Advanced Filters */}
         <div className="bg-white dark:bg-dark-bg-secondary border border-neutral-200 dark:border-dark-border rounded-lg p-4">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-medium text-neutral-900 dark:text-dark-text">Filters</h3>
+            <h3 className="text-sm font-medium text-neutral-900 dark:text-dark-text flex items-center gap-1.5">
+              <SlidersHorizontal className="h-4 w-4" />
+              Advanced Filters
+            </h3>
             <button
               onClick={() => setShowFilters(!showFilters)}
               className="flex items-center gap-1 text-sm text-primary hover:text-primary/80"
             >
               <Filter className="h-4 w-4" />
-              {showFilters ? "Hide Filters" : "Show Filters"}
+              {showFilters ? "Hide" : "Show"}
             </button>
           </div>
 
@@ -466,7 +502,7 @@ export default function ActivityPage() {
                 </div>
               </div>
 
-              {/* Type Filter */}
+              {/* Type Filter — mirrors the quick tabs above */}
               <div>
                 <label className="block text-xs font-medium text-neutral-700 dark:text-dark-text-secondary mb-1">
                   Activity Type

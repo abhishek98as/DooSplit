@@ -15,6 +15,7 @@ import {
 import Link from "next/link";
 import getOfflineStore from "@/lib/offline-store";
 import QuickAdd from "@/components/dashboard/QuickAdd";
+import BudgetWidget from "@/components/dashboard/BudgetWidget";
 
 interface BalanceData {
   total: number;
@@ -702,6 +703,9 @@ export default function DashboardPage() {
           </Link>
         </div>
 
+        {/* Budget Widget */}
+        <BudgetWidget />
+
         {isNudgesLoading ? (
           <Card>
             <CardHeader>
@@ -728,35 +732,64 @@ export default function DashboardPage() {
                       className={`rounded-lg border p-3 ${getNudgeClasses(nudge.severity)}`}
                     >
                       <p className="text-sm font-semibold text-neutral-900 dark:text-dark-text">
-                        {nudge.title}
+                        {nudge.type === "recurring_settlement_reminder" ? "🔔 " : nudge.type === "predicted_pattern" ? "🔮 " : ""}{nudge.title}
                       </p>
                       <p className="text-sm text-neutral-700 dark:text-dark-text-secondary mt-1">
                         {nudge.message}
                       </p>
-                      {nudge.actionLabel && nudge.actionHref && (
-                        <Link
-                          href={nudge.actionHref}
-                          onClick={() => void updateNudgeState(nudge.id, "mark_acted")}
-                          className="inline-block mt-2 text-xs font-medium text-primary hover:underline"
-                        >
-                          {nudge.actionLabel}
-                        </Link>
-                      )}
-                      <div className="flex gap-2 mt-2">
-                        <button
-                          type="button"
-                          onClick={() => void updateNudgeState(nudge.id, "snooze")}
-                          className="text-xs text-neutral-600 dark:text-dark-text-secondary hover:text-primary"
-                        >
-                          Snooze
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void updateNudgeState(nudge.id, "dismiss")}
-                          className="text-xs text-neutral-600 dark:text-dark-text-secondary hover:text-primary"
-                        >
-                          Dismiss
-                        </button>
+                      <div className="flex flex-wrap items-center gap-3 mt-2">
+                        {nudge.actionLabel && nudge.actionHref && (
+                          <Link
+                            href={nudge.actionHref}
+                            onClick={() => void updateNudgeState(nudge.id, "mark_acted")}
+                            className="text-xs font-semibold text-primary hover:underline"
+                          >
+                            {nudge.actionLabel} →
+                          </Link>
+                        )}
+                        {nudge.type === "recurring_settlement_reminder" && (nudge.metadata as any)?.unpaidUserIds?.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const uid = (nudge.metadata as any).unpaidUserIds[0];
+                              const amount = (nudge.metadata as any).totalUnpaid || 0;
+                              try {
+                                await fetch("/api/payment-reminders", {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({
+                                    toUserId: uid,
+                                    amount: Math.round(amount * 100) / 100,
+                                    currency: "INR",
+                                    message: nudge.title,
+                                  }),
+                                });
+                                void updateNudgeState(nudge.id, "mark_acted");
+                              } catch (e) {
+                                console.error("Reminder send failed:", e);
+                              }
+                            }}
+                            className="text-xs font-semibold bg-primary text-white px-2.5 py-1 rounded-lg hover:bg-primary-dark transition-colors"
+                          >
+                            🔔 Send Reminder
+                          </button>
+                        )}
+                        <div className="flex gap-2 ml-auto">
+                          <button
+                            type="button"
+                            onClick={() => void updateNudgeState(nudge.id, "snooze")}
+                            className="text-xs text-neutral-500 dark:text-dark-text-secondary hover:text-primary"
+                          >
+                            Snooze
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void updateNudgeState(nudge.id, "dismiss")}
+                            className="text-xs text-neutral-500 dark:text-dark-text-secondary hover:text-primary"
+                          >
+                            Dismiss
+                          </button>
+                        </div>
                       </div>
                     </div>
                   ))}

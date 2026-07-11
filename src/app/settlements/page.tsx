@@ -6,7 +6,7 @@ import AppShell from "@/components/layout/AppShell";
 import Card, { CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
-import { DollarSign, Plus, ArrowRight, Wallet, Bell, CheckCircle, Clock, Download } from "lucide-react";
+import { DollarSign, Plus, ArrowRight, Wallet, Bell, CheckCircle, Clock, Download, Share2 } from "lucide-react";
 import Modal from "@/components/ui/Modal";
 import getOfflineStore from "@/lib/offline-store";
 
@@ -210,6 +210,22 @@ export default function SettlementsPage() {
     }
   };
 
+  const shareSettlementToWhatsApp = (s: Settlement) => {
+    const isOutgoing = s.fromUserId._id === session?.user?.id;
+    const fromName = isOutgoing ? "You" : s.fromUserId.name;
+    const toName = isOutgoing ? s.toUserId.name : "You";
+    
+    const message = `*DooSplit Settlement Share*\n` +
+      `*Payment*: ${fromName} paid ${toName} INR ${s.amount}\n` +
+      `*Method*: ${s.method}\n` +
+      `*Note*: ${s.note || "None"}\n` +
+      `*Date*: ${formatDate(s.date)}\n\n` +
+      `Check it out on DooSplit: ${window.location.origin}/settlements`;
+
+    const url = `https://api.whatsapp.com/send?text=${encodeURIComponent(message)}`;
+    window.open(url, "_blank");
+  };
+
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat("en-IN", {
       style: "currency",
@@ -343,11 +359,21 @@ export default function SettlementsPage() {
                             </p>
                           </div>
                         </div>
-                        <div
-                          className={`text-lg font-semibold ${isOutgoing ? "text-coral" : "text-success"
-                            }`}
-                        >
-                          {formatCurrency(settlement.amount)}
+                        <div className="flex items-center gap-2">
+                          <div
+                            className={`text-lg font-semibold ${isOutgoing ? "text-coral" : "text-success"
+                              }`}
+                          >
+                            {formatCurrency(settlement.amount)}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => shareSettlementToWhatsApp(settlement)}
+                            className="p-1 rounded hover:bg-neutral-100 dark:hover:bg-dark-bg-tertiary text-neutral-400 hover:text-emerald-500 transition-colors"
+                            title="Share to WhatsApp"
+                          >
+                            <Share2 className="h-4 w-4" />
+                          </button>
                         </div>
                       </div>
                     );

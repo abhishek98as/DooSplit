@@ -1,18 +1,19 @@
 /**
  * Vercel Cron Job: Run Due Recurring Expenses
  *
- * Runs every hour via Vercel Cron. Replaces Firebase Cloud Function
- * `runDueRecurringExpenses` (scheduler.onSchedule("every 60 minutes")).
- *
- * Queries MongoDB for recurring expense templates whose `next_run_date`
- * is due, creates expense instances, and advances the schedule.
+ * Runs every hour via Vercel Cron.
+ * Uses DynamoDB (listRecurringTemplatesDue) instead of Mongoose models.
+ * Also sends FCM push to notify users about templates running tomorrow.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { RecurringExpenseTemplate, RecurringExpenseRun } from "@/lib/mongodb/models";
-import { buildSplitParticipants, validateExpensePayload } from "@/lib/expenses/expense-creation";
-import { createExpenseInMongo } from "@/lib/mongodb/write-operations";
-import { logActivity } from "@/lib/activity-logger";
+import {
+  listRecurringTemplatesDue,
+  putRecurringRun,
+  updateRecurringTemplate,
+} from "@/lib/dynamodb/entities/recurring";
+import { createExpenseFromPayload } from "@/lib/expenses/expense-creation";
 import { newAppId } from "@/lib/ids";
+import { sendPushNotificationToUsers } from "@/lib/firebase-messaging-admin";
 
 export const dynamic = "force-dynamic";
 
@@ -45,7 +46,7 @@ function advanceNextRunDate(
       date.setMonth(date.getMonth() + 1);
   }
 
-  return date.toISOString();
+  return date.toISOString().split("T")[0];
 }
 
 export async function GET(request: NextRequest) {
@@ -57,15 +58,34 @@ export async function GET(request: NextRequest) {
     const now = new Date();
     const todayIso = now.toISOString().split("T")[0];
 
-    // Find active templates whose next_run_date is today or past
-    const dueTemplates = await RecurringExpenseTemplate.find({
-      is_active: true,
-      next_run_date: {
-        $exists: true,
-        $ne: null,
-        $lte: todayIso,
-      },
-    }).lean();
+    // Compute tomorrow's date for reminder push notifications
+    const tomorrowDate = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+    const tomorrowIso = tomorrowDate.toISOString().split("T")[0];
+
+    // ── 1. Send "tomorrow" push reminders ──────────────────────────────────
+    try {
+      const upcomingTemplates = await listRecurringTemplatesDue(tomorrowIso);
+      for (const tmpl of upcomingTemplates) {
+        try {
+          await sendPushNotificationToUsers([tmpl.owner_id], {
+            title: "⏰ Recurring Expense Tomorrow",
+            body: `"${tmpl.description}" will be automatically created tomorrow.`,
+            data: {
+              type: "recurring_reminder",
+              templateId: tmpl.id,
+              actionHref: "/recurring-expenses",
+            },
+          });
+        } catch (fcmErr) {
+          console.error(`[cron:recurring] FCM reminder failed for template ${tmpl.id}:`, fcmErr);
+        }
+      }
+    } catch (reminderErr) {
+      console.error("[cron:recurring] Tomorrow reminder pass failed:", reminderErr);
+    }
+
+    // ── 2. Process today's due templates ──────────────────────────────────
+    const dueTemplates = await listRecurringTemplatesDue(todayIso);
 
     if (dueTemplates.length === 0) {
       return NextResponse.json({ ok: true, processed: 0, message: "No due recurring expenses" });
@@ -79,76 +99,69 @@ export async function GET(request: NextRequest) {
 
     for (const template of dueTemplates) {
       try {
+        const participantIds: string[] = Array.isArray(template.participant_ids)
+          ? template.participant_ids
+          : [];
+
         const expensePayload = {
           amount: template.amount,
           description: template.description,
           category: template.category,
-          currency: template.currency,
-          date: todayIso,
-          splitMethod: template.split_type,
-          paidBy: template.owner_id,
-          participants: template.participant_ids.map((uid) => ({ userId: uid })),
-          notes: `Recurring: ${template.description}`,
-        };
-
-        const validationError = validateExpensePayload(expensePayload);
-        if (validationError) {
-          results.push({ templateId: String(template._id), expenseId: null, error: validationError });
-          continue;
-        }
-
-        const participants = buildSplitParticipants(expensePayload, template.owner_id);
-        const expenseData: Record<string, any> = {
-          amount: template.amount,
-          description: template.description,
-          category: template.category,
-          date: todayIso,
           currency: template.currency || "INR",
-          created_by: template.owner_id,
-          group_id: null,
-          images: [],
+          date: todayIso,
+          splitMethod: template.split_type || "equally",
+          paidBy: template.owner_id,
+          participants: participantIds.map((uid) => ({ userId: uid })),
           notes: `Recurring: ${template.description}`,
-          is_deleted: false,
-          split_method: template.split_type,
-          payment_status: "unpaid",
         };
 
-        const expenseId = await createExpenseInMongo(expenseData, participants);
-
-        // Log the recurring expense run
-        await RecurringExpenseRun.create({
-          _id: newAppId(),
-          template_id: template._id,
-          owner_id: template.owner_id,
-          created_expenses: [expenseId],
-          run_date: todayIso,
-          status: "completed",
-          created_at: now,
+        const result = await createExpenseFromPayload({
+          actor: {
+            id: template.owner_id,
+            name: "Recurring",
+            email: "",
+          },
+          payload: expensePayload,
+          metadata: {
+            recurringTemplateId: template.id,
+            recurrenceOccurrenceDate: todayIso,
+          },
+          activityType: "recurring",
+          notify: true,
         });
 
-        // Log activity
-        await logActivity({
-          userIds: [template.owner_id, ...template.participant_ids],
-          actorId: template.owner_id,
-          actorName: "Recurring",
-          type: "recurring_expense_created",
-          title: "Recurring Expense Created",
-          description: `Recurring expense "${template.description}" was automatically created`,
-          metadata: { templateId: String(template._id), expenseId },
+        const expenseId = result.expenseId;
+        const runId = newAppId();
+
+        // Record the run
+        await putRecurringRun({
+          id: runId,
+          template_id: template.id,
+          owner_id: template.owner_id,
+          run_date: todayIso,
+          expense_id: expenseId,
+          status: "success",
+          created_at: now.toISOString(),
         });
 
         // Advance next run date
-        const nextRunDate = advanceNextRunDate(todayIso, template.frequency, template.interval || 1);
-        await RecurringExpenseTemplate.updateOne(
-          { _id: template._id },
-          { $set: { next_run_date: nextRunDate.split("T")[0] } }
+        const nextRunDate = advanceNextRunDate(
+          todayIso,
+          template.frequency,
+          template.interval || 1
         );
+        await updateRecurringTemplate(template.id, {
+          next_run_date: nextRunDate,
+          last_run_date: todayIso,
+          run_count: (template.run_count || 0) + 1,
+          updated_at: now.toISOString(),
+        });
 
-        results.push({ templateId: String(template._id), expenseId, error: null });
+        results.push({ templateId: template.id, expenseId, error: null });
       } catch (err: any) {
-        console.error(`[cron:recurring-expenses] Failed template ${template._id}:`, err);
+        console.error(`[cron:recurring-expenses] Failed template ${template.id}:`, err);
         results.push({
-          templateId: String(template._id),
+          templateId: template.id,
           expenseId: null,
           error: err?.message || "Unknown error",
         });

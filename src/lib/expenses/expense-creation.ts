@@ -232,6 +232,51 @@ export async function createExpenseFromPayload({
     ...firestoreParticipants.map((participant) => toStringId(participant.user_id)),
   ]);
 
+  // 🔔 Budget exceeded check — fire-and-forget push notification
+  void (async () => {
+    try {
+      const { getUserBudgets } = await import("@/lib/dynamodb/entities/budgets");
+      const budgetRecord = await getUserBudgets(actor.id);
+      const cat = expenseData.category || "other";
+      const categoryBudget = budgetRecord?.budgets?.[cat]?.monthly;
+
+      if (categoryBudget && categoryBudget > 0) {
+        // Fetch all expenses created by this user in the current calendar month
+        const { getAdminDb } = await import("@/lib/firestore/admin");
+        const db = getAdminDb();
+        const nowDate = new Date();
+        const startOfMonth = new Date(nowDate.getFullYear(), nowDate.getMonth(), 1).getTime();
+
+        const expSnap = await db
+          .collection("expenses")
+          .where("created_by", "==", actor.id)
+          .get();
+
+        let monthlySpend = 0;
+        for (const doc of expSnap.docs) {
+          const exp: any = { id: doc.id, ...(doc.data() || {}) };
+          if (exp.is_deleted || exp.category !== cat) continue;
+          const expDateVal = exp.date?.toDate ? exp.date.toDate() : new Date(exp.date || 0);
+          if (expDateVal.getTime() >= startOfMonth) {
+            monthlySpend += Number(exp.amount || 0);
+          }
+        }
+
+        if (monthlySpend > categoryBudget) {
+          const overBy = Math.round(monthlySpend - categoryBudget);
+          const { sendPushNotificationToUsers } = await import("@/lib/firebase-messaging-admin");
+          await sendPushNotificationToUsers([actor.id], {
+            title: "⚠️ Budget Exceeded",
+            body: `You're ₹${overBy} over your ${cat} budget this month (₹${Math.round(monthlySpend)} / ₹${categoryBudget}).`,
+            data: { type: "budget_alert", category: cat, actionHref: "/analytics" },
+          });
+        }
+      }
+    } catch (budgetErr) {
+      console.error("[expense-creation] Budget push check failed:", budgetErr);
+    }
+  })();
+
   let groupName: string | undefined;
   if (payload.groupId) {
     const { Group } = await import("@/lib/mongodb/models");

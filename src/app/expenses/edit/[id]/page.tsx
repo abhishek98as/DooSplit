@@ -17,7 +17,8 @@ import {
   Calendar,
   Users,
   X,
-  Check
+  Check,
+  Share2
 } from "lucide-react";
 
 interface Friend {
@@ -244,6 +245,28 @@ export default function EditExpensePage() {
     });
 
     setParticipants(newParticipants);
+  };
+
+  const handleWhatsAppShare = () => {
+    const totalAmount = parseFloat(amount) || 0;
+    const payerName = paidBy === session?.user?.id ? "You" : (friends.find(f => f._id === paidBy)?.name || "Someone");
+    
+    const splitDetails = participants
+      .map(p => {
+        const name = p.userId === session?.user?.id ? "You" : p.name;
+        return `- ${name}: owes ${currency} ${p.owedAmount}`;
+      })
+      .join("\n");
+
+    const message = `*DooSplit Expense Share*\n` +
+      `*Description*: ${description || "Expense"}\n` +
+      `*Total*: ${currency} ${totalAmount}\n` +
+      `*Paid by*: ${payerName}\n` +
+      `*Split Details*:\n${splitDetails}\n\n` +
+      `View details on DooSplit: ${window.location.origin}/expenses/edit/${expenseId}`;
+
+    const url = `https://api.whatsapp.com/send?text=${encodeURIComponent(message)}`;
+    window.open(url, "_blank");
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -677,7 +700,16 @@ export default function EditExpensePage() {
             </div>
 
             {/* Submit Buttons */}
-            <div className="flex gap-3 pt-4">
+            <div className="flex flex-col sm:flex-row gap-3 pt-4">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={handleWhatsAppShare}
+                className="flex-1 bg-emerald-600 hover:bg-emerald-750 text-white border-0 font-semibold"
+              >
+                <Share2 className="mr-2 h-4 w-4 inline" />
+                Share via WhatsApp
+              </Button>
               <Button
                 type="button"
                 variant="secondary"

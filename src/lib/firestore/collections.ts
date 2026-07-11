@@ -2,6 +2,7 @@ export const COLLECTIONS = {
   users: "users",
   expenses: "expenses",
   expense_participants: "expense_participants",
+  expenseParticipants: "expense_participants",
   groups: "groups",
   group_members: "group_members",
   settlements: "settlements",
@@ -13,5 +14,10 @@ export const COLLECTIONS = {
   feedback: "feature_feedback",
   payment_reminders: "payment_reminders",
   recurring_templates: "recurring_templates",
+  recurringExpenseTemplates: "recurring_templates",
+  userNudgeStates: "user_nudge_states",
   recurring_runs: "recurring_runs",
+  recurringExpenseRuns: "recurring_runs",
+  user_budgets: "user_budgets",
+  expenseComments: "expense_comments",
 } as const;

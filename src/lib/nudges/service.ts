@@ -3,7 +3,6 @@ import "server-only";
 import { FieldValue, getAdminDb } from "@/lib/firestore/admin";
 import { COLLECTIONS } from "@/lib/firestore/collections";
 import {
-  fetchDocsByIds,
   mapUser,
   toIso,
   toNum,
@@ -12,6 +11,24 @@ import {
 import { logActivity } from "@/lib/activity-logger";
 import { normalizePaymentStatus } from "@/lib/expenses/payment-status";
 
+async function fetchDocsByIds(collection: string, ids: string[]): Promise<Map<string, any>> {
+  const db = getAdminDb();
+  const map = new Map<string, any>();
+  if (!ids || ids.length === 0) return map;
+  const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
+  const chunks = [];
+  for (let i = 0; i < uniqueIds.length; i += 10) {
+    chunks.push(uniqueIds.slice(i, i + 10));
+  }
+  for (const chunk of chunks) {
+    const snap = await db.collection(collection).where("id", "in", chunk).get();
+    for (const doc of snap.docs) {
+      map.set(doc.id, { id: doc.id, ...doc.data() });
+    }
+  }
+  return map;
+}
+
 export type NudgeType =
   | "pending_expense"
   | "habit"
@@ -19,7 +36,9 @@ export type NudgeType =
   | "stale_partial_payment"
   | "stale_dispute"
   | "missed_recurring"
-  | "upcoming_recurring";
+  | "upcoming_recurring"
+  | "recurring_settlement_reminder"
+  | "predicted_pattern";
 
 export interface NudgeItem {
   id: string;
@@ -87,7 +106,7 @@ async function buildCandidateNudges(userId: string): Promise<NudgeItem[]> {
     .where("user_id", "==", userId)
     .get();
 
-  const participantRows: any[] = participantSnap.docs.map((doc) => ({
+  const participantRows: any[] = participantSnap.docs.map((doc: any) => ({
     id: doc.id,
     ...(doc.data() || {}),
   }));
@@ -157,7 +176,7 @@ async function buildCandidateNudges(userId: string): Promise<NudgeItem[]> {
     .collection(COLLECTIONS.settlements)
     .where("from_user_id", "==", userId)
     .get();
-  const settlementRows: any[] = settlementSnap.docs.map((doc) => ({
+  const settlementRows: any[] = settlementSnap.docs.map((doc: any) => ({
     id: doc.id,
     ...(doc.data() || {}),
   }));
@@ -251,6 +270,194 @@ async function buildCandidateNudges(userId: string): Promise<NudgeItem[]> {
   return nudges.slice(0, 12);
 }
 
+/**
+ * Finds recurring expense templates whose last run produced an unsettled debt.
+ * Generates a high-priority nudge with the payer's name and a direct action.
+ */
+async function buildRecurringSettlementNudges(userId: string): Promise<NudgeItem[]> {
+  const db = getAdminDb();
+  const now = Date.now();
+  const nudges: NudgeItem[] = [];
+
+  // Fetch active templates owned by this user
+  const templatesSnap = await db
+    .collection(COLLECTIONS.recurringExpenseTemplates)
+    .where("owner_id", "==", userId)
+    .where("status", "==", "active")
+    .limit(50)
+    .get();
+
+  if (templatesSnap.empty) return nudges;
+
+  for (const tDoc of templatesSnap.docs) {
+    const template: any = { id: tDoc.id, ...(tDoc.data() || {}) };
+    const templateId = template.id;
+    const templateName = String(template.name || template.expense_payload?.description || "Recurring expense");
+
+    // Fetch the most recent run for this template
+    const runsSnap = await db
+      .collection(COLLECTIONS.recurring_runs)
+      .where("template_id", "==", templateId)
+      .orderBy("run_at", "desc")
+      .limit(1)
+      .get();
+
+    if (runsSnap.empty) continue;
+    const lastRun: any = { id: runsSnap.docs[0].id, ...(runsSnap.docs[0].data() || {}) };
+    const runExpenseId = String(lastRun.expense_id || "");
+    if (!runExpenseId) continue;
+
+    // Check if expense participants still have unpaid amounts
+    const participantsSnap = await db
+      .collection(COLLECTIONS.expense_participants)
+      .where("expense_id", "==", runExpenseId)
+      .get();
+
+    let totalUnpaid = 0;
+    const unpaidUserIds: string[] = [];
+    for (const pDoc of participantsSnap.docs) {
+      const p: any = { id: pDoc.id, ...(pDoc.data() || {}) };
+      const owed = toNum(p.owed_amount);
+      const paid = toNum(p.amount_paid);
+      const pending = Math.max(0, owed - paid);
+      if (pending > 0.01 && String(p.user_id || "") !== userId) {
+        totalUnpaid += pending;
+        unpaidUserIds.push(String(p.user_id || ""));
+      }
+    }
+
+    if (totalUnpaid <= 0.01 || unpaidUserIds.length === 0) continue;
+
+    // Get the run age in days
+    const runAtMs = lastRun.run_at?.toDate ? lastRun.run_at.toDate().getTime() : new Date(lastRun.run_at || 0).getTime();
+    const ageDays = Math.floor((now - runAtMs) / (1000 * 60 * 60 * 24));
+    if (ageDays < 3) continue; // Give a 3-day grace period before nudging
+
+    // Fetch debtor names
+    const usersMap = await fetchDocsByIds(COLLECTIONS.users, unpaidUserIds);
+    const debtorNames = unpaidUserIds
+      .map((uid) => {
+        const u = usersMap.get(uid);
+        return u ? String(u.name || "") : null;
+      })
+      .filter(Boolean)
+      .slice(0, 2);
+
+    const namesStr = debtorNames.length > 0
+      ? debtorNames.join(" & ")
+      : `${unpaidUserIds.length} member(s)`;
+
+    nudges.push({
+      id: `recurring_settle_${templateId}`,
+      type: "recurring_settlement_reminder",
+      severity: ageDays >= 10 ? "high" : "medium",
+      title: `Unpaid recurring: ${templateName}`,
+      message: `${namesStr} still owe${debtorNames.length === 1 ? "s" : ""} from the last "${templateName}" run (${ageDays} days ago). Send them a reminder?`,
+      actionLabel: "Send Reminder",
+      actionHref: `/settlements`,
+      metadata: {
+        templateId,
+        expenseId: runExpenseId,
+        unpaidUserIds,
+        totalUnpaid,
+        ageDays,
+        debtorNames,
+      },
+    });
+  }
+
+  return nudges;
+}
+
+/**
+ * Detects repeated expense patterns with specific friends on the same day-of-month.
+ * E.g. "You usually add utilities with Rahul around the 5th"
+ */
+async function buildPatternNudges(userId: string): Promise<NudgeItem[]> {
+  const db = getAdminDb();
+  const now = new Date();
+  const todayDom = now.getDate(); // day-of-month (1–31)
+  const nudges: NudgeItem[] = [];
+
+  // Fetch recent expenses where this user was the creator (last 6 months)
+  const sixMonthsAgo = new Date(now.getTime() - 180 * 24 * 60 * 60 * 1000).toISOString();
+  const expSnap = await db
+    .collection(COLLECTIONS.expenses)
+    .where("created_by", "==", userId)
+    .where("is_deleted", "==", false)
+    .orderBy("date", "desc")
+    .limit(120)
+    .get();
+
+  if (expSnap.empty) return nudges;
+
+  const expenses: any[] = expSnap.docs.map((d: any) => ({ id: d.id, ...(d.data() || {}) }));
+
+  // Group by (group_id or friend pattern) + category
+  type PatternKey = string;
+  const patternMap = new Map<PatternKey, { dates: number[]; category: string; groupId?: string }>();
+
+  for (const exp of expenses) {
+    const dateVal = exp.date?.toDate ? exp.date.toDate() : new Date(exp.date || 0);
+    if (isNaN(dateVal.getTime())) continue;
+    const dom = dateVal.getDate();
+    const groupId = String(exp.group_id || "");
+    const category = String(exp.category || "other");
+    const key: PatternKey = `${groupId}_${category}`;
+    if (!patternMap.has(key)) {
+      patternMap.set(key, { dates: [], category, groupId: groupId || undefined });
+    }
+    patternMap.get(key)!.dates.push(dom);
+  }
+
+  // Find keys with ≥3 occurrences within ±4 days of today
+  const WINDOW = 4;
+  for (const [key, pattern] of patternMap.entries()) {
+    if (pattern.dates.length < 3) continue;
+    const nearToday = pattern.dates.filter(
+      (dom) => Math.abs(dom - todayDom) <= WINDOW || Math.abs(dom - todayDom + 31) <= WINDOW
+    );
+    if (nearToday.length < 3) continue;
+
+    // Avoid showing this nudge if one was shown recently (handled by nudge state system)
+    const nudgeId = `pattern_${key}`;
+    const categoryLabel =
+      pattern.category === "utilities" ? "utilities" :
+      pattern.category === "food" ? "food" :
+      pattern.category === "rent" ? "rent" :
+      pattern.category;
+
+    let contextStr = "";
+    if (pattern.groupId) {
+      // Look up group name
+      try {
+        const gDoc = await db.collection(COLLECTIONS.groups).doc(pattern.groupId).get();
+        if (gDoc.exists) {
+          const g: any = gDoc.data() || {};
+          contextStr = ` with "${String(g.name || "your group")}"`;
+        }
+      } catch {
+        // non-critical
+      }
+    }
+
+    nudges.push({
+      id: nudgeId,
+      type: "predicted_pattern",
+      severity: "low",
+      title: `Predicted: ${categoryLabel} expense`,
+      message: `You usually add ${categoryLabel} expenses${contextStr} around the ${todayDom}${todayDom === 1 ? "st" : todayDom === 2 ? "nd" : todayDom === 3 ? "rd" : "th"}. Ready to log it?`,
+      actionLabel: "Quick Add",
+      actionHref: `/quick-add`,
+      metadata: { category: pattern.category, groupId: pattern.groupId, occurrences: nearToday.length },
+    });
+
+    if (nudges.length >= 2) break; // max 2 pattern nudges
+  }
+
+  return nudges;
+}
+
 async function materializeInboxNudges(userId: string, nudges: NudgeItem[], states: Map<string, any>) {
   const now = Date.now();
   const nowIso = new Date().toISOString();
@@ -281,6 +488,25 @@ async function materializeInboxNudges(userId: string, nudges: NudgeItem[], state
       },
     });
 
+    // 🔔 Send a push notification for high/medium severity nudges
+    if (nudge.severity === "high" || nudge.severity === "medium") {
+      try {
+        const { sendPushNotificationToUsers } = await import("@/lib/firebase-messaging-admin");
+        await sendPushNotificationToUsers([userId], {
+          title: nudge.title,
+          body: nudge.message,
+          data: {
+            type: "smart_nudge",
+            nudgeId: nudge.id,
+            nudgeType: nudge.type,
+            actionHref: nudge.actionHref || "",
+          },
+        });
+      } catch (fcmErr) {
+        console.error("[nudges] FCM push failed for nudge", nudge.id, fcmErr);
+      }
+    }
+
     await db.collection(COLLECTIONS.userNudgeStates).doc(nudgeStateId(userId, nudge.id)).set(
       {
         id: nudgeStateId(userId, nudge.id),
@@ -300,12 +526,20 @@ export async function getSmartNudges(userId: string): Promise<{ nudges: NudgeIte
   const db = getAdminDb();
   const nowIso = new Date().toISOString();
   const nowMs = Date.now();
-  const [candidates, states] = await Promise.all([
+  const [candidates, recurringSettlementNudges, patternNudges, states] = await Promise.all([
     buildCandidateNudges(userId),
+    buildRecurringSettlementNudges(userId),
+    buildPatternNudges(userId),
     fetchUserNudgeStates(userId),
   ]);
 
-  const visible = candidates
+  const allCandidates = [
+    ...candidates,
+    ...recurringSettlementNudges,
+    ...patternNudges,
+  ];
+
+  const visible = allCandidates
     .map((nudge) => {
       const state = states.get(nudge.id);
       if (state?.dismissed_at) return null;

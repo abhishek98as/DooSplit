@@ -188,6 +188,11 @@ export default function GroupDetailPage() {
   const [simplifiedDebts, setSimplifiedDebts] = useState<SimplifiedDebtsPayload | null>(null);
   const [isReady, setIsReady] = useState(false);
 
+  // Date filter state
+  const [dateFilter, setDateFilter] = useState<{ start: string; end: string } | null>(null);
+  const [customStart, setCustomStart] = useState("");
+  const [customEnd, setCustomEnd] = useState("");
+
   useEffect(() => {
     const timer = window.setTimeout(() => setIsReady(true), 20);
     return () => window.clearTimeout(timer);
@@ -359,8 +364,33 @@ export default function GroupDetailPage() {
     return lines;
   }, [group?.currency, session?.user?.id, simplifiedDebts?.transactions]);
 
+  // Dynamic filtering of expenses
+  const filteredExpenses = useMemo(() => {
+    if (!dateFilter) return expenses;
+    const start = new Date(dateFilter.start).getTime();
+    const end = new Date(dateFilter.end).getTime();
+    return expenses.filter((e) => {
+      const t = new Date(e.date).getTime();
+      return t >= start && t <= end;
+    });
+  }, [expenses, dateFilter]);
+
+  // Recalculate net balance for this period
+  const periodBalance = useMemo(() => {
+    if (!session?.user?.id) return 0;
+    const myId = String(session.user.id);
+    let net = 0;
+    filteredExpenses.forEach((exp) => {
+      const p = (exp.participants || []).find((part) => extractUserId(part.userId) === myId);
+      if (p) {
+        net += toNumber(p.paidAmount) - toNumber(p.owedAmount);
+      }
+    });
+    return net;
+  }, [filteredExpenses, session?.user?.id]);
+
   const monthGroups = useMemo(() => {
-    const sorted = [...expenses].sort((a, b) => {
+    const sorted = [...filteredExpenses].sort((a, b) => {
       return new Date(b.date).getTime() - new Date(a.date).getTime();
     });
 
@@ -376,7 +406,28 @@ export default function GroupDetailPage() {
     }
 
     return Array.from(grouped.entries());
-  }, [expenses]);
+  }, [filteredExpenses]);
+
+  const setPresetFilter = (preset: "all" | "week" | "lastweek" | "month") => {
+    const now = new Date();
+    if (preset === "all") {
+      setDateFilter(null);
+      setCustomStart("");
+      setCustomEnd("");
+    } else if (preset === "week") {
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay());
+      const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + (6 - now.getDay()), 23, 59, 59);
+      setDateFilter({ start: start.toISOString(), end: end.toISOString() });
+    } else if (preset === "lastweek") {
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay() - 7);
+      const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay() - 1, 23, 59, 59);
+      setDateFilter({ start: start.toISOString(), end: end.toISOString() });
+    } else if (preset === "month") {
+      const start = new Date(now.getFullYear(), now.getMonth(), 1);
+      const end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+      setDateFilter({ start: start.toISOString(), end: end.toISOString() });
+    }
+  };
 
   const handleLoadMore = async () => {
     if (!hasMore || loadingMore) {
@@ -461,6 +512,126 @@ export default function GroupDetailPage() {
           )}
         </div>
 
+        {/* Date Filter Panel */}
+        <div className="mx-4 mt-4 p-3 rounded-2xl border border-neutral-200 bg-white dark:border-dark-border dark:bg-dark-bg-secondary space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-neutral-500">Date Range Filter</span>
+            {dateFilter && (
+              <button
+                onClick={() => setPresetFilter("all")}
+                className="text-xs font-semibold text-primary hover:underline"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            <button
+              onClick={() => setPresetFilter("all")}
+              className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                !dateFilter
+                  ? "bg-primary text-white"
+                  : "bg-neutral-100 dark:bg-dark-bg-tertiary text-neutral-600 dark:text-dark-text-secondary"
+              }`}
+            >
+              All Time
+            </button>
+            <button
+              onClick={() => setPresetFilter("week")}
+              className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                dateFilter &&
+                Math.abs(new Date(dateFilter.start).getDate() - (new Date().getDate() - new Date().getDay())) <= 1 &&
+                Math.abs(new Date(dateFilter.end).getDate() - (new Date().getDate() + (6 - new Date().getDay()))) <= 1
+                  ? "bg-primary text-white"
+                  : "bg-neutral-100 dark:bg-dark-bg-tertiary text-neutral-600 dark:text-dark-text-secondary"
+              }`}
+            >
+              This Week
+            </button>
+            <button
+              onClick={() => setPresetFilter("lastweek")}
+              className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                dateFilter &&
+                Math.abs(new Date(dateFilter.start).getDate() - (new Date().getDate() - new Date().getDay() - 7)) <= 1
+                  ? "bg-primary text-white"
+                  : "bg-neutral-100 dark:bg-dark-bg-tertiary text-neutral-600 dark:text-dark-text-secondary"
+              }`}
+            >
+              Last Week
+            </button>
+            <button
+              onClick={() => setPresetFilter("month")}
+              className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                dateFilter &&
+                new Date(dateFilter.start).getDate() === 1 &&
+                new Date(dateFilter.start).getMonth() === new Date().getMonth()
+                  ? "bg-primary text-white"
+                  : "bg-neutral-100 dark:bg-dark-bg-tertiary text-neutral-600 dark:text-dark-text-secondary"
+              }`}
+            >
+              This Month
+            </button>
+          </div>
+
+          {/* Custom Date Pickers */}
+          <div className="flex items-center gap-2 pt-1">
+            <input
+              type="date"
+              value={customStart}
+              onChange={(e) => {
+                setCustomStart(e.target.value);
+                if (e.target.value && customEnd) {
+                  setDateFilter({
+                    start: new Date(e.target.value).toISOString(),
+                    end: new Date(customEnd + "T23:59:59").toISOString(),
+                  });
+                }
+              }}
+              className="flex-1 px-2.5 py-1 text-xs rounded-lg border border-neutral-300 dark:border-dark-border bg-white dark:bg-dark-bg-secondary text-neutral-900 dark:text-dark-text"
+            />
+            <span className="text-xs text-neutral-400">to</span>
+            <input
+              type="date"
+              value={customEnd}
+              onChange={(e) => {
+                setCustomEnd(e.target.value);
+                if (customStart && e.target.value) {
+                  setDateFilter({
+                    start: new Date(customStart).toISOString(),
+                    end: new Date(e.target.value + "T23:59:59").toISOString(),
+                  });
+                }
+              }}
+              className="flex-1 px-2.5 py-1 text-xs rounded-lg border border-neutral-300 dark:border-dark-border bg-white dark:bg-dark-bg-secondary text-neutral-900 dark:text-dark-text"
+            />
+          </div>
+        </div>
+
+        {/* Period balance card (shows up when a date range filter is active) */}
+        {dateFilter && (
+          <div className="mx-4 mt-3 rounded-2xl bg-primary/10 border border-primary/20 p-4 relative overflow-hidden">
+            <p className="text-xs font-semibold text-primary">Period Balance Summary</p>
+            <p
+              className={`mt-1 text-xl font-bold font-mono ${
+                periodBalance < 0
+                  ? "text-coral"
+                  : periodBalance > 0
+                  ? "text-primary"
+                  : "text-neutral-500"
+              }`}
+            >
+              {periodBalance < -0.01
+                ? `In this period, you borrowed ${formatCurrency(Math.abs(periodBalance), group.currency)}`
+                : periodBalance > 0.01
+                ? `In this period, you lent ${formatCurrency(periodBalance, group.currency)}`
+                : "In this period, you are settled up"}
+            </p>
+            <p className="text-[10px] text-neutral-400 mt-1">
+              Based on {filteredExpenses.length} expense(s) found in this timeframe.
+            </p>
+          </div>
+        )}
+
         <div className="mx-4 mt-4 rounded-2xl bg-navy p-4 text-white relative overflow-hidden">
           <div
             className="absolute inset-0"
@@ -469,7 +640,7 @@ export default function GroupDetailPage() {
                 "radial-gradient(ellipse at 20% 50%, rgba(0,184,169,0.25), transparent 60%)",
             }}
           />
-          <p className="relative text-sm text-white/65">Your balance</p>
+          <p className="relative text-sm text-white/65">Overall balance</p>
           <p
             className={`relative mt-1 text-2xl md:text-3xl font-bold font-mono ${
               myBalance < 0

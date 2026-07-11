@@ -108,21 +108,8 @@
       ]
     },
     {
-      "name": "View Friends",
-      "short_name": "Friends",
-      "description": "Check balances with friends",
-      "url": "/friends",
-      "icons": [
-        {
-          "src": "/api/pwa/icon?size=96",
-          "sizes": "96x96",
-          "type": "image/png"
-        }
-      ]
-    },
-    {
-      "name": "Settlements",
-      "short_name": "Settle Up",
+      "name": "Quick Settle",
+      "short_name": "Quick Settle",
       "description": "View and manage settlements",
       "url": "/settlements",
       "icons": [

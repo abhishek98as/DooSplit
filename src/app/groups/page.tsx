@@ -439,9 +439,20 @@ export default function GroupsPage() {
                         {groupTypeEmoji(group.type)}
                       </div>
                       <div className="min-w-0 flex-1">
-                        <p className="truncate font-semibold text-neutral-900 dark:text-dark-text">
-                          {group.name}
-                        </p>
+                        <div className="flex items-center gap-2">
+                          <p className="truncate font-semibold text-neutral-900 dark:text-dark-text">
+                            {group.name}
+                          </p>
+                          {group.type === "trip" && (
+                            <Link
+                              href={`/trip/${group._id}`}
+                              className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-primary/20 text-primary hover:bg-primary/30 transition-colors"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              Trip View ✈️
+                            </Link>
+                          )}
+                        </div>
                         <p
                           className={`text-sm font-medium ${
                             balance < 0
@@ -493,9 +504,20 @@ export default function GroupsPage() {
                         {groupTypeEmoji(group.type)}
                       </div>
                       <div className="min-w-0 flex-1">
-                        <p className="truncate font-semibold text-neutral-900 dark:text-dark-text">
-                          {group.name}
-                        </p>
+                        <div className="flex items-center gap-2">
+                          <p className="truncate font-semibold text-neutral-900 dark:text-dark-text">
+                            {group.name}
+                          </p>
+                          {group.type === "trip" && (
+                            <Link
+                              href={`/trip/${group._id}`}
+                              className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-primary/20 text-primary hover:bg-primary/30 transition-colors"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              Trip View ✈️
+                            </Link>
+                          )}
+                        </div>
                         <p className="text-sm font-medium text-neutral-500 dark:text-dark-text-secondary">
                           you are settled
                         </p>

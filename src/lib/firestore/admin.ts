@@ -215,6 +215,11 @@ export function getAdminDb(): any {
                 case "users": return handleUsersCollection("doc", id);
                 case "groups": return handleGroupsCollection("doc", undefined, id);
                 case "invitations": return handleInvitationsCollection("doc", undefined, id);
+                case "user_budgets": {
+                  const { getUserBudgets } = await import("@/lib/dynamodb/entities/budgets");
+                  const record = await getUserBudgets(id);
+                  return createDdbDoc(record, id);
+                }
                 default: return createDdbDoc(null, id);
               }
             },
@@ -260,6 +265,11 @@ export function getAdminDb(): any {
                   case "friendships": {
                     const { putFriendship } = await import("@/lib/dynamodb/entities/friendships");
                     await putFriendship({ id, ...data });
+                    return;
+                  }
+                  case "user_budgets": {
+                    const { putUserBudgets } = await import("@/lib/dynamodb/entities/budgets");
+                    await putUserBudgets({ userId: id, ...data, updatedAt: data.updatedAt || now });
                     return;
                   }
                 }
