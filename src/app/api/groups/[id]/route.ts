@@ -41,7 +41,7 @@ async function loadGroupPayload(
     .collection("group_members")
     .where("group_id", "==", groupId)
     .get();
-  const members = membersSnap.docs.map((doc) => ({ id: doc.id, ...((doc.data() as any) || {}) }));
+  const members = membersSnap.docs.map((doc: any) => ({ id: doc.id, ...((doc.data() as any) || {}) }));
 
   const userIds = uniqueStrings([
     String(group.created_by || ""),
@@ -68,7 +68,7 @@ async function loadGroupPayload(
 
   let balances: Array<{ userId: string; userName: string; balance: number }> = [];
   try {
-    const balanceMap = await computeGroupMemberNetBalances(groupId, memberIds);
+    const balanceMap = await computeGroupMemberNetBalances(groupId);
     balances = memberIds.map((memberId) => {
       const memberUser = usersMap.get(memberId);
       const memberName =
@@ -111,6 +111,9 @@ async function loadGroupPayload(
       memberCount: payloadMembers.length,
       userRole: String(membership.role || "member"),
       balances,
+      settleUpDate: group.settleUpDate || group.settle_up_date || null,
+      notes: group.notes || "",
+      simplifyDebts: group.simplifyDebts !== false && group.simplify_debts !== false,
     },
     memberIds,
   };
@@ -200,6 +203,15 @@ export async function PUT(
     }
     if (body?.currency !== undefined) {
       updatePayload.currency = String(body.currency);
+    }
+    if (body?.settleUpDate !== undefined) {
+      updatePayload.settleUpDate = body.settleUpDate ? String(body.settleUpDate) : null;
+    }
+    if (body?.notes !== undefined) {
+      updatePayload.notes = String(body.notes).trim();
+    }
+    if (body?.simplifyDebts !== undefined) {
+      updatePayload.simplifyDebts = Boolean(body.simplifyDebts);
     }
     updatePayload.updated_at = new Date().toISOString();
     updatePayload._updated_at = FieldValue.serverTimestamp();
@@ -294,7 +306,7 @@ export async function DELETE(
       .collection("group_members")
       .where("group_id", "==", id)
       .get();
-    const memberIds = membersSnap.docs.map((doc) => String(doc.data()?.user_id || ""));
+    const memberIds = membersSnap.docs.map((doc: any) => String(doc.data()?.user_id || ""));
 
     await db.collection("groups").doc(id).set(
       {

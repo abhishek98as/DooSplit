@@ -12,7 +12,8 @@ import { useAnalytics } from "@/components/analytics/AnalyticsProvider";
 import { AnalyticsEvents } from "@/lib/firebase-analytics";
 import getOfflineStore from "@/lib/offline-store";
 import Link from "next/link";
-import { Users, Plus, ChevronRight } from "lucide-react";
+import { Users, Plus, ChevronRight, Search, FileText, ArrowUpDown } from "lucide-react";
+import { simplifyGroupDebtsLocal } from "@/lib/split-solvers";
 
 interface Group {
   _id: string;
@@ -24,6 +25,8 @@ interface Group {
   memberCount: number;
   userRole: string;
   members: any[];
+  createdAt?: string;
+  balances?: any[];
 }
 
 interface Friend {
@@ -107,9 +110,13 @@ export default function GroupsPage() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [groupBalances, setGroupBalances] = useState<Record<string, number>>({});
+  const [groupMemberBalances, setGroupMemberBalances] = useState<Record<string, Array<{ userId: string; userName: string; balance: number }>>>({});
+  const [nonGroupBalance, setNonGroupBalance] = useState(0);
   const [showSettledGroups, setShowSettledGroups] = useState(false);
   const [balanceLoading, setBalanceLoading] = useState(false);
   const [isReady, setIsReady] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [sortBy, setSortBy] = useState<"name" | "balance" | "recent">("recent");
   
   const [formData, setFormData] = useState({
     name: "",
@@ -200,10 +207,12 @@ export default function GroupsPage() {
   useEffect(() => {
     let active = true;
 
-    const computeGroupBalances = async () => {
+    const computeBalances = async () => {
       if (status !== "authenticated" || !session?.user?.id || groups.length === 0) {
         if (active) {
           setGroupBalances({});
+          setGroupMemberBalances({});
+          setNonGroupBalance(0);
         }
         return;
       }
@@ -211,13 +220,24 @@ export default function GroupsPage() {
       setBalanceLoading(true);
       const offlineStore = getOfflineStore();
       const computed: Record<string, number> = {};
+      const computedMemberBalances: Record<string, Array<{ userId: string; userName: string; balance: number }>> = {};
 
       try {
+        // 1. Compute balances for each group
         await Promise.all(
           groups.map(async (group) => {
             let totalForGroup = 0;
+            const memberBalancesMap: Record<string, number> = {};
+            
+            // Initialize members
+            if (group.members) {
+              for (const m of group.members) {
+                const uId = extractUserId(m.userId);
+                if (uId) memberBalancesMap[uId] = 0;
+              }
+            }
+            
             let page = 1;
-
             while (page <= 20) {
               const expenses = (await offlineStore.getExpenses({
                 groupId: group._id,
@@ -234,12 +254,16 @@ export default function GroupsPage() {
                   (participant) =>
                     extractUserId(participant.userId) === String(session.user.id)
                 );
-                if (!myParticipant) {
-                  continue;
+                if (myParticipant) {
+                  totalForGroup += toNumber(myParticipant.paidAmount) - toNumber(myParticipant.owedAmount);
                 }
 
-                totalForGroup +=
-                  toNumber(myParticipant.paidAmount) - toNumber(myParticipant.owedAmount);
+                for (const p of (expense.participants || [])) {
+                  const uId = extractUserId(p.userId);
+                  if (uId) {
+                    memberBalancesMap[uId] = (memberBalancesMap[uId] || 0) + toNumber(p.paidAmount) - toNumber(p.owedAmount);
+                  }
+                }
               }
 
               if (expenses.length < 100) {
@@ -249,19 +273,62 @@ export default function GroupsPage() {
             }
 
             computed[group._id] = totalForGroup;
+            computedMemberBalances[group._id] = Object.entries(memberBalancesMap).map(([userId, balance]) => {
+              const m = group.members?.find((member) => extractUserId(member.userId) === userId);
+              return {
+                userId,
+                userName: m?.userId?.name || "Unknown",
+                balance,
+              };
+            });
           })
         );
-      } catch (error) {
-        console.error("Failed to compute group balances:", error);
-      } finally {
+
+        // 2. Compute non-group expenses balance
+        let computedNonGroup = 0;
+        let nonGroupPage = 1;
+        while (nonGroupPage <= 20) {
+          const allExpenses = (await offlineStore.getExpenses({
+            page: nonGroupPage,
+            limit: 100,
+          })) as any[];
+
+          if (!Array.isArray(allExpenses) || allExpenses.length === 0) {
+            break;
+          }
+
+          const nonGroupList = allExpenses.filter(e => !e.groupId && !e.group_id);
+          for (const expense of nonGroupList) {
+            const myParticipant = (expense.participants || []).find(
+              (participant: any) =>
+                extractUserId(participant.userId) === String(session.user.id)
+            );
+            if (myParticipant) {
+              computedNonGroup += toNumber(myParticipant.paidAmount) - toNumber(myParticipant.owedAmount);
+            }
+          }
+
+          if (allExpenses.length < 100) {
+            break;
+          }
+          nonGroupPage += 1;
+        }
+
         if (active) {
           setGroupBalances(computed);
+          setGroupMemberBalances(computedMemberBalances);
+          setNonGroupBalance(computedNonGroup);
+        }
+      } catch (error) {
+        console.error("Failed to compute balances:", error);
+      } finally {
+        if (active) {
           setBalanceLoading(false);
         }
       }
     };
 
-    void computeGroupBalances();
+    void computeBalances();
 
     return () => {
       active = false;
@@ -326,11 +393,44 @@ export default function GroupsPage() {
     }).format(amount);
   };
 
+  const groupSimplifiedDebts = useMemo(() => {
+    const record: Record<string, any[]> = {};
+    for (const [groupId, balances] of Object.entries(groupMemberBalances)) {
+      record[groupId] = simplifyGroupDebtsLocal(balances);
+    }
+    return record;
+  }, [groupMemberBalances]);
+
+  const filteredAndSortedGroups = useMemo(() => {
+    let result = [...groups];
+
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      result = result.filter(g => g.name.toLowerCase().includes(q));
+    }
+
+    result.sort((a, b) => {
+      if (sortBy === "name") {
+        return a.name.localeCompare(b.name);
+      }
+      if (sortBy === "balance") {
+        const balA = Math.abs(groupBalances[a._id] ?? 0);
+        const balB = Math.abs(groupBalances[b._id] ?? 0);
+        return balB - balA;
+      }
+      const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return dateB - dateA;
+    });
+
+    return result;
+  }, [groups, searchQuery, sortBy, groupBalances]);
+
   const activeAndSettled = useMemo(() => {
     const active: Group[] = [];
     const settled: Group[] = [];
 
-    for (const group of groups) {
+    for (const group of filteredAndSortedGroups) {
       const balance = groupBalances[group._id] ?? 0;
       if (Math.abs(balance) <= 0.01) {
         settled.push(group);
@@ -340,7 +440,7 @@ export default function GroupsPage() {
     }
 
     return { active, settled };
-  }, [groupBalances, groups]);
+  }, [groupBalances, filteredAndSortedGroups]);
 
   const overallBalance = useMemo(() => {
     return groups.reduce((sum, group) => sum + (groupBalances[group._id] ?? 0), 0);
@@ -358,7 +458,7 @@ export default function GroupsPage() {
 
   return (
     <AppShell>
-      <div className="p-4 md:p-8 space-y-6">
+      <div className="p-4 md:p-8 space-y-6 pb-24 md:pb-8">
         <div className="flex items-center justify-between">
           <div className="md:hidden">
             <h1 className="text-h1 font-bold text-neutral-900 dark:text-dark-text">
@@ -404,6 +504,66 @@ export default function GroupsPage() {
           )}
         </div>
 
+        {/* Search & Sort Panel */}
+        <div className="flex flex-col sm:flex-row gap-3">
+          <div className="relative flex-1">
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-neutral-400" />
+            <input
+              type="text"
+              placeholder="Search groups..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-neutral-200 dark:border-dark-border bg-white dark:bg-dark-bg-secondary text-sm text-neutral-900 dark:text-dark-text placeholder-neutral-400 focus:outline-none focus:border-primary focus:ring-4 focus:ring-primary/10"
+            />
+          </div>
+          <div className="relative">
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as any)}
+              className="w-full sm:w-auto appearance-none pl-10 pr-8 py-2.5 rounded-xl border border-neutral-200 dark:border-dark-border bg-white dark:bg-dark-bg-secondary text-sm font-medium text-neutral-700 dark:text-dark-text-secondary focus:outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 cursor-pointer"
+            >
+              <option value="recent">Recent activity</option>
+              <option value="name">Group name</option>
+              <option value="balance">Net balance</option>
+            </select>
+            <ArrowUpDown className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-neutral-400 pointer-events-none" />
+          </div>
+        </div>
+
+        {/* Non-Group Expenses Pinned Card */}
+        <div
+          className={`rounded-2xl border border-neutral-200 bg-white p-4 transition-all duration-300 hover:shadow-md hover:-translate-y-0.5 dark:border-dark-border dark:bg-dark-bg-secondary ${
+            isReady ? "opacity-100 translate-y-0" : "opacity-0 translate-y-1"
+          }`}
+        >
+          <div className="flex items-center gap-4">
+            <div className="h-14 w-14 shrink-0 rounded-xl bg-neutral-100 text-2xl flex items-center justify-center dark:bg-dark-bg-tertiary">
+              💼
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold text-neutral-900 dark:text-dark-text">
+                Non-Group Expenses
+              </p>
+              <p
+                className={`text-sm font-medium ${
+                  nonGroupBalance < 0
+                    ? "text-coral"
+                    : nonGroupBalance > 0
+                    ? "text-primary"
+                    : "text-neutral-500 dark:text-dark-text-secondary"
+                }`}
+              >
+                {nonGroupBalance < -0.01
+                  ? `you owe ${formatCurrency(Math.abs(nonGroupBalance))}`
+                  : nonGroupBalance > 0.01
+                  ? `you are owed ${formatCurrency(nonGroupBalance)}`
+                  : "you are settled"}
+              </p>
+            </div>
+            <ChevronRight className="h-4 w-4 shrink-0 text-neutral-400" />
+          </div>
+        </div>
+
         <div className="space-y-3">
           {groups.length === 0 ? (
             <Card>
@@ -423,57 +583,97 @@ export default function GroupsPage() {
             <>
               {activeAndSettled.active.map((group, index) => {
                 const balance = groupBalances[group._id] ?? 0;
+                const simplified = groupSimplifiedDebts[group._id] || [];
+                const myUserId = String(session?.user?.id || "");
+                const userDebts = simplified.filter(
+                  (tx) => tx.from.id === myUserId || tx.to.id === myUserId
+                );
+
                 return (
                   <Link key={group._id} href={`/groups/${group._id}`}>
                     <div
-                      className={`flex items-center gap-4 rounded-2xl border border-neutral-200 bg-white p-4 transition-all duration-300 hover:shadow-md hover:-translate-y-0.5 dark:border-dark-border dark:bg-dark-bg-secondary ${
+                      className={`flex flex-col gap-3 rounded-2xl border border-neutral-200 bg-white p-4 transition-all duration-300 hover:shadow-md hover:-translate-y-0.5 dark:border-dark-border dark:bg-dark-bg-secondary ${
                         isReady ? "opacity-100 translate-y-0" : "opacity-0 translate-y-1"
                       }`}
                       style={{ transitionDelay: `${Math.min(index * 40, 240)}ms` }}
                     >
-                      <div
-                        className={`h-14 w-14 shrink-0 rounded-xl text-2xl flex items-center justify-center ${groupTypeColor(
-                          group.type
-                        )}`}
-                      >
-                        {groupTypeEmoji(group.type)}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <p className="truncate font-semibold text-neutral-900 dark:text-dark-text">
-                            {group.name}
-                          </p>
-                          {group.type === "trip" && (
-                            <Link
-                              href={`/trip/${group._id}`}
-                              className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-primary/20 text-primary hover:bg-primary/30 transition-colors"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              Trip View ✈️
-                            </Link>
-                          )}
-                        </div>
-                        <p
-                          className={`text-sm font-medium ${
-                            balance < 0
-                              ? "text-coral"
-                              : balance > 0
-                              ? "text-primary"
-                              : "text-neutral-500 dark:text-dark-text-secondary"
-                          }`}
+                      <div className="flex items-center gap-4">
+                        <div
+                          className={`h-14 w-14 shrink-0 rounded-xl text-2xl flex items-center justify-center ${groupTypeColor(
+                            group.type
+                          )}`}
                         >
-                          {balance < -0.01
-                            ? `you owe ${formatCurrency(Math.abs(balance), group.currency || "INR")}`
-                            : balance > 0.01
-                            ? `you are owed ${formatCurrency(balance, group.currency || "INR")}`
-                            : "you are settled"}
-                        </p>
+                          {groupTypeEmoji(group.type)}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <p className="truncate font-semibold text-neutral-900 dark:text-dark-text">
+                              {group.name}
+                            </p>
+                            {group.type === "trip" && (
+                              <Link
+                                href={`/trip/${group._id}`}
+                                className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-primary/20 text-primary hover:bg-primary/30 transition-colors"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                Trip View ✈️
+                              </Link>
+                            )}
+                          </div>
+                          <p
+                            className={`text-sm font-semibold ${
+                              balance < 0
+                                ? "text-coral"
+                                : balance > 0
+                                ? "text-primary"
+                                : "text-neutral-500 dark:text-dark-text-secondary"
+                            }`}
+                          >
+                            {balance < -0.01
+                              ? `you owe ${formatCurrency(Math.abs(balance), group.currency || "INR")}`
+                              : balance > 0.01
+                              ? `you are owed ${formatCurrency(balance, group.currency || "INR")}`
+                              : "settled up"}
+                          </p>
+                        </div>
+                        <ChevronRight className="h-4 w-4 shrink-0 text-neutral-400" />
                       </div>
-                      <ChevronRight className="h-4 w-4 shrink-0 text-neutral-400" />
+
+                      {/* Sub-lines of largest balances */}
+                      {userDebts.length > 0 && (
+                        <div className="border-t border-neutral-100 dark:border-dark-border/40 pt-2.5 space-y-1">
+                          {userDebts.slice(0, 2).map((tx, idx) => {
+                            const isOwed = tx.to.id === myUserId;
+                            return (
+                              <p
+                                key={idx}
+                                className={`text-xs font-medium ${
+                                  isOwed ? "text-primary/95" : "text-coral/95"
+                                }`}
+                              >
+                                {isOwed
+                                  ? `${tx.from.name} owes you ${formatCurrency(tx.amount, group.currency || "INR")}`
+                                  : `You owe ${tx.to.name} ${formatCurrency(tx.amount, group.currency || "INR")}`}
+                              </p>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
                   </Link>
                 );
               })}
+
+              <div className="pt-2 text-center">
+                <Button
+                  variant="outline"
+                  onClick={() => setShowCreateModal(true)}
+                  className="w-full max-w-sm rounded-xl py-3 border-2 border-primary/20 text-primary hover:bg-primary/5 transition-all duration-200"
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  Start a new group
+                </Button>
+              </div>
 
               {activeAndSettled.settled.length > 0 && (
                 <div className="pt-1">
@@ -493,39 +693,42 @@ export default function GroupsPage() {
               )}
 
               {showSettledGroups &&
-                activeAndSettled.settled.map((group) => (
-                  <Link key={`settled-${group._id}`} href={`/groups/${group._id}`}>
-                    <div className="flex items-center gap-4 rounded-2xl border border-neutral-200 bg-white/75 p-4 transition-all duration-300 hover:shadow-md hover:-translate-y-0.5 dark:border-dark-border dark:bg-dark-bg-secondary/80">
-                      <div
-                        className={`h-14 w-14 shrink-0 rounded-xl text-2xl flex items-center justify-center ${groupTypeColor(
-                          group.type
-                        )}`}
-                      >
-                        {groupTypeEmoji(group.type)}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <p className="truncate font-semibold text-neutral-900 dark:text-dark-text">
-                            {group.name}
-                          </p>
-                          {group.type === "trip" && (
-                            <Link
-                              href={`/trip/${group._id}`}
-                              className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-primary/20 text-primary hover:bg-primary/30 transition-colors"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              Trip View ✈️
-                            </Link>
-                          )}
+                activeAndSettled.settled.map((group) => {
+                  const balance = groupBalances[group._id] ?? 0;
+                  return (
+                    <Link key={`settled-${group._id}`} href={`/groups/${group._id}`}>
+                      <div className="flex items-center gap-4 rounded-2xl border border-neutral-200 bg-white/75 p-4 transition-all duration-300 hover:shadow-md hover:-translate-y-0.5 dark:border-dark-border dark:bg-dark-bg-secondary/80">
+                        <div
+                          className={`h-14 w-14 shrink-0 rounded-xl text-2xl flex items-center justify-center ${groupTypeColor(
+                            group.type
+                          )}`}
+                        >
+                          {groupTypeEmoji(group.type)}
                         </div>
-                        <p className="text-sm font-medium text-neutral-500 dark:text-dark-text-secondary">
-                          you are settled
-                        </p>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <p className="truncate font-semibold text-neutral-900 dark:text-dark-text">
+                              {group.name}
+                            </p>
+                            {group.type === "trip" && (
+                              <Link
+                                href={`/trip/${group._id}`}
+                                className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-primary/20 text-primary hover:bg-primary/30 transition-colors"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                Trip View ✈️
+                              </Link>
+                            )}
+                          </div>
+                          <p className="text-sm font-medium text-neutral-500 dark:text-dark-text-secondary">
+                            you are settled
+                          </p>
+                        </div>
+                        <ChevronRight className="h-4 w-4 shrink-0 text-neutral-400" />
                       </div>
-                      <ChevronRight className="h-4 w-4 shrink-0 text-neutral-400" />
-                    </div>
-                  </Link>
-                ))}
+                    </Link>
+                  );
+                })}
             </>
           )}
         </div>
@@ -649,6 +852,15 @@ export default function GroupsPage() {
             </div>
           </div>
         </Modal>
+        
+        {/* Floating Add Expense Button */}
+        <Link
+          href="/expenses/add"
+          className="fixed bottom-24 right-4 z-40 flex items-center gap-2 rounded-2xl bg-primary px-4 py-3 text-sm font-medium text-white shadow-xl transition-all duration-300 hover:bg-primary-dark"
+        >
+          <Plus className="h-5 w-5" />
+          Add Expense
+        </Link>
       </div>
     </AppShell>
   );

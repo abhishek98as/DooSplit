@@ -142,7 +142,7 @@ export async function GET(
       }
 
       const simplified = simplifyFromNet(netMap);
-      const usersMap = await fetchDocsByIds<any>(User, memberIds);
+      const usersMap = await fetchDocsByIds(User, memberIds);
 
       const transactions = simplified.transactions.map((tx) => {
         const fromUser = usersMap.get(tx.from);

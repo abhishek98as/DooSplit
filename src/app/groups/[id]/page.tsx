@@ -8,7 +8,10 @@ import AppShell from "@/components/layout/AppShell";
 import Card, { CardContent } from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
-import { ArrowLeft, Plus, Settings, ChevronRight, Receipt } from "lucide-react";
+import { ArrowLeft, Plus, Settings, ChevronRight, Receipt, Calendar, Users, FileText, ChevronDown, ChevronUp } from "lucide-react";
+import Modal from "@/components/ui/Modal";
+import getOfflineStore from "@/lib/offline-store";
+import { simplifyGroupDebtsLocal, computeDirectGroupDebts } from "@/lib/split-solvers";
 
 interface GroupMember {
   _id: string;
@@ -38,6 +41,9 @@ interface Group {
   balances?: GroupBalance[];
   memberCount: number;
   userRole: string;
+  notes?: string | null;
+  settleUpDate?: string | null;
+  simplifyDebts?: boolean | null;
 }
 
 interface GroupExpenseParticipant {
@@ -181,6 +187,7 @@ export default function GroupDetailPage() {
 
   const [group, setGroup] = useState<Group | null>(null);
   const [expenses, setExpenses] = useState<GroupExpense[]>([]);
+  const [allGroupExpenses, setAllGroupExpenses] = useState<any[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -188,10 +195,53 @@ export default function GroupDetailPage() {
   const [simplifiedDebts, setSimplifiedDebts] = useState<SimplifiedDebtsPayload | null>(null);
   const [isReady, setIsReady] = useState(false);
 
+  // Modal and expanding state
+  const [showMembersModal, setShowMembersModal] = useState(false);
+  const [showDatePickerModal, setShowDatePickerModal] = useState(false);
+  const [showNotesModal, setShowNotesModal] = useState(false);
+  const [isBalancesExpanded, setIsBalancesExpanded] = useState(false);
+  const [updatingGroup, setUpdatingGroup] = useState(false);
+  const [notesText, setNotesText] = useState("");
+  const [settleDateText, setSettleDateText] = useState("");
+
   // Date filter state
   const [dateFilter, setDateFilter] = useState<{ start: string; end: string } | null>(null);
   const [customStart, setCustomStart] = useState("");
   const [customEnd, setCustomEnd] = useState("");
+
+  // Sync details text fields when group loads
+  useEffect(() => {
+    if (group) {
+      setNotesText(group.notes || "");
+      if (group.settleUpDate) {
+        setSettleDateText(new Date(group.settleUpDate).toISOString().split("T")[0]);
+      }
+    }
+  }, [group]);
+
+  // Load all expenses for local direct splits solver
+  useEffect(() => {
+    let active = true;
+    const loadAllExpenses = async () => {
+      const offlineStore = getOfflineStore();
+      let page = 1;
+      const list: any[] = [];
+      while (page <= 20) {
+        const res = await offlineStore.getExpenses({ groupId, page, limit: 100 });
+        if (!Array.isArray(res) || res.length === 0) break;
+        list.push(...res);
+        if (res.length < 100) break;
+        page++;
+      }
+      if (active) {
+        setAllGroupExpenses(list);
+      }
+    };
+    if (groupId) {
+      void loadAllExpenses();
+    }
+    return () => { active = false; };
+  }, [groupId, expenses]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => setIsReady(true), 20);
@@ -211,6 +261,28 @@ export default function GroupDetailPage() {
     const data = (await response.json()) as { group: Group };
     setGroup(data.group || null);
     return data.group || null;
+  };
+
+  const updateGroupSetting = async (fields: Partial<Group>) => {
+    setUpdatingGroup(true);
+    try {
+      const response = await fetch(`/api/groups/${groupId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(fields),
+      });
+      if (response.ok) {
+        const data = await response.json();
+        if (data.group) {
+          setGroup(data.group);
+        }
+        void fetchSimplifiedDebts();
+      }
+    } catch (error) {
+      console.error("Failed to update group setting:", error);
+    } finally {
+      setUpdatingGroup(false);
+    }
   };
 
   const fetchGroupExpenses = async (page: number, append: boolean) => {
@@ -346,14 +418,43 @@ export default function GroupDetailPage() {
     return toNumber(match?.balance);
   }, [group, session?.user?.id]);
 
+  const membersList = useMemo(() => {
+    if (!group?.members) return [];
+    return group.members.map((m) => {
+      const uId = extractUserId(m.userId);
+      return {
+        userId: uId,
+        userName: m.userId?.name || "Unknown",
+      };
+    });
+  }, [group?.members]);
+
+  const directDebts = useMemo(() => {
+    if (!allGroupExpenses || allGroupExpenses.length === 0 || membersList.length === 0) {
+      return [];
+    }
+    return computeDirectGroupDebts(allGroupExpenses, membersList);
+  }, [allGroupExpenses, membersList]);
+
+  const currentTransactions = useMemo(() => {
+    if (group?.simplifyDebts === false) {
+      return directDebts;
+    }
+    return (simplifiedDebts?.transactions || []).map(tx => ({
+      from: { id: tx.from.id, name: tx.from.name },
+      to: { id: tx.to.id, name: tx.to.name },
+      amount: tx.amount,
+    }));
+  }, [group?.simplifyDebts, simplifiedDebts, directDebts]);
+
   const pairwiseLines = useMemo(() => {
     const myId = String(session?.user?.id || "");
-    if (!myId || !simplifiedDebts?.transactions) {
+    if (!myId || !currentTransactions) {
       return [];
     }
 
     const lines: string[] = [];
-    for (const tx of simplifiedDebts.transactions) {
+    for (const tx of currentTransactions) {
       if (String(tx.from.id) === myId) {
         lines.push(`You owe ${tx.to.name} ${formatCurrency(tx.amount, group?.currency || "INR")}`);
       } else if (String(tx.to.id) === myId) {
@@ -362,7 +463,7 @@ export default function GroupDetailPage() {
     }
 
     return lines;
-  }, [group?.currency, session?.user?.id, simplifiedDebts?.transactions]);
+  }, [group?.currency, session?.user?.id, currentTransactions]);
 
   // Dynamic filtering of expenses
   const filteredExpenses = useMemo(() => {
@@ -498,19 +599,48 @@ export default function GroupDetailPage() {
           </div>
         </div>
 
-        <div className="flex gap-2 overflow-x-auto px-4 pb-1">
-          <span className="shrink-0 rounded-full bg-neutral-100 px-3 py-1 text-xs font-medium text-neutral-600 dark:bg-dark-bg-tertiary dark:text-dark-text-secondary">
+        {/* Horizontally Scrollable Chip Row */}
+        <div className="flex gap-2 overflow-x-auto px-4 pb-2 scrollbar-none">
+          <button
+            onClick={() => setShowDatePickerModal(true)}
+            className="flex items-center gap-1.5 shrink-0 rounded-full bg-neutral-100 dark:bg-dark-bg-tertiary px-3 py-1.5 text-xs font-semibold text-neutral-600 dark:text-dark-text-secondary hover:bg-neutral-200 dark:hover:bg-dark-bg-secondary transition-colors"
+          >
+            <Calendar className="h-3.5 w-3.5" />
+            {group.settleUpDate
+              ? `Settle by: ${new Date(group.settleUpDate).toLocaleDateString("en-IN", {
+                  month: "short",
+                  day: "numeric",
+                })}`
+              : "Add settle up date"}
+          </button>
+          
+          <button
+            onClick={() => setShowMembersModal(true)}
+            className="flex items-center gap-1.5 shrink-0 rounded-full bg-neutral-100 dark:bg-dark-bg-tertiary px-3 py-1.5 text-xs font-semibold text-neutral-600 dark:text-dark-text-secondary hover:bg-neutral-200 dark:hover:bg-dark-bg-secondary transition-colors"
+          >
+            <Users className="h-3.5 w-3.5" />
             {group.memberCount} people
-          </span>
-          <span className="shrink-0 rounded-full bg-neutral-100 px-3 py-1 text-xs font-medium capitalize text-neutral-600 dark:bg-dark-bg-tertiary dark:text-dark-text-secondary">
-            {group.type} group
-          </span>
-          {group.description && (
-            <span className="max-w-[220px] truncate rounded-full bg-neutral-100 px-3 py-1 text-xs font-medium text-neutral-600 dark:bg-dark-bg-tertiary dark:text-dark-text-secondary">
-              {group.description}
-            </span>
-          )}
+          </button>
+
+          <button
+            onClick={() => setShowNotesModal(true)}
+            className="flex items-center gap-1.5 shrink-0 rounded-full bg-neutral-100 dark:bg-dark-bg-tertiary px-3 py-1.5 text-xs font-semibold text-neutral-600 dark:text-dark-text-secondary hover:bg-neutral-200 dark:hover:bg-dark-bg-secondary transition-colors"
+          >
+            <FileText className="h-3.5 w-3.5" />
+            {group.notes ? "View notes" : "Add group notes..."}
+          </button>
         </div>
+
+        {/* Pinned Group Notes Banner */}
+        {group.notes && (
+          <div className="mx-4 mt-2 rounded-2xl bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/40 p-4 relative">
+            <div className="flex items-center gap-2 mb-1">
+              <FileText className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+              <span className="text-xs font-bold text-amber-800 dark:text-amber-200">Group Notes (Pinned)</span>
+            </div>
+            <p className="text-sm text-amber-900 dark:text-amber-100 whitespace-pre-line">{group.notes}</p>
+          </div>
+        )}
 
         {/* Date Filter Panel */}
         <div className="mx-4 mt-4 p-3 rounded-2xl border border-neutral-200 bg-white dark:border-dark-border dark:bg-dark-bg-secondary space-y-3">
@@ -607,7 +737,7 @@ export default function GroupDetailPage() {
           </div>
         </div>
 
-        {/* Period balance card (shows up when a date range filter is active) */}
+        {/* Period balance card */}
         {dateFilter && (
           <div className="mx-4 mt-3 rounded-2xl bg-primary/10 border border-primary/20 p-4 relative overflow-hidden">
             <p className="text-xs font-semibold text-primary">Period Balance Summary</p>
@@ -632,6 +762,7 @@ export default function GroupDetailPage() {
           </div>
         )}
 
+        {/* Collapsible Balance Summary */}
         <div className="mx-4 mt-4 rounded-2xl bg-navy p-4 text-white relative overflow-hidden">
           <div
             className="absolute inset-0"
@@ -640,34 +771,82 @@ export default function GroupDetailPage() {
                 "radial-gradient(ellipse at 20% 50%, rgba(0,184,169,0.25), transparent 60%)",
             }}
           />
-          <p className="relative text-sm text-white/65">Overall balance</p>
-          <p
-            className={`relative mt-1 text-2xl md:text-3xl font-bold font-mono ${
-              myBalance < 0
-                ? "text-coral"
-                : myBalance > 0
-                ? "text-primary"
-                : "text-white"
+          <div className="relative flex items-center justify-between">
+            <div>
+              <p className="text-xs text-white/65">Overall balance</p>
+              <p
+                className={`mt-1 text-2xl font-bold font-mono ${
+                  myBalance < 0
+                    ? "text-coral"
+                    : myBalance > 0
+                    ? "text-primary"
+                    : "text-white"
+                }`}
+              >
+                {myBalance < -0.01
+                  ? `You owe ${formatCurrency(Math.abs(myBalance), group.currency)}`
+                  : myBalance > 0.01
+                  ? `You are owed ${formatCurrency(myBalance, group.currency)}`
+                  : "You are settled up"}
+              </p>
+            </div>
+            <button
+              onClick={() => setIsBalancesExpanded(!isBalancesExpanded)}
+              className="rounded-lg bg-white/10 p-2 text-white hover:bg-white/15 transition-colors"
+            >
+              {isBalancesExpanded ? (
+                <ChevronUp className="h-5 w-5" />
+              ) : (
+                <ChevronDown className="h-5 w-5" />
+              )}
+            </button>
+          </div>
+
+          {isBalancesExpanded && (
+            <div className="relative mt-4 border-t border-white/10 pt-4 space-y-3">
+              {currentTransactions.length > 0 ? (
+                currentTransactions.map((tx, idx) => {
+                  const isOwed = tx.to.id === String(session?.user?.id);
+                  const isOwe = tx.from.id === String(session?.user?.id);
+                  return (
+                    <div key={idx} className="flex items-center justify-between text-sm">
+                      <span className="text-white/80">
+                        {tx.from.name} ➔ {tx.to.name}
+                      </span>
+                      <span className={`font-mono font-bold ${isOwed ? "text-primary" : isOwe ? "text-coral" : "text-white"}`}>
+                        {formatCurrency(tx.amount, group.currency)}
+                      </span>
+                    </div>
+                  );
+                })
+              ) : (
+                <p className="text-sm text-white/70">No individual balances pending right now.</p>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Simplify Debts Toggle Switch */}
+        <div className="mx-4 mt-4 flex items-center justify-between rounded-2xl border border-neutral-200 bg-white p-4 dark:border-dark-border dark:bg-dark-bg-secondary">
+          <div>
+            <p className="text-sm font-semibold text-neutral-900 dark:text-dark-text">Simplify group debts</p>
+            <p className="text-xs text-neutral-500 dark:text-dark-text-secondary mt-0.5">
+              Minimizes total payment transactions between members.
+            </p>
+          </div>
+          <button
+            onClick={() => updateGroupSetting({ simplifyDebts: group.simplifyDebts === false ? true : false })}
+            disabled={updatingGroup}
+            className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+              group.simplifyDebts !== false ? "bg-primary" : "bg-neutral-200 dark:bg-dark-bg-tertiary"
             }`}
           >
-            {myBalance < -0.01
-              ? `You owe ${formatCurrency(Math.abs(myBalance), group.currency)}`
-              : myBalance > 0.01
-              ? `You are owed ${formatCurrency(myBalance, group.currency)}`
-              : "You are settled up"}
-          </p>
-
-          <div className="relative mt-3 space-y-1">
-            {pairwiseLines.length > 0 ? (
-              pairwiseLines.slice(0, 4).map((line) => (
-                <p key={line} className="text-sm text-white/80">
-                  {line}
-                </p>
-              ))
-            ) : (
-              <p className="text-sm text-white/70">No individual balances pending right now.</p>
-            )}
-          </div>
+            <span
+              className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                group.simplifyDebts !== false ? "translate-x-5" : "translate-x-0"
+              }`}
+            />
+          </button>
         </div>
 
         <div className="mx-4 mt-3">
@@ -794,6 +973,115 @@ export default function GroupDetailPage() {
         <Plus className="h-5 w-5" />
         Add expense
       </Link>
+
+      {/* Members Modal */}
+      <Modal
+        isOpen={showMembersModal}
+        onClose={() => setShowMembersModal(false)}
+        title="Group Members"
+      >
+        <div className="space-y-3">
+          {(group?.members || []).map((member) => (
+            <div key={member._id} className="flex items-center justify-between p-2 rounded-xl hover:bg-neutral-50 dark:hover:bg-dark-bg-tertiary">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-full bg-primary/10 text-primary font-bold flex items-center justify-center">
+                  {(member.userId?.name || "U").charAt(0).toUpperCase()}
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-neutral-900 dark:text-dark-text">
+                    {member.userId?.name || "Unregistered Member"}
+                  </p>
+                  <p className="text-xs text-neutral-500 dark:text-dark-text-secondary">
+                    {member.userId?.email || "No email invite"}
+                  </p>
+                </div>
+              </div>
+              <span className="text-xs px-2 py-0.5 rounded bg-neutral-100 dark:bg-dark-bg-tertiary text-neutral-600 dark:text-dark-text-secondary font-medium">
+                {member.role}
+              </span>
+            </div>
+          ))}
+        </div>
+      </Modal>
+
+      {/* Date Picker Modal */}
+      <Modal
+        isOpen={showDatePickerModal}
+        onClose={() => setShowDatePickerModal(false)}
+        title="Settle Up Date"
+      >
+        <div className="space-y-4">
+          <p className="text-xs text-neutral-500 dark:text-dark-text-secondary">
+            Set a target date for the group to settle all pending dues.
+          </p>
+          <input
+            type="date"
+            value={settleDateText}
+            onChange={(e) => setSettleDateText(e.target.value)}
+            className="w-full px-3 py-2 rounded-lg border border-neutral-300 dark:border-dark-border bg-white dark:bg-dark-bg-secondary text-neutral-900 dark:text-dark-text focus:outline-none focus:border-primary"
+          />
+          <div className="flex justify-end gap-2 pt-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                setSettleDateText("");
+                void updateGroupSetting({ settleUpDate: null });
+                setShowDatePickerModal(false);
+              }}
+            >
+              Clear Target Date
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => {
+                void updateGroupSetting({ settleUpDate: settleDateText ? new Date(settleDateText).toISOString() : null });
+                setShowDatePickerModal(false);
+              }}
+            >
+              Save Date
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Notes Modal */}
+      <Modal
+        isOpen={showNotesModal}
+        onClose={() => setShowNotesModal(false)}
+        title="Group Notes"
+      >
+        <div className="space-y-4">
+          <p className="text-xs text-neutral-500 dark:text-dark-text-secondary">
+            Add shared group guidelines, details, or trip notes here.
+          </p>
+          <textarea
+            value={notesText}
+            onChange={(e) => setNotesText(e.target.value)}
+            className="w-full px-3 py-2 rounded-lg border border-neutral-300 dark:border-dark-border bg-white dark:bg-dark-bg-secondary text-neutral-900 dark:text-dark-text focus:outline-none focus:border-primary"
+            rows={4}
+            placeholder="e.g., Goa hotel booking info, vehicle number, etc."
+          />
+          <div className="flex justify-end gap-2 pt-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setShowNotesModal(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => {
+                void updateGroupSetting({ notes: notesText });
+                setShowNotesModal(false);
+              }}
+            >
+              Save Notes
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </AppShell>
   );
 }

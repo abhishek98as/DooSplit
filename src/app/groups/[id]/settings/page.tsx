@@ -51,6 +51,9 @@ interface Group {
   balances?: GroupBalance[];
   memberCount: number;
   userRole: string;
+  notes?: string;
+  settleUpDate?: string;
+  simplifyDebts?: boolean;
 }
 
 interface FriendOption {
@@ -93,6 +96,26 @@ function groupTypeColor(type: string): string {
   return "bg-neutral-200 dark:bg-dark-bg-tertiary";
 }
 
+function getAvatarColor(name: string): string {
+  const colors = [
+    "bg-red-100 text-red-700 dark:bg-red-950/30 dark:text-red-300",
+    "bg-orange-100 text-orange-700 dark:bg-orange-950/30 dark:text-orange-300",
+    "bg-amber-100 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300",
+    "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300",
+    "bg-teal-100 text-teal-700 dark:bg-teal-950/30 dark:text-teal-300",
+    "bg-blue-100 text-blue-700 dark:bg-blue-950/30 dark:text-blue-300",
+    "bg-indigo-100 text-indigo-700 dark:bg-indigo-950/30 dark:text-indigo-300",
+    "bg-violet-100 text-violet-700 dark:bg-violet-950/30 dark:text-violet-300",
+    "bg-fuchsia-100 text-fuchsia-700 dark:bg-fuchsia-950/30 dark:text-fuchsia-300",
+    "bg-pink-100 text-pink-700 dark:bg-pink-950/30 dark:text-pink-300",
+  ];
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return colors[Math.abs(hash) % colors.length];
+}
+
 function toNumber(value: unknown): number {
   if (typeof value === "number") {
     return Number.isFinite(value) ? value : 0;
@@ -126,6 +149,9 @@ export default function GroupSettingsPage() {
   const [editingName, setEditingName] = useState(false);
   const [draftName, setDraftName] = useState("");
   const [savingName, setSavingName] = useState(false);
+  const [editingType, setEditingType] = useState(false);
+  const [draftType, setDraftType] = useState("");
+  const [savingType, setSavingType] = useState(false);
 
   const [showAddMembersModal, setShowAddMembersModal] = useState(false);
   const [addingMemberId, setAddingMemberId] = useState<string | null>(null);
@@ -159,6 +185,7 @@ export default function GroupSettingsPage() {
     const nextGroup = data.group || null;
     setGroup(nextGroup);
     setDraftName(nextGroup?.name || "");
+    setDraftType(nextGroup?.type || "trip");
     return nextGroup;
   };
 
@@ -273,6 +300,35 @@ export default function GroupSettingsPage() {
     }
   };
 
+  const saveGroupType = async () => {
+    if (!group || draftType === group.type) {
+      setEditingType(false);
+      return;
+    }
+
+    setSavingType(true);
+    try {
+      const response = await fetch(`/api/groups/${groupId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: draftType }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to update group type");
+      }
+
+      const data = await response.json();
+      setGroup(data.group);
+      setEditingType(false);
+    } catch (error) {
+      console.error("Failed to save group type:", error);
+      alert("Unable to save group type.");
+    } finally {
+      setSavingType(false);
+    }
+  };
+
   const addMember = async (userId: string) => {
     if (!userId) {
       return;
@@ -337,9 +393,15 @@ export default function GroupSettingsPage() {
       setLoadingSimplifiedDebts(false);
     }
   };
-
   const leaveGroup = async () => {
     if (!session?.user?.id) {
+      return;
+    }
+
+    const myId = String(session.user.id);
+    const myBalance = memberBalances.get(myId) || 0;
+    if (Math.abs(myBalance) > 0.01) {
+      alert(`You cannot leave the group because you have a non-zero balance of ${formatCurrency(myBalance, group?.currency)}. Please settle your balances first.`);
       return;
     }
 
@@ -565,6 +627,47 @@ export default function GroupSettingsPage() {
                         {group.description}
                       </p>
                     )}
+                    {editingType ? (
+                      <div className="mt-2 flex items-center gap-2">
+                        <select
+                          value={draftType}
+                          onChange={(e) => setDraftType(e.target.value)}
+                          className="px-3 py-1.5 rounded-lg border border-neutral-300 dark:border-dark-border bg-white dark:bg-dark-bg-secondary text-neutral-900 dark:text-dark-text text-sm focus:outline-none"
+                        >
+                          <option value="trip">Trip ✈️</option>
+                          <option value="home">Home 🏠</option>
+                          <option value="couple">Couple 💑</option>
+                          <option value="other">Other 👥</option>
+                        </select>
+                        <Button
+                          size="sm"
+                          onClick={saveGroupType}
+                          disabled={savingType || draftType === group.type}
+                        >
+                          Save
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => {
+                            setDraftType(group.type);
+                            setEditingType(false);
+                          }}
+                          disabled={savingType}
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    ) : (
+                      isAdmin && (
+                        <button
+                          onClick={() => setEditingType(true)}
+                          className="mt-1 text-xs text-primary font-semibold hover:underline block"
+                        >
+                          Change Group Type
+                        </button>
+                      )
+                    )}
                   </>
                 )}
               </div>
@@ -602,16 +705,26 @@ export default function GroupSettingsPage() {
                   return (
                     <div key={member._id} className="flex items-center justify-between py-3">
                       <div className="flex items-center gap-3">
-                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/15 text-sm font-semibold text-primary">
+                        <div className={`flex h-10 w-10 items-center justify-center rounded-full text-sm font-semibold ${getAvatarColor(member.userId?.name || "Unregistered")}`}>
                           {initial}
                         </div>
                         <div>
-                          <p className="font-medium text-neutral-900 dark:text-dark-text">
-                            {member.userId?.name || "Unknown"}
-                            {isCurrentUser ? " (you)" : ""}
-                          </p>
+                          <div className="flex items-center gap-1.5">
+                            <p className="font-medium text-neutral-900 dark:text-dark-text">
+                              {member.userId?.name || "Invited Member"}
+                              {isCurrentUser ? " (you)" : ""}
+                            </p>
+                            {!member.userId && (
+                              <span
+                                title="Unregistered member (invited)"
+                                className="inline-flex items-center text-xs text-neutral-400 dark:text-dark-text-tertiary"
+                              >
+                                ✉️
+                              </span>
+                            )}
+                          </div>
                           <p className="text-sm text-neutral-500 dark:text-dark-text-secondary">
-                            {member.userId?.email || ""}
+                            {member.userId?.email || "Pending registration"}
                           </p>
                         </div>
                       </div>
@@ -681,14 +794,49 @@ export default function GroupSettingsPage() {
           <CardHeader>
             <CardTitle>Advanced Settings</CardTitle>
           </CardHeader>
-          <CardContent>
-            <p className="mb-3 text-sm text-neutral-500 dark:text-dark-text-secondary">
-              Review optimized payments to simplify who should pay whom.
-            </p>
-            <Button variant="secondary" onClick={openSimplifiedDebts}>
-              <Wand2 className="mr-2 h-4 w-4" />
-              Simplify group debts
-            </Button>
+          <CardContent className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-semibold text-neutral-900 dark:text-dark-text">Simplify group debts</p>
+                <p className="text-xs text-neutral-500 dark:text-dark-text-secondary mt-0.5">
+                  Minimizes total payment transactions between members.
+                </p>
+              </div>
+              <button
+                onClick={async () => {
+                  const newVal = group.simplifyDebts !== false ? false : true;
+                  try {
+                    const response = await fetch(`/api/groups/${groupId}`, {
+                      method: "PUT",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ simplifyDebts: newVal }),
+                    });
+                    if (response.ok) {
+                      const data = await response.json();
+                      setGroup(data.group);
+                    }
+                  } catch (err) {
+                    console.error("Failed to toggle simplify debts:", err);
+                  }
+                }}
+                className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                  group.simplifyDebts !== false ? "bg-primary" : "bg-neutral-200 dark:bg-dark-bg-tertiary"
+                }`}
+              >
+                <span
+                  className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                    group.simplifyDebts !== false ? "translate-x-5" : "translate-x-0"
+                  }`}
+                />
+              </button>
+            </div>
+            
+            <div className="border-t border-neutral-100 dark:border-dark-border/40 pt-3">
+              <Button variant="secondary" onClick={openSimplifiedDebts} className="w-full">
+                <Wand2 className="mr-2 h-4 w-4" />
+                Review debt details
+              </Button>
+            </div>
           </CardContent>
         </Card>
 

@@ -28,7 +28,7 @@ async function loadGroupMembers(groupId: string) {
     .collection("group_members")
     .where("group_id", "==", groupId)
     .get();
-  const members = membersSnap.docs.map((doc) => ({ id: doc.id, ...((doc.data() as any) || {}) }));
+  const members = membersSnap.docs.map((doc: any) => ({ id: doc.id, ...((doc.data() as any) || {}) }));
   const userIds = uniqueStrings((members || []).map((member: any) => String(member.user_id || "")));
   const usersMap = await fetchDocsByIds("users", userIds);
   return mapMembers(members || [], usersMap);
