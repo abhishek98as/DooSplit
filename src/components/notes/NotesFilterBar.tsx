@@ -1,25 +1,26 @@
 "use client";
 
 import React from "react";
-import { Search, Lightbulb, Bell, FolderArchive, Trash2 } from "lucide-react";
+import { Search, Lightbulb, Bell, FolderArchive, Trash2, FileText } from "lucide-react";
 import { COLOR_SCHEMES } from "./types";
 
 interface NotesFilterBarProps {
-  currentView: "all" | "reminders" | "archive" | "trash";
-  onViewChange: (view: "all" | "reminders" | "archive" | "trash") => void;
+  currentView: "all" | "reminders" | "archive" | "trash" | "drafts";
+  onViewChange: (view: "all" | "reminders" | "archive" | "trash" | "drafts") => void;
   currentLabel: string | null;
   onLabelChange: (label: string | null) => void;
   searchQuery: string;
   onSearchChange: (query: string) => void;
   sortBy: "updated" | "created" | "title";
   onSortChange: (sort: "updated" | "created" | "title") => void;
-  counts: { all: number; reminders: number; archive: number; trash: number };
+  counts: { all: number; reminders: number; archive: number; trash: number; drafts: number };
   onEmptyTrash: () => void;
 }
 
 const VIEWS = [
   { key: "all" as const, icon: Lightbulb, label: "All Notes", countKey: "all" as const },
   { key: "reminders" as const, icon: Bell, label: "Reminders", countKey: "reminders" as const },
+  { key: "drafts" as const, icon: FileText, label: "Drafts", countKey: "drafts" as const },
   { key: "archive" as const, icon: FolderArchive, label: "Archive", countKey: "archive" as const },
   { key: "trash" as const, icon: Trash2, label: "Trash", countKey: "trash" as const },
 ];

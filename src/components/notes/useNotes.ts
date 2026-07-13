@@ -10,8 +10,8 @@ interface UseNotesReturn {
   // State
   notes: NoteItem[];
   loading: boolean;
-  currentView: "all" | "reminders" | "archive" | "trash";
-  setCurrentView: (view: "all" | "reminders" | "archive" | "trash") => void;
+  currentView: "all" | "reminders" | "archive" | "trash" | "drafts";
+  setCurrentView: (view: "all" | "reminders" | "archive" | "trash" | "drafts") => void;
   currentLabel: string | null;
   setCurrentLabel: (label: string | null) => void;
   searchQuery: string;
@@ -33,8 +33,9 @@ interface UseNotesReturn {
   setToast: React.Dispatch<React.SetStateAction<{ message: string; type: "success" | "info" | "warn"; actionLabel?: string; actionFn?: () => void } | null>>;
 
   // Computed
-  counts: { all: number; reminders: number; archive: number; trash: number };
+  counts: { all: number; reminders: number; archive: number; trash: number; drafts: number };
   filteredNotes: NoteItem[];
+  draftNotes: NoteItem[];
 
   // Actions
   fetchNotes: () => Promise<void>;
@@ -60,13 +61,15 @@ export function useNotes(): UseNotesReturn {
   const router = useRouter();
 
   const [notes, setNotes] = React.useState<NoteItem[]>([]);
+  const [draftNotes, setDraftNotes] = React.useState<NoteItem[]>([]);
   const [loading, setLoading] = React.useState(true);
-  const [currentView, setCurrentView] = React.useState<"all" | "reminders" | "archive" | "trash">("all");
+  const [currentView, setCurrentView] = React.useState<"all" | "reminders" | "archive" | "trash" | "drafts">("all");
   const [currentLabel, setCurrentLabel] = React.useState<string | null>(null);
   const [searchQuery, setSearchQuery] = React.useState("");
   const [sortBy, setSortBy] = React.useState<"updated" | "created" | "title">("updated");
   const [modalOpen, setModalOpen] = React.useState(false);
   const [editingId, setEditingId] = React.useState<string | null>(null);
+  const initialDraftRef = React.useRef<string>("");
   const [draft, setDraft] = React.useState<NoteDraft>({
     title: "", text: "", type: "list", items: [], color: "", pinned: false, reminder: null,
   });
@@ -141,6 +144,48 @@ export function useNotes(): UseNotesReturn {
       return parsed.draft || null;
     } catch { return null; }
   };
+
+  const refreshDrafts = useCallback(() => {
+    if (typeof window === "undefined") return;
+    const list: NoteItem[] = [];
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith("doosplit:note_draft:")) {
+          const idPart = key.replace("doosplit:note_draft:", "");
+          const raw = localStorage.getItem(key);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (parsed && parsed.draft) {
+              const d = parsed.draft;
+              list.push({
+                id: idPart,
+                title: d.title || "",
+                text: d.text || "",
+                type: d.type || "text",
+                items: d.items || [],
+                color: d.color || "",
+                pinned: d.pinned || false,
+                archived: false,
+                trashed: false,
+                reminder: d.reminder || null,
+                createdAt: parsed.savedAt ? new Date(parsed.savedAt).toISOString() : new Date().toISOString(),
+                updatedAt: parsed.savedAt ? new Date(parsed.savedAt).toISOString() : new Date().toISOString(),
+                isDraft: true,
+              } as any);
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.error("Failed to load drafts:", e);
+    }
+    setDraftNotes(list);
+  }, []);
+
+  useEffect(() => {
+    refreshDrafts();
+  }, [refreshDrafts]);
 
   // Auto-save draft to localStorage (debounced 600ms) when the editor is open
   useEffect(() => {
@@ -233,11 +278,12 @@ export function useNotes(): UseNotesReturn {
 
   // Editor
   const openEditor = (note?: NoteItem) => {
+    let baseDraft;
     if (note) {
       setEditingId(note.id);
       // Silently restore any saved draft for this note; fall back to the saved note data
       const saved = loadDraft(note.id);
-      setDraft(saved ?? {
+      baseDraft = saved ?? {
         title: note.title || "",
         text: note.text || "",
         type: note.type,
@@ -245,28 +291,43 @@ export function useNotes(): UseNotesReturn {
         color: note.color || "",
         pinned: note.pinned,
         reminder: note.reminder,
-      });
+      };
     } else {
-      setEditingId(null);
+      const tempId = "draft_" + Date.now();
+      setEditingId(tempId);
       const now = new Date().toISOString();
       // Silently restore any in-progress new-note draft
-      const saved = loadDraft(null);
-      setDraft(saved ?? {
+      const saved = loadDraft(tempId) || loadDraft(null);
+      baseDraft = saved ?? {
         title: "", text: "", type: "list",
         items: [{ id: "i" + Date.now(), text: "", done: false, createdAt: now, updatedAt: now }],
         color: "", pinned: false, reminder: null,
-      });
+      };
     }
+    setDraft(baseDraft as NoteDraft);
+    initialDraftRef.current = JSON.stringify(baseDraft);
     setShowColorPicker(false);
     setShowReminderPicker(false);
     setModalOpen(true);
   };
 
   const closeEditor = () => {
-    // Clear the draft — user explicitly dismissed, don't restore next time
-    clearDraft(editingId);
+    const currentDraftStr = JSON.stringify(draft);
+    const hasChanged = currentDraftStr !== initialDraftRef.current;
+
+    const hasTitle = draft.title.trim();
+    const hasText = draft.type === "text" && draft.text.trim();
+    const hasItems = draft.type === "list" && draft.items.some(i => i.text.trim());
+    const isEmpty = !hasTitle && !hasText && !hasItems;
+
+    if (isEmpty || !hasChanged) {
+      clearDraft(editingId);
+    } else {
+      persistDraft(editingId, draft);
+    }
     setModalOpen(false);
     setEditingId(null);
+    refreshDrafts();
   };
 
   const saveNote = async () => {
@@ -297,7 +358,7 @@ export function useNotes(): UseNotesReturn {
     };
 
     try {
-      if (editingId) {
+      if (editingId && !editingId.startsWith("draft_")) {
         const res = await fetch(`/api/notes/${editingId}`, {
           method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
         });
@@ -327,9 +388,10 @@ export function useNotes(): UseNotesReturn {
         }
       }
       setModalOpen(false);
-      setEditingId(null);
       // ✅ Clear the persisted draft now that it's safely saved to the server
       clearDraft(editingId);
+      setEditingId(null);
+      refreshDrafts();
     } catch (err) {
       console.error(err);
       setToast({ message: "Failed to save note", type: "warn" });
@@ -373,6 +435,12 @@ export function useNotes(): UseNotesReturn {
 
   const deleteNote = async (e: React.MouseEvent, note: NoteItem) => {
     e.stopPropagation();
+    if (note.id.startsWith("draft_") || (note as any).isDraft) {
+      clearDraft(note.id);
+      setToast({ message: "Draft discarded", type: "success" });
+      refreshDrafts();
+      return;
+    }
     try {
       if (note.trashed) {
         const res = await fetch(`/api/notes/${note.id}`, { method: "DELETE" });
@@ -383,6 +451,7 @@ export function useNotes(): UseNotesReturn {
       } else {
         const res = await fetch(`/api/notes/${note.id}`, {
           method: "PUT", headers: { "Content-Type": "application/json" },
+
           body: JSON.stringify({ trashed: true }),
         });
         if (res.ok) {
@@ -536,9 +605,24 @@ export function useNotes(): UseNotesReturn {
     reminders: notes.filter(n => n.reminder && !n.trashed && !n.archived).length,
     archive: notes.filter(n => n.archived && !n.trashed).length,
     trash: notes.filter(n => n.trashed).length,
-  }), [notes]);
+    drafts: draftNotes.length,
+  }), [notes, draftNotes]);
 
   const filteredNotes = React.useMemo(() => {
+    if (currentView === "drafts") {
+      let result = [...draftNotes];
+      if (currentLabel) result = result.filter(n => n.color === currentLabel);
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        result = result.filter(n => {
+          return (n.title || "").toLowerCase().includes(q) ||
+            (n.text || "").toLowerCase().includes(q) ||
+            (n.items || []).some(item => (item.text || "").toLowerCase().includes(q));
+        });
+      }
+      return result;
+    }
+
     let result = [...notes];
 
     if (currentView === "archive") result = result.filter(n => n.archived && !n.trashed);
@@ -563,7 +647,7 @@ export function useNotes(): UseNotesReturn {
 
     result.sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
     return result;
-  }, [notes, currentView, currentLabel, searchQuery, sortBy]);
+  }, [notes, draftNotes, currentView, currentLabel, searchQuery, sortBy]);
 
   return {
     notes, loading,
@@ -576,10 +660,11 @@ export function useNotes(): UseNotesReturn {
     showColorPicker, setShowColorPicker,
     showReminderPicker, setShowReminderPicker,
     toast, setToast,
-    counts, filteredNotes,
+    counts, filteredNotes, draftNotes,
     fetchNotes, openEditor, closeEditor, saveNote,
     togglePin, toggleArchive, deleteNote, toggleCardItemDone,
     emptyTrash, exportNotes,
     addChecklistItem, updateDraftItem, toggleDraftItem, removeDraftItem,
   };
 }
+
