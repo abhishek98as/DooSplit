@@ -579,7 +579,7 @@ export default function GroupsPage() {
             </Card>
           ) : (
             <>
-              {activeAndSettled.active.map((group, index) => {
+              {filteredAndSortedGroups.map((group, index) => {
                 const balance = groupBalances[group._id] ?? 0;
                 const simplified = groupSimplifiedDebts[group._id] || [];
                 const myUserId = String(session?.user?.id || "");
@@ -609,20 +609,25 @@ export default function GroupsPage() {
                               {group.name}
                             </p>
                             {group.type === "trip" && (
-                              <Link
-                                href={`/trip/${group._id}`}
-                                className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-primary/20 text-primary hover:bg-primary/30 transition-colors"
-                                onClick={(e) => e.stopPropagation()}
+                              <span
+                                role="button"
+                                tabIndex={0}
+                                className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-primary/20 text-primary hover:bg-primary/30 transition-colors cursor-pointer"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  router.push(`/trip/${group._id}`);
+                                }}
                               >
                                 Trip View ✈️
-                              </Link>
+                              </span>
                             )}
                           </div>
                           <p
                             className={`text-sm font-semibold ${
-                              balance < 0
+                              balance < -0.01
                                 ? "text-coral"
-                                : balance > 0
+                                : balance > 0.01
                                 ? "text-primary"
                                 : "text-neutral-500 dark:text-dark-text-secondary"
                             }`}
@@ -672,61 +677,6 @@ export default function GroupsPage() {
                   Start a new group
                 </Button>
               </div>
-
-              {activeAndSettled.settled.length > 0 && (
-                <div className="pt-1">
-                  <button
-                    onClick={() => setShowSettledGroups((prev) => !prev)}
-                    className="text-sm font-medium text-neutral-600 underline-offset-4 hover:underline dark:text-dark-text-secondary"
-                  >
-                    {showSettledGroups
-                      ? `Hide ${activeAndSettled.settled.length} settled group${
-                          activeAndSettled.settled.length === 1 ? "" : "s"
-                        }`
-                      : `Show ${activeAndSettled.settled.length} settled group${
-                          activeAndSettled.settled.length === 1 ? "" : "s"
-                        }`}
-                  </button>
-                </div>
-              )}
-
-              {showSettledGroups &&
-                activeAndSettled.settled.map((group) => {
-                  const balance = groupBalances[group._id] ?? 0;
-                  return (
-                    <Link key={`settled-${group._id}`} href={`/groups/${group._id}`}>
-                      <div className="flex items-center gap-4 rounded-2xl border border-neutral-200 bg-white/75 p-4 transition-all duration-300 hover:shadow-md hover:-translate-y-0.5 dark:border-dark-border dark:bg-dark-bg-secondary/80">
-                        <div
-                          className={`h-14 w-14 shrink-0 rounded-xl text-2xl flex items-center justify-center ${groupTypeColor(
-                            group.type
-                          )}`}
-                        >
-                          {groupTypeEmoji(group.type)}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <p className="truncate font-semibold text-neutral-900 dark:text-dark-text">
-                              {group.name}
-                            </p>
-                            {group.type === "trip" && (
-                              <Link
-                                href={`/trip/${group._id}`}
-                                className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-primary/20 text-primary hover:bg-primary/30 transition-colors"
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                Trip View ✈️
-                              </Link>
-                            )}
-                          </div>
-                          <p className="text-sm font-medium text-neutral-500 dark:text-dark-text-secondary">
-                            you are settled
-                          </p>
-                        </div>
-                        <ChevronRight className="h-4 w-4 shrink-0 text-neutral-400" />
-                      </div>
-                    </Link>
-                  );
-                })}
             </>
           )}
         </div>
