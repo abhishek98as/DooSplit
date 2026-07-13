@@ -113,7 +113,7 @@ export default function RecurringExpensesPage() {
     <AppShell>
       <div className="p-4 md:p-8 max-w-5xl mx-auto space-y-6">
         <div className="flex items-center justify-between gap-4">
-          <div>
+          <div className="md:hidden">
             <h1 className="text-h1 font-bold text-neutral-900 dark:text-dark-text">
               Recurring Expenses
             </h1>

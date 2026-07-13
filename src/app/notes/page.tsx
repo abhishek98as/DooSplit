@@ -29,7 +29,7 @@ export default function NotesPage() {
       <div className="min-h-[calc(100vh-140px)] w-full relative px-4 py-4 flex flex-col gap-4">
         {/* ── Header Row ──────────────────────────── */}
         <div className="flex items-center justify-between gap-3">
-          <p className="text-xs text-neutral-500 dark:text-dark-text-tertiary">
+          <p className="text-xs text-neutral-500 dark:text-dark-text-tertiary md:hidden">
             {notes.filteredNotes.length} {notes.filteredNotes.length === 1 ? "note" : "notes"} · Keep track of lists, reminders & quick thoughts
           </p>
 

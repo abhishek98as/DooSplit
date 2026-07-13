@@ -360,7 +360,7 @@ export default function GroupsPage() {
     <AppShell>
       <div className="p-4 md:p-8 space-y-6">
         <div className="flex items-center justify-between">
-          <div>
+          <div className="md:hidden">
             <h1 className="text-h1 font-bold text-neutral-900 dark:text-dark-text">
               Groups
             </h1>

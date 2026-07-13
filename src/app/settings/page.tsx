@@ -368,7 +368,7 @@ export default function SettingsPage() {
   return (
     <AppShell>
       <div className="p-4 md:p-8 space-y-6 max-w-2xl mx-auto">
-        <div>
+        <div className="md:hidden">
           <h1 className="text-h1 font-bold text-neutral-900 dark:text-dark-text">
             Settings
           </h1>

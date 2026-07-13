@@ -436,7 +436,7 @@ export default function ActivityPage() {
   return (
     <AppShell>
       <div className="p-4 md:p-8 space-y-6">
-        <div>
+        <div className="md:hidden">
           <h1 className="text-h1 font-bold text-neutral-900 dark:text-dark-text">
             Activity
           </h1>

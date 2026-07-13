@@ -686,7 +686,7 @@ export default function FriendsPage() {
         }`}
       >
         <div className="flex items-center justify-between gap-2">
-          <div>
+          <div className="md:hidden">
             <h1 className="text-h1 font-display font-bold text-neutral-900 dark:text-dark-text">
               Friends
             </h1>
