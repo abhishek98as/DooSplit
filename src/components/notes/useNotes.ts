@@ -114,6 +114,64 @@ export function useNotes(): UseNotesReturn {
     }
   }, [status, fetchNotes]);
 
+  // ── Draft Persistence (localStorage auto-save) ─────────────────────────
+  const draftKey = (id: string | null) =>
+    `doosplit:note_draft:${id ?? "new"}`;
+
+  const persistDraft = (id: string | null, d: typeof draft) => {
+    try {
+      localStorage.setItem(draftKey(id), JSON.stringify({ draft: d, savedAt: Date.now() }));
+    } catch { /* localStorage full or unavailable */ }
+  };
+
+  const clearDraft = (id: string | null) => {
+    try { localStorage.removeItem(draftKey(id)); } catch { }
+  };
+
+  const loadDraft = (id: string | null): typeof draft | null => {
+    try {
+      const raw = localStorage.getItem(draftKey(id));
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      // Discard drafts older than 7 days
+      if (Date.now() - (parsed.savedAt || 0) > 7 * 24 * 60 * 60 * 1000) {
+        clearDraft(id);
+        return null;
+      }
+      return parsed.draft || null;
+    } catch { return null; }
+  };
+
+  // Auto-save draft to localStorage (debounced 600ms) when the editor is open
+  useEffect(() => {
+    if (!modalOpen) return;
+    const timer = setTimeout(() => persistDraft(editingId, draft), 600);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft, modalOpen, editingId]);
+
+  // Immediate flush when the page is hidden (tab switch, app background, browser close)
+  // This catches the gap that the 600ms debounce would miss on abrupt navigation.
+  useEffect(() => {
+    if (!modalOpen) return;
+
+    const flush = () => {
+      if (document.visibilityState === "hidden") {
+        persistDraft(editingId, draft);
+      }
+    };
+    const handleBeforeUnload = () => persistDraft(editingId, draft);
+
+    document.addEventListener("visibilitychange", flush);
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => {
+      document.removeEventListener("visibilitychange", flush);
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modalOpen, editingId, draft]);
+
+
   // Reminder alert checking
   useEffect(() => {
     const interval = setInterval(() => {
@@ -177,7 +235,9 @@ export function useNotes(): UseNotesReturn {
   const openEditor = (note?: NoteItem) => {
     if (note) {
       setEditingId(note.id);
-      setDraft({
+      // Silently restore any saved draft for this note; fall back to the saved note data
+      const saved = loadDraft(note.id);
+      setDraft(saved ?? {
         title: note.title || "",
         text: note.text || "",
         type: note.type,
@@ -189,7 +249,9 @@ export function useNotes(): UseNotesReturn {
     } else {
       setEditingId(null);
       const now = new Date().toISOString();
-      setDraft({
+      // Silently restore any in-progress new-note draft
+      const saved = loadDraft(null);
+      setDraft(saved ?? {
         title: "", text: "", type: "list",
         items: [{ id: "i" + Date.now(), text: "", done: false, createdAt: now, updatedAt: now }],
         color: "", pinned: false, reminder: null,
@@ -201,6 +263,8 @@ export function useNotes(): UseNotesReturn {
   };
 
   const closeEditor = () => {
+    // Clear the draft — user explicitly dismissed, don't restore next time
+    clearDraft(editingId);
     setModalOpen(false);
     setEditingId(null);
   };
@@ -264,6 +328,8 @@ export function useNotes(): UseNotesReturn {
       }
       setModalOpen(false);
       setEditingId(null);
+      // ✅ Clear the persisted draft now that it's safely saved to the server
+      clearDraft(editingId);
     } catch (err) {
       console.error(err);
       setToast({ message: "Failed to save note", type: "warn" });
