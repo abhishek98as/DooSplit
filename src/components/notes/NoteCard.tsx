@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { Pin, Bell, Check, Trash2, FolderArchive } from "lucide-react";
+import { Pin, Bell, Check, Trash2, FolderArchive, Pencil } from "lucide-react";
 import type { NoteItem } from "./types";
 import { COLOR_SCHEMES, formatTime, formatReminder } from "./types";
 
@@ -30,87 +30,108 @@ export default function NoteCard({
 
   return (
     <div
-      onClick={() => onClick(note)}
-      className={`break-inside-avoid w-full p-4 rounded-2xl border ${scheme.bg} ${scheme.border} relative shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 cursor-pointer overflow-hidden group`}
+      className={`break-inside-avoid w-full rounded-2xl border ${scheme.bg} ${scheme.border} relative shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 overflow-hidden group`}
     >
       {/* Left edge accent line */}
       <div className="absolute left-0 top-0 bottom-0 w-1.5 rounded-l-2xl" style={{ backgroundColor: scheme.accent }} />
 
-      {/* Pin button */}
-      <button
-        onClick={e => onTogglePin(e, note)}
-        className={`absolute top-3 right-3 p-1.5 rounded-lg text-neutral-400 hover:text-primary transition-colors ${
-          note.pinned ? "text-primary opacity-100 rotate-45" : "opacity-0 group-hover:opacity-100"
-        }`}
+      {/* ── Clickable main body (opens editor) ────────────────────── */}
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => onClick(note)}
+        onKeyDown={e => { if (e.key === "Enter" || e.key === " ") onClick(note); }}
+        className="cursor-pointer p-4 pb-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 rounded-t-2xl"
+        aria-label={`Open note: ${note.title || "Untitled"}`}
       >
-        <Pin className="h-4 w-4 fill-current" />
-      </button>
+        {/* Pin button */}
+        <button
+          onClick={e => { e.stopPropagation(); onTogglePin(e, note); }}
+          className={`absolute top-3 right-3 p-1.5 rounded-lg text-neutral-400 hover:text-primary transition-colors ${
+            note.pinned ? "text-primary opacity-100 rotate-45" : "opacity-0 group-hover:opacity-100"
+          }`}
+        >
+          <Pin className="h-4 w-4 fill-current" />
+        </button>
 
-      {/* Title */}
-      {note.title && (
-        <h3 className="font-bold text-base leading-tight text-neutral-900 dark:text-dark-text mb-2 pr-6">
-          {note.title}
-        </h3>
-      )}
+        {/* Title */}
+        {note.title && (
+          <h3 className="font-bold text-base leading-tight text-neutral-900 dark:text-dark-text mb-2 pr-6">
+            {note.title}
+          </h3>
+        )}
 
-      {/* Content */}
-      {note.type === "list" ? (
-        <ul className="space-y-1 mb-3">
-          {note.items.slice(0, 6).map(item => (
-            <li
-              key={item.id}
-              onClick={e => { e.stopPropagation(); onToggleItemDone(note.id, item.id); }}
-              className={`flex items-start gap-2 text-sm py-0.5 leading-snug cursor-pointer ${
-                item.done ? "text-neutral-400 dark:text-dark-text-tertiary line-through" : "text-neutral-700 dark:text-dark-text-secondary"
-              }`}
-            >
-              <span
-                className={`h-4 w-4 shrink-0 rounded-md border flex items-center justify-center transition-all ${
-                  item.done
-                    ? "bg-primary border-primary text-white"
-                    : "border-neutral-300 dark:border-neutral-700"
+        {/* Content */}
+        {note.type === "list" ? (
+          <ul className="space-y-1 mb-2">
+            {note.items.slice(0, 6).map(item => (
+              <li
+                key={item.id}
+                className={`flex items-start gap-2 text-sm py-0.5 leading-snug ${
+                  item.done ? "text-neutral-400 dark:text-dark-text-tertiary line-through" : "text-neutral-700 dark:text-dark-text-secondary"
                 }`}
               >
-                {item.done && <Check className="h-3 w-3" />}
-              </span>
-              <div className="flex flex-col min-w-0">
-                <span className="truncate">{item.text}</span>
-                <span className="text-[8px] text-neutral-400/80 leading-none mt-0.5 flex items-center gap-1.5">
-                  <span>Created {formatTime(item.createdAt)}</span>
-                  {item.updatedAt && item.updatedAt !== item.createdAt && (
-                    <span>· Edited {formatTime(item.updatedAt)}</span>
-                  )}
-                </span>
-              </div>
-            </li>
-          ))}
-          {note.items.length > 6 && (
-            <li className="text-[10px] font-semibold text-neutral-400 pl-6 pt-1">
-              + {note.items.length - 6} more items
-            </li>
-          )}
-        </ul>
-      ) : (
-        <p className="text-sm text-neutral-600 dark:text-dark-text-secondary leading-relaxed mb-3 whitespace-pre-wrap truncate max-h-36">
-          {note.text}
-        </p>
-      )}
+                {/* Checkbox — stops propagation so it only toggles item, does NOT open editor */}
+                <button
+                  type="button"
+                  onClick={e => { e.stopPropagation(); onToggleItemDone(note.id, item.id); }}
+                  className={`h-4 w-4 shrink-0 rounded-md border flex items-center justify-center transition-all mt-0.5 ${
+                    item.done
+                      ? "bg-primary border-primary text-white"
+                      : "border-neutral-300 dark:border-neutral-700"
+                  }`}
+                  aria-label={item.done ? "Mark undone" : "Mark done"}
+                >
+                  {item.done && <Check className="h-3 w-3" />}
+                </button>
+                {/* Item text — clicking propagates up and opens the editor */}
+                <div className="flex flex-col min-w-0">
+                  <span className="truncate">{item.text}</span>
+                  <span className="text-[8px] text-neutral-400/80 leading-none mt-0.5 flex items-center gap-1.5">
+                    <span>Created {formatTime(item.createdAt)}</span>
+                    {item.updatedAt && item.updatedAt !== item.createdAt && (
+                      <span>· Edited {formatTime(item.updatedAt)}</span>
+                    )}
+                  </span>
+                </div>
+              </li>
+            ))}
+            {note.items.length > 6 && (
+              <li className="text-[10px] font-semibold text-neutral-400 pl-6 pt-1">
+                + {note.items.length - 6} more items
+              </li>
+            )}
+          </ul>
+        ) : (
+          <p className="text-sm text-neutral-600 dark:text-dark-text-secondary leading-relaxed mb-2 whitespace-pre-wrap truncate max-h-36">
+            {note.text}
+          </p>
+        )}
 
-      {/* Reminder Chip */}
-      {note.reminder && (
-        <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-primary/10 text-primary font-bold rounded-full text-[9px] mb-3">
-          <Bell className="h-3 w-3" />
-          <span>{formatReminder(note.reminder)}</span>
-        </div>
-      )}
+        {/* Reminder Chip */}
+        {note.reminder && (
+          <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-primary/10 text-primary font-bold rounded-full text-[9px] mb-2">
+            <Bell className="h-3 w-3" />
+            <span>{formatReminder(note.reminder)}</span>
+          </div>
+        )}
+      </div>
 
-      {/* Card Footer */}
-      <div className="flex items-center justify-between pt-2 border-t border-dashed border-neutral-200 dark:border-dark-border text-[9px] text-neutral-400 mt-2">
+      {/* ── Card Footer (timestamps + action buttons) ────────────────────── */}
+      <div className="px-4 pb-3 flex items-center justify-between border-t border-dashed border-neutral-200 dark:border-dark-border text-[9px] text-neutral-400 pt-2">
         <div className="flex flex-col">
           <span>Updated {formatTime(note.updatedAt)}</span>
         </div>
 
         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          {/* Edit shortcut in footer — always visible on hover */}
+          <button
+            onClick={() => onClick(note)}
+            title="Edit note"
+            className="p-1 text-neutral-400 hover:text-primary rounded-md"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+          </button>
           <button
             onClick={e => onToggleArchive(e, note)}
             title="Archive"

@@ -39,6 +39,7 @@ interface UseNotesReturn {
   // Actions
   fetchNotes: () => Promise<void>;
   openEditor: (note?: NoteItem) => void;
+  closeEditor: () => void;
   saveNote: () => Promise<void>;
   togglePin: (e: React.MouseEvent, note: NoteItem) => void;
   toggleArchive: (e: React.MouseEvent | null, note: NoteItem) => void;
@@ -199,6 +200,11 @@ export function useNotes(): UseNotesReturn {
     setModalOpen(true);
   };
 
+  const closeEditor = () => {
+    setModalOpen(false);
+    setEditingId(null);
+  };
+
   const saveNote = async () => {
     const hasTitle = draft.title.trim();
     const hasText = draft.type === "text" && draft.text.trim();
@@ -233,7 +239,12 @@ export function useNotes(): UseNotesReturn {
         });
         if (res.ok) {
           const data = await res.json();
-          setNotes(prev => prev.map(n => n.id === editingId ? data.note : n));
+          const normalized = {
+            ...data.note,
+            createdAt: data.note.createdAt || data.note.created_at,
+            updatedAt: data.note.updatedAt || data.note.updated_at,
+          };
+          setNotes(prev => prev.map(n => n.id === editingId ? normalized : n));
           setToast({ message: "Note updated", type: "success" });
         }
       } else {
@@ -242,7 +253,12 @@ export function useNotes(): UseNotesReturn {
         });
         if (res.ok) {
           const data = await res.json();
-          setNotes(prev => [data.note, ...prev]);
+          const normalized = {
+            ...data.note,
+            createdAt: data.note.createdAt || data.note.created_at,
+            updatedAt: data.note.updatedAt || data.note.updated_at,
+          };
+          setNotes(prev => [normalized, ...prev]);
           setToast({ message: "Note created", type: "success" });
         }
       }
@@ -495,7 +511,7 @@ export function useNotes(): UseNotesReturn {
     showReminderPicker, setShowReminderPicker,
     toast, setToast,
     counts, filteredNotes,
-    fetchNotes, openEditor, saveNote,
+    fetchNotes, openEditor, closeEditor, saveNote,
     togglePin, toggleArchive, deleteNote, toggleCardItemDone,
     emptyTrash, exportNotes,
     addChecklistItem, updateDraftItem, toggleDraftItem, removeDraftItem,

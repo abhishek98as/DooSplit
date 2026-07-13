@@ -105,7 +105,7 @@ export default function NotesPage() {
         editingId={notes.editingId}
         draft={notes.draft}
         onDraftChange={notes.setDraft}
-        onClose={() => { notes.setModalOpen(false); }}
+        onClose={notes.closeEditor}
         onSave={notes.saveNote}
         showColorPicker={notes.showColorPicker}
         onToggleColorPicker={() => { notes.setShowColorPicker(!notes.showColorPicker); notes.setShowReminderPicker(false); }}
