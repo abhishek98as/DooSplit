@@ -456,6 +456,7 @@ export default function AddExpensePage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submitting) return;
 
     // For itemized splits, validate items and auto-fill amount
     if (splitMethod === "itemized") {

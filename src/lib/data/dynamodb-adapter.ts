@@ -282,10 +282,11 @@ async function getGroups(input: GroupsReadInput): Promise<GroupsPayload> {
       const row = groupsById.get(gid);
       if (!row || row.is_active === false) return null;
 
-      // Apply search filter
+      // Apply search filter (extract 'search' param from URL query string)
       if (input.requestSearch) {
-        const q = input.requestSearch.toLowerCase();
-        if (!row.name.toLowerCase().includes(q)) return null;
+        const searchParams = new URLSearchParams(input.requestSearch);
+        const searchTerm = searchParams.get("search") || "";
+        if (searchTerm && !row.name.toLowerCase().includes(searchTerm.toLowerCase())) return null;
       }
 
       const members = membersByGroupId.get(gid) || [];

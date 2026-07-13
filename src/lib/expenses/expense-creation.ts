@@ -279,8 +279,8 @@ export async function createExpenseFromPayload({
 
   let groupName: string | undefined;
   if (payload.groupId) {
-    const { Group } = await import("@/lib/mongodb/models");
-    const groupDoc = await Group.findById(String(payload.groupId)).lean();
+    const { getGroupById } = await import("@/lib/dynamodb/entities/groups");
+    const groupDoc = await getGroupById(String(payload.groupId));
     groupName = groupDoc
       ? String(groupDoc.name || "").trim() || undefined
       : undefined;
