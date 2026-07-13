@@ -849,9 +849,44 @@ export default function GroupDetailPage() {
           </button>
         </div>
 
-        <div className="mx-4 mt-3">
-          <Link href={`/settlements?groupId=${groupId}`}>
-            <Button className="w-full">Settle Up</Button>
+        <div className="mx-4 mt-4 flex gap-2.5 overflow-x-auto pb-1 scrollbar-none">
+          <Link href={`/settlements?groupId=${groupId}`} className="shrink-0">
+            <button className="flex items-center gap-1.5 px-4 py-2 text-sm font-semibold rounded-xl bg-coral text-white shadow-sm hover:bg-coral/95 transition-all">
+              💸 Settle up
+            </button>
+          </Link>
+
+          <button
+            onClick={() => alert("Charts feature is locked for PRO users.")}
+            className="flex items-center gap-1.5 shrink-0 px-4 py-2 text-sm font-medium rounded-xl border border-neutral-200 bg-white dark:border-dark-border dark:bg-dark-bg-secondary text-neutral-800 dark:text-dark-text hover:bg-neutral-50 dark:hover:bg-dark-bg-tertiary transition-all"
+          >
+            📊 Charts 🔒
+          </button>
+
+          <button
+            onClick={() => setIsBalancesExpanded((prev) => !prev)}
+            className="flex items-center gap-1.5 shrink-0 px-4 py-2 text-sm font-medium rounded-xl border border-neutral-200 bg-white dark:border-dark-border dark:bg-dark-bg-secondary text-neutral-800 dark:text-dark-text hover:bg-neutral-50 dark:hover:bg-dark-bg-tertiary transition-all"
+          >
+            ⚖️ Balances
+          </button>
+
+          <button
+            onClick={() => {
+              const totalExpenses = monthGroups.reduce(
+                (sum, month) => sum + month[1].reduce((s: number, e: any) => s + toNumber(e.amount), 0),
+                0
+              );
+              alert(`Total group expenses: ${formatCurrency(totalExpenses, group.currency)}`);
+            }}
+            className="flex items-center gap-1.5 shrink-0 px-4 py-2 text-sm font-medium rounded-xl border border-neutral-200 bg-white dark:border-dark-border dark:bg-dark-bg-secondary text-neutral-800 dark:text-dark-text hover:bg-neutral-50 dark:hover:bg-dark-bg-tertiary transition-all"
+          >
+            📈 Totals
+          </button>
+
+          <Link href={`/groups/${groupId}/settings`} className="shrink-0">
+            <button className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-xl border border-neutral-200 bg-white dark:border-dark-border dark:bg-dark-bg-secondary text-neutral-800 dark:text-dark-text hover:bg-neutral-50 dark:hover:bg-dark-bg-tertiary transition-all">
+              📤 Export
+            </button>
           </Link>
         </div>
 

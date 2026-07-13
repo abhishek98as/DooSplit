@@ -275,9 +275,12 @@ export default function GroupsPage() {
             computed[group._id] = totalForGroup;
             computedMemberBalances[group._id] = Object.entries(memberBalancesMap).map(([userId, balance]) => {
               const m = group.members?.find((member) => extractUserId(member.userId) === userId);
+              const nameFallback = userId === String(session?.user?.id)
+                ? (session?.user?.name || "You")
+                : (friends.find((f) => f._id === userId)?.name || "Unknown");
               return {
                 userId,
-                userName: m?.userId?.name || "Unknown",
+                userName: (m?.userId && typeof m.userId === "object" ? (m.userId as any).name : null) || nameFallback,
                 balance,
               };
             });
@@ -340,37 +343,32 @@ export default function GroupsPage() {
 
     setSubmitting(true);
     try {
-      const res = await fetch("/api/groups", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(formData),
-      });
+      const offlineStore = getOfflineStore();
+      const newGroup = await offlineStore.createGroup(formData);
 
-      if (res.ok) {
-        const data = await res.json();
-        if (data?.group?._id) {
-          setGroups((prev) => {
-            const next = prev.filter((item) => item._id !== data.group._id);
-            return [data.group, ...next];
-          });
-        }
-        trackEvent(AnalyticsEvents.GROUP_CREATED, {
-          member_count: formData.memberIds.length,
-          group_type: formData.type,
-          currency: formData.currency
+      if (newGroup?._id) {
+        setGroups((prev) => {
+          const next = prev.filter((item) => item._id !== newGroup._id);
+          return [newGroup as unknown as Group, ...next];
         });
-        setShowCreateModal(false);
-        setFormData({
-          name: "",
-          description: "",
-          type: "trip",
-          currency: "INR",
-          memberIds: [],
-        });
-        fetchGroups(true);
       }
+      trackEvent(AnalyticsEvents.GROUP_CREATED, {
+        member_count: formData.memberIds.length,
+        group_type: formData.type,
+        currency: formData.currency
+      });
+      setShowCreateModal(false);
+      setFormData({
+        name: "",
+        description: "",
+        type: "trip",
+        currency: "INR",
+        memberIds: [],
+      });
+      fetchGroups(true);
     } catch (error) {
       console.error("Failed to create group:", error);
+      alert(error instanceof Error ? error.message : "Failed to create group");
     } finally {
       setSubmitting(false);
     }

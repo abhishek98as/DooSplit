@@ -13,6 +13,7 @@ import getIndexedDB, {
   SyncQueueItem
 } from './indexeddb';
 import { firebaseAuthFetch as authFetch, getFirebaseIdToken, getClientSessionInfo } from "@/lib/auth/client-session";
+import { auth } from "@/lib/firebase";
 
 // Types for API responses
 export interface ExpenseApiResponse {
@@ -705,6 +706,102 @@ class OfflineStore {
     }
   }
 
+  async createGroup(groupData: any): Promise<GroupRecord> {
+    const tempId = `temp_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const session = await getClientSessionInfo();
+    const now = new Date().toISOString();
+
+    let resolvedFriends: any[] = [];
+    try {
+      resolvedFriends = await this.indexedDB.getFriends();
+    } catch {
+      // ignore
+    }
+
+    const myUser = {
+      _id: session.userId || 'me',
+      name: auth.currentUser?.displayName || session.email?.split('@')[0] || 'You',
+      email: session.email || '',
+    };
+
+    const mappedMembers = [
+      { userId: myUser, role: 'admin', joinedAt: now },
+      ...(groupData.memberIds || []).map((id: string) => {
+        const friend = resolvedFriends.find(f => f.friendId === id || f.id === id || f._id === id);
+        return {
+          userId: {
+            _id: id,
+            name: friend?.name || 'Unknown Friend',
+            email: friend?.email || '',
+          },
+          role: 'member',
+          joinedAt: now
+        };
+      })
+    ];
+
+    const group: GroupRecord = {
+      _id: tempId,
+      name: groupData.name || '',
+      description: groupData.description || '',
+      image: groupData.image || null,
+      createdBy: session.userId || '',
+      balance: 0,
+      memberCount: mappedMembers.length,
+      members: mappedMembers as any,
+      lastSynced: now,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    if (this.isOnline()) {
+      try {
+        const response = await authFetch('/api/groups', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(groupData),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          try {
+            await this.indexedDB.delete('groups', tempId);
+            await this.indexedDB.putGroup(data.group);
+            await this.invalidateEntityCaches("group");
+          } catch (dbError) {
+            this.logIndexedDbUnavailable("group cache update");
+          }
+          return data.group;
+        } else {
+          const errorData = await response.json().catch(() => ({ error: 'Unknown server error' }));
+          console.error('Group creation failed on server:', errorData);
+          throw new Error(errorData.error || `Server error: ${response.status}`);
+        }
+      } catch (error) {
+        if (error instanceof TypeError && error.message.includes('fetch')) {
+          console.log('Network error, queuing for sync');
+        } else {
+          throw error;
+        }
+      }
+    }
+
+    try {
+      await this.indexedDB.putGroup(group);
+      await this.queueForSync({
+        type: 'create',
+        entityType: 'group',
+        entityId: tempId,
+        data: groupData,
+      });
+    } catch (dbError) {
+      this.logIndexedDbUnavailable("group offline create");
+      throw new Error('Cannot create group offline - IndexedDB not available');
+    }
+
+    return group;
+  }
+
   // Dashboard data
   async getDashboardData(): Promise<DashboardData> {
     const [expenses, settlements, friends, groups] = await Promise.all([
@@ -807,6 +904,16 @@ class OfflineStore {
       case 'settlement':
         if (type === 'create') {
           await fetch('/api/settlements', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+          });
+        }
+        break;
+
+      case 'group':
+        if (type === 'create') {
+          await fetch('/api/groups', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data),
