@@ -5,13 +5,9 @@ import {
   getOrSetCacheJson,
 } from "@/lib/cache";
 import { requireUser } from "@/lib/auth/require-user";
-import { Expense, ExpenseParticipant, Settlement } from "@/lib/mongodb/models";
-import {
-  fetchDocsByIds,
-  toNum,
-  uniqueStrings,
-} from "@/lib/mongodb/route-helpers";
-import { logSlowRoute } from "@/lib/firestore/route-helpers";
+import { queryUserExpenseFeed } from "@/lib/dynamodb/entities/expenses";
+import { listSettlementsForUser } from "@/lib/dynamodb/entities/settlements";
+import type { DdbExpenseFeed } from "@/lib/dynamodb/types";
 
 export const dynamic = "force-dynamic";
 export const preferredRegion = "iad1";
@@ -35,11 +31,17 @@ function getStartDate(timeframe: string): Date {
 }
 
 function round2(value: number): number {
-  return Number(value.toFixed(2));
+  return Math.round(value * 100) / 100;
 }
 
-function toDateMs(value: any): number {
-  const date = value?.toDate ? value.toDate() : new Date(value || 0);
+function toNum(v: unknown, fallback = 0): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function toDateMs(value: unknown): number {
+  if (!value) return 0;
+  const date = new Date(value as string);
   const ms = date.getTime();
   return Number.isFinite(ms) ? ms : 0;
 }
@@ -64,12 +66,17 @@ export async function GET(request: NextRequest) {
     );
 
     const payload = await getOrSetCacheJson(cacheKey, CACHE_TTL.analytics, async () => {
-      const userParticipants = await ExpenseParticipant.find({ user_id: userId }).lean();
+      // Fetch all user expense feed items (up to 5000 — enough for analytics)
+      const { items: allFeedItems } = await queryUserExpenseFeed(userId, 5000);
 
-      const expenseIds = uniqueStrings(
-        userParticipants.map((participant: any) => String(participant.expense_id || ""))
-      );
-      if (expenseIds.length === 0) {
+      // Filter by timeframe
+      const feedItems: DdbExpenseFeed[] = allFeedItems.filter((item) => {
+        if (item.is_deleted) return false;
+        const itemDateMs = toDateMs(item.date || item.created_at);
+        return itemDateMs >= startDate.getTime();
+      });
+
+      if (feedItems.length === 0) {
         return {
           summary: {
             totalExpenses: 0,
@@ -84,36 +91,16 @@ export async function GET(request: NextRequest) {
         };
       }
 
-      const expensesById = await fetchDocsByIds(Expense, expenseIds);
-      const expenseRows = Array.from(expensesById.values()).filter((row: any) => {
-        if (row.is_deleted) {
-          return false;
+      // Category breakdown
+      const categoryData: Record<string, { count: number; total: number }> = {};
+      for (const item of feedItems) {
+        const category = String(item.category || "other");
+        if (!categoryData[category]) {
+          categoryData[category] = { count: 0, total: 0 };
         }
-        const rowDate = toDateMs(row.date || row.created_at || row._created_at);
-        return rowDate >= startDate.getTime();
-      });
-
-      const filteredExpenseIds = new Set(expenseRows.map((row: any) => String(row.id || "")));
-      const participantByExpense = new Map<string, any>();
-      for (const participant of userParticipants || []) {
-        const expenseId = String(participant.expense_id || "");
-        if (filteredExpenseIds.has(expenseId)) {
-          participantByExpense.set(expenseId, participant);
-        }
+        categoryData[category].count += 1;
+        categoryData[category].total += toNum(item.amount);
       }
-
-      const categoryData = expenseRows.reduce(
-        (acc: Record<string, { count: number; total: number }>, expense: any) => {
-          const category = String(expense.category || "other");
-          if (!acc[category]) {
-            acc[category] = { count: 0, total: 0 };
-          }
-          acc[category].count += 1;
-          acc[category].total += toNum(expense.amount);
-          return acc;
-        },
-        {}
-      );
 
       const categoryBreakdown = Object.keys(categoryData).map((category) => ({
         category,
@@ -121,6 +108,7 @@ export async function GET(request: NextRequest) {
         total: round2(categoryData[category].total),
       }));
 
+      // Monthly trend (last 6 months)
       const now = new Date();
       const monthlyTrend: Array<{ month: string; expenses: number; total: number }> = [];
       for (let i = 5; i >= 0; i--) {
@@ -129,21 +117,17 @@ export async function GET(request: NextRequest) {
           now.getFullYear(),
           now.getMonth() - i + 1,
           0,
-          23,
-          59,
-          59,
-          999
+          23, 59, 59, 999
         );
 
-        const monthExpenses: any[] = expenseRows.filter((expense: any) => {
-          const expenseDate = toDateMs(expense.date || expense.created_at || expense._created_at);
-          return expenseDate >= monthStart.getTime() && expenseDate <= monthEnd.getTime();
+        const monthExpenses = feedItems.filter((item) => {
+          const itemDateMs = toDateMs(item.date || item.created_at);
+          return itemDateMs >= monthStart.getTime() && itemDateMs <= monthEnd.getTime();
         });
 
         let totalSpentForMonth = 0;
-        for (const expense of monthExpenses) {
-          const participant = participantByExpense.get(String(expense.id || ""));
-          totalSpentForMonth += toNum(participant?.owed_amount);
+        for (const item of monthExpenses) {
+          totalSpentForMonth += toNum(item.amount_owed);
         }
 
         monthlyTrend.push({
@@ -156,36 +140,35 @@ export async function GET(request: NextRequest) {
         });
       }
 
+      // Totals from participant data in feed
       let totalSpent = 0;
       let totalPaid = 0;
-      for (const participant of participantByExpense.values()) {
-        totalSpent += toNum(participant.amount_owed);
-        totalPaid += toNum(participant.amount_paid);
+      for (const item of feedItems) {
+        totalSpent += toNum(item.amount_owed);
+        totalPaid += toNum(item.amount_paid);
       }
 
-      const settlementDocs = await Settlement.find({
-        $or: [
-          { from_user_id: userId, date: { $gte: startDate.toISOString() } },
-          { to_user_id: userId, date: { $gte: startDate.toISOString() } },
-        ],
-      }).lean();
-
-      const settlementMap = new Map<string, any>();
-      for (const doc of settlementDocs) {
-        settlementMap.set(String(doc._id), doc);
+      // Settlements
+      let totalSettled = 0;
+      try {
+        const settlementFeed = await listSettlementsForUser(userId);
+        for (const s of settlementFeed) {
+          if (s.is_deleted) continue;
+          const sDateMs = toDateMs(s.date || s.created_at);
+          if (sDateMs >= startDate.getTime()) {
+            totalSettled += toNum(s.amount);
+          }
+        }
+      } catch (settlementError) {
+        console.error("[analytics] Settlement fetch failed:", settlementError);
       }
-
-      const totalSettled = Array.from(settlementMap.values()).reduce(
-        (sum: number, settlement: any) => sum + toNum(settlement.amount),
-        0
-      );
 
       const summary = {
-        totalExpenses: expenseRows.length,
+        totalExpenses: feedItems.length,
         totalSpent: round2(totalSpent),
         totalPaid: round2(totalPaid),
         totalSettled: round2(totalSettled),
-        averageExpense: expenseRows.length > 0 ? round2(totalSpent / expenseRows.length) : 0,
+        averageExpense: feedItems.length > 0 ? round2(totalSpent / feedItems.length) : 0,
       };
 
       return {
@@ -198,11 +181,10 @@ export async function GET(request: NextRequest) {
       };
     });
 
-    const routeMs = logSlowRoute("/api/analytics", routeStart);
     return NextResponse.json(payload, {
       status: 200,
       headers: {
-        "X-Doosplit-Route-Ms": String(routeMs),
+        "X-Response-Time": `${Date.now() - routeStart}ms`,
       },
     });
   } catch (error: any) {
@@ -213,4 +195,3 @@ export async function GET(request: NextRequest) {
     );
   }
 }
-

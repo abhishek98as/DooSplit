@@ -1,28 +1,31 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth/require-user";
-import { getAdminDb } from "@/lib/firestore/admin";
-import { fetchDocsByIds, toNum, uniqueStrings } from "@/lib/firestore/route-helpers";
+import { queryUserExpenseFeed } from "@/lib/dynamodb/entities/expenses";
+import { listSettlementsForUser } from "@/lib/dynamodb/entities/settlements";
+import type { DdbExpenseFeed, DdbSettlementFeed } from "@/lib/dynamodb/types";
 
 export const dynamic = "force-dynamic";
 
-function toDateMs(value: any): number {
-  const date = value?.toDate ? value.toDate() : new Date(value || 0);
+function toDateMs(value: unknown): number {
+  if (!value) return 0;
+  const date = new Date(value as string);
   const ms = date.getTime();
   return Number.isFinite(ms) ? ms : 0;
 }
 
 function round2(value: number): number {
-  return Number(value.toFixed(2));
+  return Math.round(value * 100) / 100;
+}
+
+function toNum(v: unknown, fallback = 0): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
 }
 
 function parseDateOrFallback(value: string | null, fallback: Date): Date {
-  if (!value) {
-    return fallback;
-  }
+  if (!value) return fallback;
   const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return fallback;
-  }
+  if (Number.isNaN(parsed.getTime())) return fallback;
   return parsed;
 }
 
@@ -44,51 +47,30 @@ export async function GET(request: NextRequest) {
     const startMs = startDate.getTime();
     const endMs = endDate.getTime();
 
-    const db = getAdminDb();
-    const participantSnap = await db
-      .collection("expense_participants")
-      .where("user_id", "==", userId)
-      .get();
-
-    const participantRows: any[] = participantSnap.docs.map((doc) => ({
-      id: doc.id,
-      ...(doc.data() || {}),
-    }));
-
-    const expenseIds = uniqueStrings(
-      participantRows.map((row: any) => String(row.expense_id || ""))
-    );
-    const expensesById = await fetchDocsByIds("expenses", expenseIds);
-
-    const [outgoingSettlementSnap, incomingSettlementSnap] = await Promise.all([
-      db.collection("settlements").where("from_user_id", "==", userId).get(),
-      db.collection("settlements").where("to_user_id", "==", userId).get(),
+    // Fetch all expense feed items and settlements in parallel
+    const [expenseFeedResult, allSettlementFeed] = await Promise.all([
+      queryUserExpenseFeed(userId, 5000),
+      listSettlementsForUser(userId),
     ]);
 
-    const outgoingSettlements: any[] = outgoingSettlementSnap.docs.map((doc) => ({
-      id: doc.id,
-      direction: "outgoing" as const,
-      ...(doc.data() || {}),
-    }));
+    const feedItems: DdbExpenseFeed[] = expenseFeedResult.items.filter(
+      (item) => !item.is_deleted
+    );
 
-    const incomingSettlements: any[] = incomingSettlementSnap.docs.map((doc) => ({
-      id: doc.id,
-      direction: "incoming" as const,
-      ...(doc.data() || {}),
-    }));
-
-    const allSettlements: any[] = [...outgoingSettlements, ...incomingSettlements];
+    // Map settlements to include direction info
+    const allSettlements = allSettlementFeed
+      .filter((s) => !s.is_deleted)
+      .map((s) => ({
+        ...s,
+        direction: s.from_user_id === userId ? ("outgoing" as const) : ("incoming" as const),
+      }));
 
     const computeExpenseDeltaUntil = (cutoffMs: number) => {
       let delta = 0;
-      for (const participant of participantRows) {
-        const expense = expensesById.get(String(participant.expense_id || ""));
-        if (!expense || expense.is_deleted) {
-          continue;
-        }
-        const expenseMs = toDateMs(expense.date || expense.created_at || expense._created_at);
+      for (const item of feedItems) {
+        const expenseMs = toDateMs(item.date || item.created_at);
         if (expenseMs <= cutoffMs) {
-          delta += toNum(participant.amount_paid) - toNum(participant.amount_owed);
+          delta += toNum(item.amount_paid) - toNum(item.amount_owed);
         }
       }
       return delta;
@@ -97,12 +79,8 @@ export async function GET(request: NextRequest) {
     const computeSettlementDeltaUntil = (cutoffMs: number) => {
       let delta = 0;
       for (const settlement of allSettlements) {
-        const settlementMs = toDateMs(
-          settlement.date || settlement.created_at || settlement._created_at
-        );
-        if (settlementMs > cutoffMs) {
-          continue;
-        }
+        const settlementMs = toDateMs(settlement.date || settlement.created_at);
+        if (settlementMs > cutoffMs) continue;
         const amount = toNum(settlement.amount);
         delta += settlement.direction === "incoming" ? amount : -amount;
       }
@@ -110,49 +88,40 @@ export async function GET(request: NextRequest) {
     };
 
     const openingCutoff = startMs - 1;
-    const openingBalance = computeExpenseDeltaUntil(openingCutoff) + computeSettlementDeltaUntil(openingCutoff);
-    const closingBalance = computeExpenseDeltaUntil(endMs) + computeSettlementDeltaUntil(endMs);
+    const openingBalance =
+      computeExpenseDeltaUntil(openingCutoff) + computeSettlementDeltaUntil(openingCutoff);
+    const closingBalance =
+      computeExpenseDeltaUntil(endMs) + computeSettlementDeltaUntil(endMs);
 
-    const expenseChanges = participantRows
-      .map((participant: any) => {
-        const expense = expensesById.get(String(participant.expense_id || ""));
-        if (!expense || expense.is_deleted) {
-          return null;
-        }
+    const expenseChanges = feedItems
+      .map((item) => {
+        const expenseMs = toDateMs(item.date || item.created_at);
+        if (expenseMs < startMs || expenseMs > endMs) return null;
 
-        const expenseMs = toDateMs(expense.date || expense.created_at || expense._created_at);
-        if (expenseMs < startMs || expenseMs > endMs) {
-          return null;
-        }
-
-        const delta = toNum(participant.amount_paid) - toNum(participant.amount_owed);
+        const delta = toNum(item.amount_paid) - toNum(item.amount_owed);
         return {
-          id: String(expense.id || participant.expense_id || ""),
+          id: String(item.expense_id || ""),
           type: "expense",
           date: new Date(expenseMs).toISOString(),
-          description: String(expense.description || "Expense"),
-          category: String(expense.category || "other"),
-          amount: toNum(expense.amount),
+          description: String(item.description || "Expense"),
+          category: String(item.category || "other"),
+          amount: toNum(item.amount),
           delta: round2(delta),
-          currency: String(expense.currency || "INR"),
+          currency: String(item.currency || "INR"),
         };
       })
       .filter(Boolean) as any[];
 
     const settlementChanges = allSettlements
-      .map((settlement: any) => {
-        const settlementMs = toDateMs(
-          settlement.date || settlement.created_at || settlement._created_at
-        );
-        if (settlementMs < startMs || settlementMs > endMs) {
-          return null;
-        }
+      .map((settlement) => {
+        const settlementMs = toDateMs(settlement.date || settlement.created_at);
+        if (settlementMs < startMs || settlementMs > endMs) return null;
 
         const amount = toNum(settlement.amount);
         const signedDelta = settlement.direction === "incoming" ? amount : -amount;
 
         return {
-          id: String(settlement.id || ""),
+          id: String(settlement.settlement_id || ""),
           type: "settlement",
           date: new Date(settlementMs).toISOString(),
           description:
