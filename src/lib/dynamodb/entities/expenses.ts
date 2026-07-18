@@ -48,7 +48,26 @@ export async function getExpensesByIds(ids: string[]): Promise<DdbExpense[]> {
 
 export async function updateExpense(
   expenseId: string,
-  fields: Partial<Pick<DdbExpense, "description" | "amount" | "currency" | "category" | "date" | "notes" | "is_deleted" | "is_settled" | "receipt_images" | "updated_at">>
+  fields: Partial<
+    Pick<
+      DdbExpense,
+      | "description"
+      | "amount"
+      | "currency"
+      | "category"
+      | "date"
+      | "notes"
+      | "is_deleted"
+      | "is_settled"
+      | "receipt_images"
+      | "payment_status"
+      | "payment_status_updated_at"
+      | "payment_status_updated_by"
+      | "edit_history"
+      | "group_id"
+      | "updated_at"
+    >
+  >
 ): Promise<void> {
   const sets: string[] = [];
   const names: Record<string, string> = {};

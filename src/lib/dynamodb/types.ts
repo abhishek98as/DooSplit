@@ -90,6 +90,13 @@ export interface DdbExpense extends DdbBase {
   split_type: string;
   is_deleted: boolean;
   is_settled: boolean;
+  payment_status?: string;
+  payment_status_updated_at?: string;
+  payment_status_updated_by?: string;
+  edit_history?: any[];
+  recurring_template_id?: string;
+  recurring_run_id?: string;
+  recurrence_occurrence_date?: string;
   created_at: string;
   updated_at: string;
 }

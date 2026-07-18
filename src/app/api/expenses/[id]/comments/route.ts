@@ -1,12 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth/require-user";
-import { FieldValue, getAdminDb } from "@/lib/firestore/admin";
-import { COLLECTIONS } from "@/lib/firestore/collections";
 import { newAppId } from "@/lib/ids";
-import { fetchDocsByIds, mapUser, toIso, uniqueStrings } from "@/lib/firestore/route-helpers";
 import { invalidateUsersCache } from "@/lib/cache";
 import { EXPENSE_MUTATION_CACHE_SCOPES } from "@/lib/cache-scopes";
 import { logActivity } from "@/lib/activity-logger";
+import {
+  getExpenseById,
+  listExpenseParticipants,
+  listExpenseComments,
+  putExpenseComment,
+} from "@/lib/dynamodb/entities/expenses";
+import { getUsersByIds } from "@/lib/dynamodb/entities/users";
+import { putNotification } from "@/lib/dynamodb/entities/notifications";
 
 export const dynamic = "force-dynamic";
 
@@ -14,42 +19,18 @@ function parseMentionedUsernames(commentText: string): string[] {
   if (!commentText) {
     return [];
   }
-
   const matches = commentText.match(/@([a-zA-Z0-9._-]{2,50})/g) || [];
   return Array.from(new Set(matches.map((token) => token.slice(1).toLowerCase())));
 }
 
-async function getExpenseRow(expenseId: string) {
-  const db = getAdminDb();
-  const doc = await db.collection(COLLECTIONS.expenses).doc(expenseId).get();
-  if (!doc.exists) {
-    return null;
-  }
-  const row: any = { id: doc.id, ...((doc.data() as any) || {}) };
-  if (row.is_deleted) {
-    return null;
-  }
-  return row;
-}
-
-async function getExpenseParticipants(expenseId: string): Promise<any[]> {
-  const db = getAdminDb();
-  const snap = await db
-    .collection(COLLECTIONS.expenseParticipants)
-    .where("expense_id", "==", expenseId)
-    .get();
-  return snap.docs.map((doc) => ({ id: doc.id, ...((doc.data() as any) || {}) }));
-}
-
-async function isExpenseParticipant(expenseId: string, userId: string): Promise<boolean> {
-  const db = getAdminDb();
-  const snap = await db
-    .collection(COLLECTIONS.expenseParticipants)
-    .where("expense_id", "==", expenseId)
-    .where("user_id", "==", userId)
-    .limit(1)
-    .get();
-  return !snap.empty;
+function mapUserLocal(user: any) {
+  if (!user) return null;
+  return {
+    _id: String(user.id || user._id || ""),
+    name: String(user.name || ""),
+    email: String(user.email || ""),
+    photoUrl: user.photo_url || user.photoUrl || null,
+  };
 }
 
 export async function GET(
@@ -64,35 +45,29 @@ export async function GET(
     }
     const userId = auth.user.id;
 
-    const participant = await isExpenseParticipant(id, userId);
-    if (!participant) {
+    // Check if user is a participant in DynamoDB
+    const participants = await listExpenseParticipants(id);
+    const isParticipant = participants.some((p) => p.user_id === userId);
+    if (!isParticipant) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    const db = getAdminDb();
-    const commentsSnap = await db
-      .collection(COLLECTIONS.expenseComments)
-      .where("expense_id", "==", id)
-      .orderBy("created_at", "desc")
-      .limit(200)
-      .get();
+    const commentRows = await listExpenseComments(id);
+    // Sort comments descending by creation date (newest first) as expected by the frontend
+    commentRows.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
-    const comments = commentsSnap.docs.map((doc) => ({
-      id: doc.id,
-      ...(doc.data() || {}),
-    }));
+    const userIds = Array.from(new Set(commentRows.map((c) => String(c.user_id || ""))));
+    const users = await getUsersByIds(userIds);
+    const usersMap = new Map(users.map((u) => [u.id, u]));
 
-    const userIds = uniqueStrings(comments.map((comment: any) => String(comment.created_by || "")));
-    const usersMap = await fetchDocsByIds(COLLECTIONS.users, userIds);
-
-    const payload = comments.map((comment: any) => ({
+    const payload = commentRows.map((comment) => ({
       _id: String(comment.id || ""),
       expenseId: String(comment.expense_id || ""),
-      message: String(comment.message || ""),
-      mentions: Array.isArray(comment.mentions) ? comment.mentions : [],
-      createdBy: mapUser(usersMap.get(String(comment.created_by || ""))),
-      createdAt: toIso(comment.created_at || comment._created_at),
-      updatedAt: toIso(comment.updated_at || comment._updated_at),
+      message: String(comment.content || ""),
+      mentions: [],
+      createdBy: mapUserLocal(usersMap.get(String(comment.user_id || ""))),
+      createdAt: comment.created_at,
+      updatedAt: comment.updated_at,
     }));
 
     return NextResponse.json({ comments: payload }, { status: 200 });
@@ -117,12 +92,13 @@ export async function POST(
     }
     const userId = auth.user.id;
 
-    const participant = await isExpenseParticipant(id, userId);
-    if (!participant) {
+    const participants = await listExpenseParticipants(id);
+    const isParticipant = participants.some((p) => p.user_id === userId);
+    if (!isParticipant) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    const expense = await getExpenseRow(id);
+    const expense = await getExpenseById(id);
     if (!expense) {
       return NextResponse.json({ error: "Expense not found" }, { status: 404 });
     }
@@ -139,52 +115,43 @@ export async function POST(
       );
     }
 
-    const participants = await getExpenseParticipants(id);
-    const participantIds = uniqueStrings(participants.map((p: any) => String(p.user_id || "")));
-    const participantUsersMap = await fetchDocsByIds(COLLECTIONS.users, participantIds);
+    const participantIds = Array.from(new Set(participants.map((p) => String(p.user_id || ""))));
+    const participantUsers = await getUsersByIds(participantIds);
+    const participantUsersMap = new Map(participantUsers.map((u) => [u.id, u]));
 
     const mentionedTokens = parseMentionedUsernames(rawMessage);
     const mentions = participantIds
-      .map((participantId) => {
-        const user = participantUsersMap.get(participantId);
-        if (!user) {
-          return null;
-        }
+      .map((pId) => {
+        const user = participantUsersMap.get(pId);
+        if (!user) return null;
         const normalizedName = String(user.name || "").trim().toLowerCase().replace(/\s+/g, "");
-        const normalizedEmailPrefix = String(user.email || "")
-          .split("@")[0]
-          .trim()
-          .toLowerCase();
+        const normalizedEmailPrefix = String(user.email || "").split("@")[0].trim().toLowerCase();
         const matched = mentionedTokens.some((token) => {
           const normalizedToken = token.replace(/\s+/g, "");
           return (
             normalizedToken === normalizedName ||
             normalizedToken === normalizedEmailPrefix ||
-            normalizedToken === String(participantId).toLowerCase()
+            normalizedToken === String(pId).toLowerCase()
           );
         });
-        return matched ? participantId : null;
+        return matched ? pId : null;
       })
       .filter(Boolean) as string[];
 
-    const db = getAdminDb();
     const nowIso = new Date().toISOString();
     const commentId = newAppId();
 
-    await db.collection(COLLECTIONS.expenseComments).doc(commentId).set({
+    await putExpenseComment({
       id: commentId,
       expense_id: id,
-      message: rawMessage,
-      mentions,
-      created_by: userId,
+      content: rawMessage,
+      user_id: userId,
       created_at: nowIso,
       updated_at: nowIso,
-      _created_at: FieldValue.serverTimestamp(),
-      _updated_at: FieldValue.serverTimestamp(),
     });
 
     const actorName = auth.user.name || "Someone";
-    const affectedUserIds = uniqueStrings([userId, ...participantIds]);
+    const affectedUserIds = Array.from(new Set([userId, ...participantIds]));
 
     void logActivity({
       userIds: affectedUserIds,
@@ -218,28 +185,21 @@ export async function POST(
         },
       });
 
-      const mentionNotificationTargets = mentions.filter((mentionedId) => mentionedId !== userId);
+      const mentionNotificationTargets = mentions.filter((mId) => mId !== userId);
       if (mentionNotificationTargets.length > 0) {
-        const notificationBatch = db.batch();
-      for (const mentionedUserId of mentionNotificationTargets) {
-        const notificationRef = db.collection(COLLECTIONS.notifications).doc(newAppId());
-        notificationBatch.set(notificationRef, {
-          id: notificationRef.id,
-          user_id: mentionedUserId,
-          type: "expense_mentioned",
-          message: `${actorName} mentioned you on "${String(expense.description || "Expense")}"`,
-          data: {
-            expenseId: id,
-            commentId,
-          },
-          is_read: false,
-          created_at: nowIso,
-          updated_at: nowIso,
-          _created_at: FieldValue.serverTimestamp(),
-          _updated_at: FieldValue.serverTimestamp(),
-        });
-      }
-      await notificationBatch.commit();
+        await Promise.all(
+          mentionNotificationTargets.map((mentionedUserId) =>
+            putNotification({
+              id: newAppId(),
+              user_id: mentionedUserId,
+              type: "expense_mentioned",
+              title: "Mentioned in Expense",
+              message: `${actorName} mentioned you on "${String(expense.description || "Expense")}"`,
+              is_read: false,
+              created_at: nowIso,
+            })
+          )
+        );
       }
     }
 
@@ -257,8 +217,7 @@ export async function POST(
             _id: userId,
             name: actorName,
             email: auth.user.email || "",
-            profilePicture:
-              (auth.user as { image?: string | null }).image ?? null,
+            photoUrl: (auth.user as { image?: string | null }).image ?? null,
           },
           createdAt: nowIso,
           updatedAt: nowIso,

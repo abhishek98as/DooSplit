@@ -14,7 +14,6 @@ import {
   invalidateUsersCache,
 } from "@/lib/cache";
 import { requireUser } from "@/lib/auth/require-user";
-import { FieldValue, getAdminDb } from "@/lib/firestore/admin";
 import { EXPENSE_MUTATION_CACHE_SCOPES } from "@/lib/cache-scopes";
 import { logActivity, logExpenseDeleted, logExpenseUpdated } from "@/lib/activity-logger";
 import {
@@ -22,99 +21,84 @@ import {
   isPaymentStatus,
   normalizePaymentStatus,
 } from "@/lib/expenses/payment-status";
-import {
-  fetchDocsByIds,
-  logSlowRoute,
-  mapGroup,
-  mapUser,
-  toIso,
-  toNum,
-  uniqueStrings,
-} from "@/lib/firestore/route-helpers";
 import { newAppId } from "@/lib/ids";
+import {
+  getExpenseById,
+  listExpenseParticipants,
+  listExpenseComments,
+} from "@/lib/dynamodb/entities/expenses";
+import { getUsersByIds } from "@/lib/dynamodb/entities/users";
+import { getGroupById } from "@/lib/dynamodb/entities/groups";
+import {
+  updateExpenseInDynamo,
+  updateExpensePaymentStatusInDynamo,
+  deleteExpenseInDynamo,
+} from "@/lib/dynamodb/write-operations";
 
 export const dynamic = "force-dynamic";
 export const preferredRegion = "iad1";
 
 function toStringId(value: any): string {
-  if (value === null || value === undefined) {
-    return "";
-  }
+  if (value === null || value === undefined) return "";
   return typeof value === "string" ? value : value.toString();
 }
 
-async function getExpenseRow(expenseId: string) {
-  const db = getAdminDb();
-  const doc = await db.collection("expenses").doc(expenseId).get();
-  if (!doc.exists) {
-    return null;
-  }
-  const row: any = { id: doc.id, ...((doc.data() as any) || {}) };
-  if (row.is_deleted) {
-    return null;
-  }
-  return row;
+function toNum(v: any, fallback = 0): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
 }
 
-async function getExpenseParticipants(expenseId: string): Promise<any[]> {
-  const db = getAdminDb();
-  const snap = await db
-    .collection("expense_participants")
-    .where("expense_id", "==", expenseId)
-    .get();
-  return snap.docs.map((doc) => ({ id: doc.id, ...((doc.data() as any) || {}) }));
+function uniqueStrings(arr: string[]): string[] {
+  return Array.from(new Set(arr.filter(Boolean)));
 }
 
-async function isExpenseParticipant(expenseId: string, userId: string): Promise<boolean> {
-  const db = getAdminDb();
-  const snap = await db
-    .collection("expense_participants")
-    .where("expense_id", "==", expenseId)
-    .where("user_id", "==", userId)
-    .limit(1)
-    .get();
-  return !snap.empty;
+function mapUserLocal(user: any) {
+  if (!user) return null;
+  return {
+    _id: String(user.id || user._id || ""),
+    name: String(user.name || ""),
+    email: String(user.email || ""),
+    photoUrl: user.photo_url || user.photoUrl || null,
+  };
+}
+
+function mapGroupLocal(group: any) {
+  if (!group) return null;
+  return {
+    _id: String(group.id || group._id || ""),
+    name: String(group.name || ""),
+    image: group.image || null,
+  };
 }
 
 async function buildExpenseResponse(expenseId: string) {
-  const expense = await getExpenseRow(expenseId);
-  if (!expense) {
+  const expense = await getExpenseById(expenseId);
+  if (!expense || expense.is_deleted) {
     throw new Error("Expense not found");
   }
 
-  const participants = await getExpenseParticipants(expenseId);
-  const userIds = uniqueStrings([
+  const participants = await listExpenseParticipants(expenseId);
+  const commentsRows = await listExpenseComments(expenseId);
+
+  const commentUserIds = uniqueStrings(commentsRows.map((c) => String(c.user_id || "")));
+  const participantUserIds = uniqueStrings(participants.map((p) => String(p.user_id || "")));
+
+  const allUserIds = uniqueStrings([
     String(expense.created_by || ""),
-    ...participants.map((participant: any) => String(participant.user_id || "")),
+    ...participantUserIds,
+    ...commentUserIds,
   ]);
-  const usersMap = await fetchDocsByIds("users", userIds);
+  const users = await getUsersByIds(allUserIds);
+  const usersMap = new Map(users.map((u) => [u.id, u]));
 
-  const db = getAdminDb();
-  const commentsSnap = await db
-    .collection("expense_comments")
-    .where("expense_id", "==", expenseId)
-    .orderBy("created_at", "desc")
-    .limit(200)
-    .get();
-
-  const commentRows = commentsSnap.docs.map((doc) => ({
-    id: doc.id,
-    ...(doc.data() || {}),
-  }));
-
-  const commentUserIds = uniqueStrings(
-    commentRows.map((comment: any) => String(comment.created_by || ""))
-  );
-  const commentUsersMap = await fetchDocsByIds("users", commentUserIds);
-
-  const comments = commentRows.map((comment: any) => ({
+  const comments = commentsRows.map((comment) => ({
     _id: String(comment.id || ""),
     expenseId: String(comment.expense_id || ""),
-    message: String(comment.message || ""),
-    mentions: Array.isArray(comment.mentions) ? comment.mentions : [],
-    createdBy: mapUser(commentUsersMap.get(String(comment.created_by || ""))),
-    createdAt: toIso(comment.created_at || comment._created_at),
-    updatedAt: toIso(comment.updated_at || comment._updated_at),
+    message: String(comment.content || ""),
+    mentions: [],
+    createdBy: mapUserLocal(usersMap.get(String(comment.user_id || ""))),
+    createdAt: comment.created_at,
+    updatedAt: comment.updated_at,
   }));
 
   const editHistoryRaw = Array.isArray(expense.edit_history) ? expense.edit_history : [];
@@ -122,61 +106,59 @@ async function buildExpenseResponse(expenseId: string) {
     _id: String(entry.id || `${expenseId}_edit_${index}`),
     type: "edit_note",
     message: String(entry.changes || "Updated"),
-    createdBy: mapUser(usersMap.get(String(entry.editedBy || ""))),
-    createdAt: toIso(entry.editedAt),
+    createdBy: mapUserLocal(usersMap.get(String(entry.editedBy || ""))),
+    createdAt: entry.editedAt,
     metadata: {
       editedBy: String(entry.editedBy || ""),
       diff: entry.diff || null,
     },
   }));
 
-  const discussionThread = [...comments.map((comment) => ({
-    _id: comment._id,
-    type: "comment",
-    message: comment.message,
-    mentions: comment.mentions,
-    createdBy: comment.createdBy,
-    createdAt: comment.createdAt,
-  })), ...editHistory.map((entry: any) => ({
-    _id: entry._id,
-    type: entry.type,
-    message: entry.message,
-    createdBy: entry.createdBy,
-    createdAt: entry.createdAt,
-    metadata: entry.metadata,
-  }))]
-    .sort((a: any, b: any) => {
-      const left = new Date(a.createdAt || 0).getTime();
-      const right = new Date(b.createdAt || 0).getTime();
-      return right - left;
-    });
+  const discussionThread = [
+    ...comments.map((comment) => ({
+      _id: comment._id,
+      type: "comment" as const,
+      message: comment.message,
+      mentions: comment.mentions,
+      createdBy: comment.createdBy,
+      createdAt: comment.createdAt,
+    })),
+    ...editHistory.map((entry: any) => ({
+      _id: entry._id,
+      type: entry.type as "edit_note",
+      message: entry.message,
+      createdBy: entry.createdBy,
+      createdAt: entry.createdAt,
+      metadata: entry.metadata,
+    })),
+  ].sort((a: any, b: any) => {
+    return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
+  });
 
-  let group: { _id: string; name: string; image: string | null } | null = null;
+  let group: any = null;
   if (expense.group_id) {
-    const groupRows = await fetchDocsByIds("groups", [String(expense.group_id)]);
-    const groupRow = groupRows.get(String(expense.group_id));
+    const groupRow = await getGroupById(expense.group_id);
     if (groupRow) {
-      group = mapGroup(groupRow);
+      group = mapGroupLocal(groupRow);
     }
   }
 
-  const mappedParticipants = participants.map((participant: any) => {
+  const mappedParticipants = participants.map((participant) => {
     const user = usersMap.get(String(participant.user_id || ""));
     return {
-      _id: String(participant.id || ""),
+      _id: String(participant.user_id || ""),
       expenseId: String(participant.expense_id || ""),
-      userId: user ? mapUser(user) : null,
+      userId: user ? mapUserLocal(user) : null,
       paidAmount: toNum(participant.amount_paid),
       owedAmount: toNum(participant.amount_owed),
       isSettled: Boolean(participant.is_settled),
-      createdAt: toIso(participant.created_at || participant._created_at),
-      updatedAt: toIso(participant.updated_at || participant._updated_at),
+      createdAt: participant.created_at,
+      updatedAt: participant.updated_at,
     };
   });
 
-  const creator = usersMap.get(String(expense.created_by || ""));
-  const createdAt = toIso(expense.created_at || expense._created_at);
-  const updatedAt = toIso(expense.updated_at || expense._updated_at);
+  const createdAt = expense.created_at;
+  const updatedAt = expense.updated_at;
   const paymentStatus = normalizePaymentStatus(expense.payment_status, "unpaid");
   const versionVector = {
     version: 1,
@@ -190,18 +172,18 @@ async function buildExpenseResponse(expenseId: string) {
       amount: toNum(expense.amount),
       description: String(expense.description || ""),
       category: String(expense.category || "other"),
-      date: toIso(expense.date) || createdAt,
+      date: expense.date || createdAt,
       currency: String(expense.currency || "INR"),
-      createdBy: creator ? mapUser(creator) : null,
+      createdBy: mapUserLocal(usersMap.get(String(expense.created_by || ""))),
       groupId: group,
-      images: Array.isArray(expense.images) ? expense.images : [],
+      images: Array.isArray(expense.receipt_images) ? expense.receipt_images : [],
       notes: expense.notes || "",
       paymentStatus,
       recurringTemplateId: expense.recurring_template_id || undefined,
       recurringRunId: expense.recurring_run_id || undefined,
-      recurrenceOccurrenceDate: toIso(expense.recurrence_occurrence_date),
+      recurrenceOccurrenceDate: expense.recurrence_occurrence_date || undefined,
       isDeleted: Boolean(expense.is_deleted),
-      editHistory: editHistoryRaw,
+      editHistory,
       comments,
       discussionThread,
       createdAt,
@@ -219,7 +201,6 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const routeStart = Date.now();
     const { id } = await params;
     const auth = await requireUser(request);
     if (auth.response || !auth.user) {
@@ -227,9 +208,15 @@ export async function GET(
     }
     const userId = auth.user.id;
 
-    const participant = await isExpenseParticipant(id, userId);
-    if (!participant) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    // Check if participant in DynamoDB
+    const participants = await listExpenseParticipants(id);
+    const isParticipant = participants.some((p) => p.user_id === userId);
+    if (!isParticipant) {
+      const expense = await getExpenseById(id);
+      // Let creator read their own expense
+      if (!expense || expense.created_by !== userId) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
     }
 
     const cacheKey = buildUserScopedCacheKey("expenses", userId, `detail:${id}`);
@@ -237,17 +224,13 @@ export async function GET(
       buildExpenseResponse(id)
     );
 
-    const routeMs = logSlowRoute("/api/expenses/[id]#GET", routeStart);
     return NextResponse.json(
-      {
-        expense: payload.expense,
-      },
+      { expense: payload.expense },
       {
         status: 200,
         headers: {
           ETag: payload.etag,
           "X-Version-Vector": JSON.stringify(payload.versionVector),
-          "X-Doosplit-Route-Ms": String(routeMs),
         },
       }
     );
@@ -268,14 +251,12 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const routeStart = Date.now();
     const { id } = await params;
     const auth = await requireUser(request);
     if (auth.response || !auth.user) {
       return auth.response as NextResponse;
     }
     const currentUserId = auth.user.id;
-    const db = getAdminDb();
 
     const body = await request.json();
     const {
@@ -293,36 +274,22 @@ export async function PUT(
       paymentStatus,
     } = body || {};
 
-    const expense = await getExpenseRow(id);
-    if (!expense) {
+    const expense = await getExpenseById(id);
+    if (!expense || expense.is_deleted) {
       return NextResponse.json({ error: "Expense not found" }, { status: 404 });
     }
 
-    const participantCheck = await isExpenseParticipant(id, currentUserId);
-    if (!participantCheck) {
+    const previousParticipants = await listExpenseParticipants(id);
+    const isParticipant = previousParticipants.some((p) => p.user_id === currentUserId);
+    if (!isParticipant && expense.created_by !== currentUserId) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
+
     if (String(expense.created_by || "") !== currentUserId) {
       return NextResponse.json(
         { error: "Only expense creator can edit" },
         { status: 403 }
       );
-    }
-
-    const ifMatch = request.headers.get("If-Match");
-    if (ifMatch) {
-      const expectedEtag = `"${expense.id}-1"`;
-      if (ifMatch !== expectedEtag) {
-        return NextResponse.json(
-          {
-            error: "Conflict detected",
-            message:
-              "This expense has been modified by another user. Please refresh and try again.",
-            currentVersion: 1,
-          },
-          { status: 409 }
-        );
-      }
     }
 
     if (images !== undefined && Array.isArray(images)) {
@@ -341,18 +308,13 @@ export async function PUT(
       }
     }
 
-    const previousParticipants = await getExpenseParticipants(id);
-
     const nowIso = new Date().toISOString();
     const changes: string[] = [];
     const diff: Record<string, { before: any; after: any }> = {};
 
     if (amount !== undefined && Number(amount) !== toNum(expense.amount)) {
       changes.push(`amount: ${toNum(expense.amount)} -> ${Number(amount)}`);
-      diff.amount = {
-        before: toNum(expense.amount),
-        after: Number(amount),
-      };
+      diff.amount = { before: toNum(expense.amount), after: Number(amount) };
     }
     if (description !== undefined && String(description) !== String(expense.description)) {
       changes.push("description updated");
@@ -369,15 +331,12 @@ export async function PUT(
       };
     }
     if (date !== undefined) {
-      const previousDate = toIso(expense.date || expense.created_at || expense._created_at);
-      const nextDate = toIso(new Date(date).toISOString());
+      const previousDate = new Date(expense.date || expense.created_at).toISOString();
+      const nextDate = new Date(date).toISOString();
       if (previousDate !== nextDate) {
-        diff.date = {
-          before: previousDate,
-          after: nextDate,
-        };
+        diff.date = { before: previousDate, after: nextDate };
+        changes.push("date updated");
       }
-      changes.push("date updated");
     }
     if (currency !== undefined && String(currency) !== String(expense.currency || "INR")) {
       changes.push(`currency: ${String(expense.currency || "INR")} -> ${String(currency)}`);
@@ -401,14 +360,11 @@ export async function PUT(
       };
     }
     if (images !== undefined) {
-      const previousImages = Array.isArray(expense.images) ? expense.images : [];
+      const previousImages = Array.isArray(expense.receipt_images) ? expense.receipt_images : [];
       const nextImages = Array.isArray(images) ? images : [];
       if (JSON.stringify(previousImages) !== JSON.stringify(nextImages)) {
         changes.push("attachments updated");
-        diff.images = {
-          before: previousImages,
-          after: nextImages,
-        };
+        diff.images = { before: previousImages, after: nextImages };
       }
     }
     if (
@@ -427,7 +383,7 @@ export async function PUT(
 
     if (splitMethod && participants) {
       diff.splitMethod = {
-        before: String(expense.split_method || "equally"),
+        before: String(expense.split_type || "equally"),
         after: String(splitMethod),
       };
       diff.participants = {
@@ -445,45 +401,20 @@ export async function PUT(
     }
 
     const editHistory = Array.isArray(expense.edit_history) ? [...expense.edit_history] : [];
-    editHistory.push({
-      id: newAppId(),
-      editedAt: nowIso,
-      editedBy: currentUserId,
-      changes: changes.length > 0 ? changes.join(", ") : "Updated",
-      diff,
-    });
-
-    const updatePayload: Record<string, any> = {
-      edit_history: editHistory,
-      updated_at: nowIso,
-      _updated_at: FieldValue.serverTimestamp(),
-    };
-    if (amount !== undefined) updatePayload.amount = Number(amount);
-    if (description !== undefined) updatePayload.description = String(description);
-    if (category !== undefined) updatePayload.category = String(category);
-    if (date !== undefined) updatePayload.date = new Date(date).toISOString();
-    if (currency !== undefined) updatePayload.currency = String(currency);
-    if (groupId !== undefined) updatePayload.group_id = groupId ? String(groupId) : null;
-    if (images !== undefined) updatePayload.images = Array.isArray(images) ? images : [];
-    if (notes !== undefined) updatePayload.notes = notes ? String(notes) : "";
-    if (paymentStatus !== undefined) {
-      if (!isPaymentStatus(paymentStatus)) {
-        return NextResponse.json(
-          { error: "Invalid payment status" },
-          { status: 400 }
-        );
-      }
-      updatePayload.payment_status = paymentStatus;
-      updatePayload.payment_status_updated_at = nowIso;
-      updatePayload.payment_status_updated_by = currentUserId;
+    if (changes.length > 0) {
+      editHistory.push({
+        id: newAppId(),
+        editedAt: nowIso,
+        editedBy: currentUserId,
+        changes: changes.join(", "),
+        diff,
+      });
     }
 
-    await db.collection("expenses").doc(id).set(updatePayload, { merge: true });
+    const finalAmount = amount !== undefined ? Number(amount) : toNum(expense.amount);
+    let splitParticipants: any[] = [];
 
     if (splitMethod && participants) {
-      const finalAmount = amount !== undefined ? Number(amount) : toNum(expense.amount);
-      let splitParticipants: any[] = [];
-
       switch (splitMethod) {
         case "equally":
           splitParticipants = splitEqually({
@@ -527,85 +458,100 @@ export async function PUT(
       }
 
       if (!validateSplit(splitParticipants, finalAmount)) {
-        return NextResponse.json(
-          { error: "Invalid split calculation" },
-          { status: 400 }
-        );
+        return NextResponse.json({ error: "Invalid split calculation" }, { status: 400 });
       }
-
-      const existingParticipantsSnap = await db
-        .collection("expense_participants")
-        .where("expense_id", "==", id)
-        .get();
-      const batch = db.batch();
-      for (const doc of existingParticipantsSnap.docs) {
-        batch.delete(doc.ref);
-      }
-      for (const participant of splitParticipants) {
-        const participantRef = db.collection("expense_participants").doc(newAppId());
-        batch.set(participantRef, {
-          id: participantRef.id,
-          expense_id: id,
-          user_id: toStringId(participant.userId),
-          paid_amount: Number(participant.paidAmount || 0),
-          owed_amount: Number(participant.owedAmount || 0),
-          is_settled: false,
-          created_at: nowIso,
-          updated_at: nowIso,
-          _created_at: FieldValue.serverTimestamp(),
-          _updated_at: FieldValue.serverTimestamp(),
-        });
-      }
-      await batch.commit();
+    } else {
+      // Keep existing splits but update amounts/paidBy if they changed
+      splitParticipants = previousParticipants.map((p) => ({
+        userId: p.user_id,
+        owedAmount: p.amount_owed,
+        paidAmount: toStringId(paidBy) === p.user_id ? finalAmount : 0,
+      }));
     }
+
+    const newExpenseMeta = {
+      id: expense.id,
+      amount: finalAmount,
+      description: description !== undefined ? String(description) : expense.description,
+      category: category !== undefined ? String(category) : expense.category || "other",
+      date: date !== undefined ? new Date(date).toISOString() : expense.date,
+      currency: currency !== undefined ? String(currency) : expense.currency || "INR",
+      created_by: expense.created_by,
+      group_id: groupId !== undefined ? (groupId ? String(groupId) : undefined) : expense.group_id,
+      notes: notes !== undefined ? String(notes) : expense.notes || "",
+      split_type: splitMethod || expense.split_type || "equally",
+      is_deleted: false,
+      is_settled: paymentStatus === "settled" ? true : paymentStatus === "unpaid" ? false : expense.is_settled,
+      payment_status: paymentStatus !== undefined ? paymentStatus : expense.payment_status || "unpaid",
+      payment_status_updated_at: paymentStatus !== undefined ? nowIso : expense.payment_status_updated_at || expense.created_at,
+      payment_status_updated_by: paymentStatus !== undefined ? currentUserId : expense.payment_status_updated_by || expense.created_by,
+      receipt_images: images !== undefined ? (Array.isArray(images) ? images : []) : expense.receipt_images || [],
+      edit_history: editHistory,
+      created_at: expense.created_at,
+      updated_at: nowIso,
+    };
+
+    const newParticipants = splitParticipants.map((p) => ({
+      expense_id: id,
+      user_id: p.userId,
+      amount_owed: p.owedAmount,
+      amount_paid: p.paidAmount,
+      is_excluded: false,
+      is_settled: newExpenseMeta.is_settled,
+      expense_date: newExpenseMeta.date,
+      expense_group_id: newExpenseMeta.group_id,
+      created_at: nowIso,
+      updated_at: nowIso,
+    }));
+
+    await updateExpenseInDynamo({
+      expenseId: id,
+      expense: newExpenseMeta,
+      participants: newParticipants,
+      oldParticipantUserIds: previousParticipants.map((p) => p.user_id),
+      oldDate: expense.date || expense.created_at,
+      oldGroupId: expense.group_id || null,
+    });
 
     const responsePayload = await buildExpenseResponse(id);
     const participantIds = responsePayload.expense.participants
-      .map((participant: any) => participant.userId?._id)
-      .filter(Boolean);
-    const normalizedParticipantIds = participantIds
-      .map((participantId: any) => String(participantId || ""))
+      .map((p: any) => p.userId?._id)
       .filter(Boolean);
 
     let updaterName = auth.user.name || "Someone";
-
     try {
-      const updaterDoc = await db.collection("users").doc(currentUserId).get();
-      updaterName =
-        String(updaterDoc.data()?.name || "").trim() || updaterName;
+      const users = await getUsersByIds([currentUserId]);
+      if (users[0]) updaterName = users[0].name;
+
       await notifyExpenseUpdated(
         responsePayload.expense._id,
         responsePayload.expense.description,
-        {
-          id: currentUserId,
-          name: updaterName,
-        },
+        { id: currentUserId, name: updaterName },
         participantIds
       );
     } catch (notifError) {
-      console.error("Failed to send notifications:", notifError);
+      console.error("Failed to send notification:", notifError);
     }
 
     void logExpenseUpdated({
       actorId: currentUserId,
       actorName: updaterName,
-      expenseId: String(responsePayload.expense._id || id),
+      expenseId: id,
       description: String(responsePayload.expense.description || "Expense"),
       amount: Number(responsePayload.expense.amount || 0),
       currency: String(responsePayload.expense.currency || "INR"),
-      participantIds: normalizedParticipantIds,
+      participantIds: participantIds.map((p: any) => String(p)),
       diff,
     });
 
     const affectedUserIds = uniqueStrings([
       currentUserId,
-      ...previousParticipants.map((participant: any) => String(participant.user_id || "")),
-      ...normalizedParticipantIds,
+      ...previousParticipants.map((p) => p.user_id),
+      ...participantIds.map((p: any) => String(p)),
     ]);
 
     await invalidateUsersCache(affectedUserIds, [...EXPENSE_MUTATION_CACHE_SCOPES]);
 
-    const routeMs = logSlowRoute("/api/expenses/[id]#PUT", routeStart);
     return NextResponse.json(
       {
         message: "Expense updated successfully",
@@ -616,7 +562,6 @@ export async function PUT(
         headers: {
           ETag: responsePayload.etag,
           "X-Version-Vector": JSON.stringify(responsePayload.versionVector),
-          "X-Doosplit-Route-Ms": String(routeMs),
         },
       }
     );
@@ -634,50 +579,38 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const routeStart = Date.now();
     const { id } = await params;
     const auth = await requireUser(request);
     if (auth.response || !auth.user) {
       return auth.response as NextResponse;
     }
     const currentUserId = auth.user.id;
-    const db = getAdminDb();
 
     const body = await request.json();
     const nextStatus = body?.paymentStatus;
     if (!isPaymentStatus(nextStatus)) {
-      return NextResponse.json(
-        { error: "Invalid payment status" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Invalid payment status" }, { status: 400 });
     }
 
-    const expense = await getExpenseRow(id);
-    if (!expense) {
+    const expense = await getExpenseById(id);
+    if (!expense || expense.is_deleted) {
       return NextResponse.json({ error: "Expense not found" }, { status: 404 });
     }
 
-    const participantCheck = await isExpenseParticipant(id, currentUserId);
-    if (!participantCheck) {
+    const participants = await listExpenseParticipants(id);
+    const isParticipant = participants.some((p) => p.user_id === currentUserId);
+    if (!isParticipant && expense.created_by !== currentUserId) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
     const previousStatus = normalizePaymentStatus(expense.payment_status, "unpaid");
     if (previousStatus === nextStatus) {
       const payload = await buildExpenseResponse(id);
-      const routeMs = logSlowRoute("/api/expenses/[id]#PATCH", routeStart);
       return NextResponse.json(
-        {
-          message: "Payment status unchanged",
-          expense: payload.expense,
-        },
+        { message: "Payment status unchanged", expense: payload.expense },
         {
           status: 200,
-          headers: {
-            ETag: payload.etag,
-            "X-Version-Vector": JSON.stringify(payload.versionVector),
-            "X-Doosplit-Route-Ms": String(routeMs),
-          },
+          headers: { ETag: payload.etag },
         }
       );
     }
@@ -690,34 +623,27 @@ export async function PATCH(
       editedBy: currentUserId,
       changes: `payment status: ${previousStatus} -> ${nextStatus}`,
       diff: {
-        paymentStatus: {
-          before: previousStatus,
-          after: nextStatus,
-        },
+        paymentStatus: { before: previousStatus, after: nextStatus },
       },
     });
 
-    await db.collection("expenses").doc(id).set(
-      {
-        payment_status: nextStatus,
-        payment_status_updated_at: nowIso,
-        payment_status_updated_by: currentUserId,
-        edit_history: editHistory,
-        updated_at: nowIso,
-        _updated_at: FieldValue.serverTimestamp(),
-      },
-      { merge: true }
-    );
+    // Save payment status update using new DynamoDB atomic write helper
+    await updateExpensePaymentStatusInDynamo(id, nextStatus, currentUserId, nowIso);
 
-    const participants = await getExpenseParticipants(id);
+    // Update edit history separately on meta record
+    const { updateExpense } = await import("@/lib/dynamodb/entities/expenses");
+    await updateExpense(id, { edit_history: editHistory, updated_at: nowIso });
+
     const affectedUserIds = uniqueStrings([
       currentUserId,
-      ...participants.map((participant: any) => String(participant.user_id || "")),
+      ...participants.map((p) => p.user_id),
     ]);
 
-    const actorDoc = await db.collection("users").doc(currentUserId).get();
-    const actorName =
-      String(actorDoc.data()?.name || "").trim() || auth.user.name || "Someone";
+    let actorName = auth.user.name || "Someone";
+    try {
+      const users = await getUsersByIds([currentUserId]);
+      if (users[0]) actorName = users[0].name;
+    } catch {}
 
     void logActivity({
       userIds: affectedUserIds,
@@ -727,7 +653,7 @@ export async function PATCH(
       title: "Payment Status Updated",
       description: `${actorName} marked "${String(expense.description || "Expense")}" as ${getPaymentStatusLabel(nextStatus)}`,
       metadata: {
-        expenseId: String(expense.id || id),
+        expenseId: id,
         expenseDescription: String(expense.description || "Expense"),
         previousPaymentStatus: previousStatus,
         paymentStatus: nextStatus,
@@ -737,7 +663,6 @@ export async function PATCH(
     await invalidateUsersCache(affectedUserIds, [...EXPENSE_MUTATION_CACHE_SCOPES]);
 
     const payload = await buildExpenseResponse(id);
-    const routeMs = logSlowRoute("/api/expenses/[id]#PATCH", routeStart);
     return NextResponse.json(
       {
         message: "Payment status updated successfully",
@@ -745,19 +670,12 @@ export async function PATCH(
       },
       {
         status: 200,
-        headers: {
-          ETag: payload.etag,
-          "X-Version-Vector": JSON.stringify(payload.versionVector),
-          "X-Doosplit-Route-Ms": String(routeMs),
-        },
+        headers: { ETag: payload.etag },
       }
     );
   } catch (error: any) {
     console.error("Update payment status error:", error);
-    return NextResponse.json(
-      { error: "Failed to update payment status" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to update payment status" }, { status: 500 });
   }
 }
 
@@ -766,46 +684,55 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const routeStart = Date.now();
     const { id } = await params;
     const auth = await requireUser(request);
     if (auth.response || !auth.user) return auth.response as NextResponse;
     const currentUserId = auth.user.id;
 
-    // Use DynamoDB directly
-    const { getExpenseById, updateExpense } = await import("@/lib/dynamodb/entities/expenses");
     const expense = await getExpenseById(id);
-    if (!expense) return NextResponse.json({ error: "Expense not found" }, { status: 404 });
+    if (!expense || expense.is_deleted) {
+      return NextResponse.json({ error: "Expense not found" }, { status: 404 });
+    }
 
-    const { listExpenseParticipants } = await import("@/lib/dynamodb/entities/expenses");
     const participants = await listExpenseParticipants(id);
-    const isParticipant = participants.some((p: any) => p.user_id === currentUserId);
-    if (!isParticipant) {
-      return NextResponse.json({ error: "Only expense participants can delete" }, { status: 403 });
+    const isParticipant = participants.some((p) => p.user_id === currentUserId);
+    if (!isParticipant && expense.created_by !== currentUserId) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
     const nowIso = new Date().toISOString();
-    const participantUserIds = participants.map((p: any) => p.user_id).filter(Boolean);
 
-    await updateExpense(id, { is_deleted: true, updated_at: nowIso });
+    // Mark as deleted in DynamoDB and feeds
+    await deleteExpenseInDynamo(id, nowIso);
 
-    await invalidateUsersCache(
-      [...new Set([currentUserId, ...participantUserIds])],
-      EXPENSE_MUTATION_CACHE_SCOPES
-    );
+    const participantUserIds = participants.map((p) => p.user_id).filter(Boolean);
+    const affectedUserIds = uniqueStrings([currentUserId, ...participantUserIds]);
 
+    await invalidateUsersCache(affectedUserIds, [...EXPENSE_MUTATION_CACHE_SCOPES]);
+
+    let actorName = auth.user.name || "Someone";
     try {
-      const { logExpenseDeleted } = await import("@/lib/activity-logger");
-      await logExpenseDeleted({
-        actorId: currentUserId,
-        expenseId: id,
-        expenseDescription: expense.description || "Untitled",
-        amount: expense.amount || 0,
-        currency: expense.currency || "INR",
-      });
-    } catch (e) { console.error("Failed to log delete:", e); }
+      const users = await getUsersByIds([currentUserId]);
+      if (users[0]) actorName = users[0].name;
 
-    return NextResponse.json({ message: "Expense deleted" }, { status: 200, headers: { "X-Doosplit-Route-Ms": String(Date.now() - routeStart) } });
+      await notifyExpenseDeleted(
+        expense.description || "Untitled",
+        { id: currentUserId, name: actorName },
+        participantUserIds
+      );
+    } catch {}
+
+    void logExpenseDeleted({
+      actorId: currentUserId,
+      actorName,
+      expenseId: id,
+      description: expense.description || "Untitled",
+      amount: expense.amount || 0,
+      currency: expense.currency || "INR",
+      participantIds: participantUserIds,
+    });
+
+    return NextResponse.json({ message: "Expense deleted" }, { status: 200 });
   } catch (error: any) {
     console.error("Delete expense error:", error);
     return NextResponse.json({ error: "Failed to delete expense" }, { status: 500 });
