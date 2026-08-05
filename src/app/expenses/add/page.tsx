@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { ImageType } from "@/lib/storage/image-types";
 import getOfflineStore from "@/lib/offline-store";
+import { useHapticFeedback } from "@/contexts/HapticFeedbackContext";
 
 interface Friend {
   id: string;
@@ -79,6 +80,7 @@ export default function AddExpensePage() {
   const { data: session } = useSession();
   const router = useRouter();
   const { trackEvent } = useAnalytics();
+  const { trigger: triggerHaptic } = useHapticFeedback();
 
   const [scanLoading, setScanLoading] = useState(false);
 
@@ -559,6 +561,7 @@ export default function AddExpensePage() {
       // Expense creation is considered successful if we get an expense object
       if (expense && expense._id) {
         // Track successful expense creation
+        triggerHaptic("success");
         trackEvent(AnalyticsEvents.EXPENSE_CREATED, {
           amount: parseFloat(amount),
           currency,
@@ -648,10 +651,12 @@ export default function AddExpensePage() {
         // Navigate to dashboard
         router.push("/dashboard");
       } else {
+        triggerHaptic("error");
         alert("Failed to create expense");
       }
     } catch (error) {
       console.error("Failed to create expense:", error);
+      triggerHaptic("error");
       alert("Failed to create expense. Please try again.");
     } finally {
       setSubmitting(false);

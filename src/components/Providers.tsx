@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { SessionProvider } from "@/lib/auth/react-session";
 import { ThemeProvider } from "@/contexts/ThemeContext";
+import { HapticFeedbackProvider } from "@/contexts/HapticFeedbackContext";
 import { PWAProvider } from "@/components/pwa/PWAProvider";
 import { AnalyticsProvider } from "@/components/analytics/AnalyticsProvider";
 import { RealtimeDataSyncProvider } from "@/components/realtime/RealtimeDataSyncProvider";
@@ -24,13 +25,15 @@ export function Providers({ children }: { children: React.ReactNode }) {
   return (
     <SessionProvider>
       <ThemeProvider>
-        <PWAProvider>
-          <RealtimeDataSyncProvider>
-            <AnalyticsProvider>
-              {children}
-            </AnalyticsProvider>
-          </RealtimeDataSyncProvider>
-        </PWAProvider>
+        <HapticFeedbackProvider>
+          <PWAProvider>
+            <RealtimeDataSyncProvider>
+              <AnalyticsProvider>
+                {children}
+              </AnalyticsProvider>
+            </RealtimeDataSyncProvider>
+          </PWAProvider>
+        </HapticFeedbackProvider>
       </ThemeProvider>
     </SessionProvider>
   );

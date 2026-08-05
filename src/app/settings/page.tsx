@@ -10,6 +10,7 @@ import {
 } from "@/lib/firebase-messaging";
 import AppShell from "@/components/layout/AppShell";
 import { useTheme } from "@/contexts/ThemeContext";
+import { useHapticFeedback } from "@/contexts/HapticFeedbackContext";
 import { usePWA } from "@/components/pwa/PWAProvider";
 import FeedbackWidget from "@/components/ui/FeedbackWidget";
 import Card, { CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
@@ -36,6 +37,7 @@ import {
   Smartphone,
   Download,
   MessageSquarePlus,
+  Vibrate,
 } from "lucide-react";
 
 interface UserProfile {
@@ -87,6 +89,13 @@ export default function SettingsPage() {
 
   // Theme context
   const { theme, toggleTheme } = useTheme();
+
+  // Haptic + audio feedback (mobile/tablet only)
+  const {
+    isSupportedDevice: showHapticSetting,
+    enabled: hapticEnabled,
+    setEnabled: setHapticEnabled,
+  } = useHapticFeedback();
 
   // PWA install
   const { canInstall, installPrompt, isStandalone } = usePWA();
@@ -467,6 +476,36 @@ export default function SettingsPage() {
                   />
                 </div>
               </button>
+              {showHapticSetting && (
+                <button
+                  type="button"
+                  onClick={() => setHapticEnabled(!hapticEnabled)}
+                  className="flex items-center w-full p-3 rounded-md hover:bg-neutral-50 dark:hover:bg-dark-bg-tertiary transition-colors"
+                  data-haptic="selection"
+                >
+                  <Vibrate className="h-5 w-5 text-neutral-500 mr-3" />
+                  <div className="flex-1 text-left">
+                    <p className="text-sm font-medium text-neutral-900 dark:text-dark-text">
+                      Haptic &amp; sound feedback
+                    </p>
+                    <p className="text-xs text-neutral-500 dark:text-dark-text-tertiary">
+                      Vibration and soft click sounds on taps
+                    </p>
+                  </div>
+                  <div
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                      hapticEnabled ? "bg-primary" : "bg-neutral-300 dark:bg-dark-border"
+                    }`}
+                    aria-hidden
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                        hapticEnabled ? "translate-x-6" : "translate-x-1"
+                      }`}
+                    />
+                  </div>
+                </button>
+              )}
               {isStandalone ? (
                 <div className="flex items-center w-full p-3 rounded-md opacity-60 cursor-default">
                   <Smartphone className="h-5 w-5 text-neutral-500 mr-3" />
