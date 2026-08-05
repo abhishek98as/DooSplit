@@ -21,6 +21,7 @@ export const PK = {
   token:      (token: string) => `TOKEN#${token}`,
   recurring:  (id: string) => `RECURRING#${id}`,
   feedback:   (id: string) => `FEEDBACK#${id}`,
+  note:       (id: string) => `NOTE#${id}`,
 } as const;
 
 // ── Sort Key builders ─────────────────────────────────────────────────────────
@@ -37,6 +38,8 @@ export const SK = {
   alloc:           (expenseId: string)       => `ALLOC#${expenseId}`,
   run:             (runDate: string, id: string) => `RUN#${runDate}#${id}`,
   nudge:           (nudgeId: string) => `NUDGE#${nudgeId}`,
+  noteShare:       (userId: string) => `SHARE#${userId}`,
+  noteAccess:      (noteId: string) => `NOTE_ACCESS#${noteId}`,
 
   /** User-scoped feed items — sorted newest-first when queried with ScanIndexForward=false */
   expense:         (date: string, id: string)     => `EXPENSE#${date}#${id}`,

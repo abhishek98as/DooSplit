@@ -65,7 +65,7 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
     if (invitation.invited_by !== auth.user.id) return NextResponse.json({ error: "Invitation not found" }, { status: 404 });
     if (invitation.status === "accepted") return NextResponse.json({ error: "Cannot cancel accepted invitation" }, { status: 400 });
 
-    await updateInvitationStatus(id, "cancelled");
+    await updateInvitationStatus(id, "cancelled", new Date().toISOString());
     return NextResponse.json({ message: "Invitation cancelled" }, { status: 200 });
   } catch (error: any) {
     console.error("Cancel invitation error:", error);

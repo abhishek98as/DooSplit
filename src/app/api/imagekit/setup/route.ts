@@ -1,7 +1,17 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getAdminStorage } from "@/lib/firestore/admin";
 
 export const dynamic = "force-dynamic";
+
+function isDiagnosticsAllowed(request: NextRequest): boolean {
+  if (process.env.NODE_ENV === "production" && process.env.ENABLE_TEST_SERVICES !== "true") {
+    return false;
+  }
+  const secret = process.env.TEST_SERVICES_SECRET || process.env.CRON_SECRET;
+  if (!secret) return process.env.NODE_ENV !== "production";
+  const auth = request.headers.get("authorization") || "";
+  return auth === `Bearer ${secret}`;
+}
 
 async function resolveStorageState() {
   const storage = getAdminStorage();
@@ -23,7 +33,11 @@ async function resolveStorageState() {
   };
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  if (!isDiagnosticsAllowed(request)) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
   try {
     const storage = await resolveStorageState();
     return NextResponse.json({
@@ -31,19 +45,25 @@ export async function GET() {
       provider: "firebase",
       storage,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const message =
+      error instanceof Error ? error.message : "Failed to get storage diagnostics";
     return NextResponse.json(
       {
         success: false,
         provider: "firebase",
-        error: error?.message || "Failed to get storage diagnostics",
+        error: message,
       },
       { status: 500 }
     );
   }
 }
 
-export async function POST() {
+export async function POST(request: NextRequest) {
+  if (!isDiagnosticsAllowed(request)) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
   try {
     const storage = await resolveStorageState();
     return NextResponse.json({
@@ -52,12 +72,14 @@ export async function POST() {
       message: "Firebase Storage is active for image uploads",
       storage,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const message =
+      error instanceof Error ? error.message : "Failed to verify Firebase Storage";
     return NextResponse.json(
       {
         success: false,
         provider: "firebase",
-        error: error?.message || "Failed to verify Firebase Storage",
+        error: message,
       },
       { status: 500 }
     );

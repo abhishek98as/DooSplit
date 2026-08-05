@@ -35,6 +35,8 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
         email: invitation.email,
         invitedBy: inviter,
         expiresAt: invitation.expires_at || null,
+        groupId: invitation.group_id || null,
+        groupName: invitation.group_name || null,
       },
     }, { status: 200 });
   } catch (error: any) {

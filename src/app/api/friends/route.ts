@@ -93,6 +93,7 @@ export async function POST(request: NextRequest) {
 
     if (dummyName) {
       const trimmedName = String(dummyName).trim();
+      const phone = body?.phone ? String(body.phone).trim() : "";
       if (!trimmedName) {
         return NextResponse.json(
           { error: "Name is required for dummy friend" },
@@ -101,7 +102,9 @@ export async function POST(request: NextRequest) {
       }
 
       const dummyId = newAppId();
-      const dummyEmail = `dummy_${Date.now()}_${Math.random().toString(36).slice(2, 8)}@placeholder.doosplit`;
+      const dummyEmail = phone
+        ? `phone_${phone.replace(/\D/g, "") || Date.now()}@placeholder.doosplit`
+        : `dummy_${Date.now()}_${Math.random().toString(36).slice(2, 8)}@placeholder.doosplit`;
       const nowIso = new Date().toISOString();
 
       const { listDummiesCreatedByUser, putUser } = await import(
@@ -124,6 +127,7 @@ export async function POST(request: NextRequest) {
         name_normalized: normalizeName(trimmedName),
         email: dummyEmail,
         email_normalized: normalizeEmail(dummyEmail),
+        phone_number: phone || undefined,
         is_dummy: true,
         created_by: userId,
         is_active: true,
@@ -149,13 +153,15 @@ export async function POST(request: NextRequest) {
 
       return NextResponse.json(
         {
-          message: `Dummy friend "${trimmedName}" created successfully`,
+          message: `Guest "${trimmedName}" created successfully`,
           friendship: {
             friend: {
               id: dummyId,
               name: trimmedName,
               email: dummyEmail,
+              phone: phone || null,
               isDummy: true,
+              isRegistered: false,
             },
           },
         },

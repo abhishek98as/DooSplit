@@ -49,6 +49,25 @@ async function processInviteDynamo(inviteToken: string, newUserId: string): Prom
     updated_at: now,
   });
 
+  // If invite was for a group, add the new user as a member
+  if (invite.group_id) {
+    const { putGroupMember, getGroupMember } = await import(
+      "@/lib/dynamodb/entities/groups"
+    );
+    const already = await getGroupMember(String(invite.group_id), newUserId);
+    if (!already) {
+      await putGroupMember({
+        group_id: String(invite.group_id),
+        user_id: newUserId,
+        role: "member",
+        status: "active",
+        joined_at: now,
+        created_at: now,
+        updated_at: now,
+      });
+    }
+  }
+
   const { logFriendAdded } = await import("@/lib/activity-logger");
   const [newUser, inviterUser] = await Promise.all([
     getUserById(newUserId),

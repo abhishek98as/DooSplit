@@ -39,17 +39,12 @@ export async function GET(request: NextRequest) {
       cacheKey,
       CACHE_TTL.expenses,
       async () => {
-          try {
-            const repository = await getActiveRepository();
-            return repository.getExpenses({
-              userId, page, limit, friendId, category, groupId,
-              status, minAmount, maxAmount, startDate, endDate,
-            });
-          } catch (repoErr) {
-            console.error("Repository getExpenses error:", repoErr);
-            return { expenses: [], totalCount: 0, page, limit };
-          }
-        }
+        const repository = await getActiveRepository();
+        return repository.getExpenses({
+          userId, page, limit, friendId, category, groupId,
+          status, minAmount, maxAmount, startDate, endDate,
+        });
+      }
     );
 
     return NextResponse.json(payload, {

@@ -39,7 +39,7 @@ export async function createNotification(params: CreateNotificationParams) {
       user_id: toId(params.userId),
       type: params.type,
       title: params.type,
-      body: params.message,
+      message: params.message,
       data: params.data || {},
       is_read: false,
       created_at: now.toISOString(),
@@ -72,7 +72,7 @@ export async function createNotifications(notifications: CreateNotificationParam
         user_id: toId(n.userId),
         type: n.type,
         title: n.type,
-        body: n.message,
+        message: n.message,
         data: n.data || {},
         is_read: false,
         created_at: now.toISOString(),
@@ -282,6 +282,29 @@ export async function notifyGroupInvitation(
       groupId: toId(groupId),
       groupName,
       invitedByName: invitedBy.name,
+    },
+  });
+}
+
+/**
+ * Notify a friend that a note was shared with them (pending accept).
+ */
+export async function notifyNoteShareInvite(params: {
+  noteId: IdLike;
+  noteTitle: string;
+  invitedBy: { id: IdLike; name: string };
+  invitedUserId: IdLike;
+}) {
+  const title = params.noteTitle?.trim() || "Untitled note";
+  await createNotification({
+    userId: params.invitedUserId,
+    type: "note_share_invite",
+    message: `${params.invitedBy.name} invited you to collaborate on "${title}"`,
+    data: {
+      noteId: toId(params.noteId),
+      noteTitle: title,
+      invitedById: toId(params.invitedBy.id),
+      invitedByName: params.invitedBy.name,
     },
   });
 }

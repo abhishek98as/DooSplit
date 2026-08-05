@@ -6,6 +6,13 @@ export interface NoteChecklistItem {
   updatedAt: string;
 }
 
+export interface NotePermissions {
+  canCreate: boolean;
+  canRead: boolean;
+  canUpdate: boolean;
+  canDelete: boolean;
+}
+
 export interface NoteItem {
   id: string;
   title: string;
@@ -19,6 +26,30 @@ export interface NoteItem {
   reminder: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Present on shared notes returned from API */
+  isOwner?: boolean;
+  sharedBy?: { id: string; name: string } | null;
+  permissions?: NotePermissions;
+  shareStatus?: "pending" | "accepted" | "rejected";
+}
+
+export const FULL_CLIENT_PERMISSIONS: NotePermissions = {
+  canCreate: true,
+  canRead: true,
+  canUpdate: true,
+  canDelete: true,
+};
+
+export function notePermissions(note: NoteItem): NotePermissions {
+  if (note.isOwner !== false) return FULL_CLIENT_PERMISSIONS;
+  return (
+    note.permissions || {
+      canCreate: true,
+      canRead: true,
+      canUpdate: false,
+      canDelete: false,
+    }
+  );
 }
 
 export interface NoteDraft {

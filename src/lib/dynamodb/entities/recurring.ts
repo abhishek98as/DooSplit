@@ -62,9 +62,16 @@ export async function listRecurringTemplatesDue(
   });
 }
 
+type RecurringTemplateUpdateFields = Partial<
+  Omit<
+    DdbRecurringTemplate,
+    "PK" | "SK" | "entityType" | "GSI1PK" | "GSI1SK" | "GSI2PK" | "GSI2SK" | "id" | "owner_id" | "created_at"
+  >
+>;
+
 export async function updateRecurringTemplate(
   id: string,
-  fields: Partial<Pick<DdbRecurringTemplate, "next_run_date" | "last_run_date" | "run_count" | "is_active" | "end_date" | "updated_at">>
+  fields: RecurringTemplateUpdateFields
 ): Promise<void> {
   const sets: string[] = [];
   const names: Record<string, string> = {};
@@ -75,10 +82,13 @@ export async function updateRecurringTemplate(
     names[`#${k}`] = k;
     vals[`:${k}`] = v;
   }
-  // Also update the GSI2 key if next_run_date changes
-  if (fields.next_run_date) {
-    sets.push("GSI2PK = :g2pk");
-    vals[":g2pk"] = GSI2PK.due(fields.next_run_date.slice(0, 10));
+  const nextRunDate =
+    fields.next_run_date?.slice(0, 10) ||
+    (fields.next_run_at ? fields.next_run_at.slice(0, 10) : undefined);
+  if (nextRunDate) {
+    sets.push("GSI2PK = :g2pk", "GSI2SK = :g2sk");
+    vals[":g2pk"] = GSI2PK.due(nextRunDate);
+    vals[":g2sk"] = GSI2SK.recurring(id);
   }
   if (sets.length === 0) return;
   await getDynamoDB().send(

@@ -104,10 +104,10 @@ export function HapticFeedbackProvider({ children }: { children: React.ReactNode
       if (interactive.hasAttribute("disabled") || interactive.getAttribute("aria-disabled") === "true") {
         return;
       }
-      if (interactive.dataset.haptic === "off") return;
-
-      const kind = (interactive.dataset.haptic as HapticKind | undefined) || "tap";
-      triggerHapticFeedback(kind === "off" ? "tap" : kind);
+      const kindAttr = interactive.dataset.haptic;
+      if (kindAttr === "off") return;
+      const kind = (kindAttr as HapticKind | undefined) || "tap";
+      triggerHapticFeedback(kind);
     };
 
     document.addEventListener("pointerdown", onPointerDown, { passive: true });

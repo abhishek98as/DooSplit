@@ -7,7 +7,8 @@ import {
 } from "@/lib/cache";
 import { requireUser } from "@/lib/auth/require-user";
 import { getActiveRepository } from "@/lib/data";
-import { createGroupInRepos } from "@/lib/firestore/write-operations";
+import { createGroupInDynamo } from "@/lib/dynamodb/write-operations";
+import { newAppId } from "@/lib/ids";
 import { logGroupCreated } from "@/lib/activity-logger";
 
 export const dynamic = "force-dynamic";
@@ -80,18 +81,32 @@ export async function POST(request: NextRequest) {
 
     const allMemberIds = [userId, ...dedupMembers];
 
-    const groupData = {
-      name: String(name).trim(),
-      description: description || "",
-      image: image || null,
-      type: type || "trip",
-      currency: currency || "INR",
-      created_by: userId,
-      is_active: true,
-      members: allMemberIds,
-    };
-
-    const groupId = await createGroupInRepos(groupData);
+    const groupId = newAppId();
+    const nowIso = new Date().toISOString();
+    await createGroupInDynamo({
+      group: {
+        id: groupId,
+        name: String(name).trim(),
+        description: description || "",
+        image: image || null,
+        type: type || "trip",
+        currency: currency || "INR",
+        created_by: userId,
+        is_active: true,
+        member_count: allMemberIds.length,
+        created_at: nowIso,
+        updated_at: nowIso,
+      },
+      members: allMemberIds.map((memberId) => ({
+        group_id: groupId,
+        user_id: memberId,
+        role: memberId === userId ? "admin" : "member",
+        status: "active",
+        joined_at: nowIso,
+        created_at: nowIso,
+        updated_at: nowIso,
+      })),
+    });
 
     const { getGroupById, listGroupMembers } = await import(
       "@/lib/dynamodb/entities/groups"

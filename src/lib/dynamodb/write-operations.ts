@@ -78,7 +78,7 @@ export async function createExpenseInDynamo(input: CreateExpenseInput): Promise<
           user_id: p.user_id,
           amount_owed: p.amount_owed,
           amount_paid: p.amount_paid,
-          is_settled: p.is_settled,
+          is_settled: Boolean(p.is_settled || expense.is_settled),
           is_excluded: p.is_excluded,
           group_id: expense.group_id,
           created_by: expense.created_by,
@@ -89,6 +89,7 @@ export async function createExpenseInDynamo(input: CreateExpenseInput): Promise<
           date: expense.date,
           split_type: expense.split_type,
           is_deleted: expense.is_deleted,
+          payment_status: expense.payment_status || (expense.is_settled ? "paid" : "unpaid"),
           created_at: expense.created_at,
           updated_at: expense.updated_at,
         } satisfies DdbExpenseFeed,
@@ -114,6 +115,7 @@ export async function createExpenseInDynamo(input: CreateExpenseInput): Promise<
                 split_type: expense.split_type,
                 is_deleted: expense.is_deleted,
                 is_settled: expense.is_settled,
+                payment_status: expense.payment_status || (expense.is_settled ? "paid" : "unpaid"),
                 created_at: expense.created_at,
                 updated_at: expense.updated_at,
               } satisfies DdbGroupExpenseFeed,
@@ -462,7 +464,7 @@ export async function updateExpenseInDynamo(input: UpdateExpenseInput): Promise<
           user_id: p.user_id,
           amount_owed: p.amount_owed,
           amount_paid: p.amount_paid,
-          is_settled: p.is_settled,
+          is_settled: Boolean(p.is_settled || expense.is_settled),
           is_excluded: p.is_excluded,
           group_id: expense.group_id,
           created_by: expense.created_by,
@@ -473,6 +475,7 @@ export async function updateExpenseInDynamo(input: UpdateExpenseInput): Promise<
           date: expense.date,
           split_type: expense.split_type,
           is_deleted: expense.is_deleted,
+          payment_status: expense.payment_status || (expense.is_settled ? "paid" : "unpaid"),
           created_at: expense.created_at,
           updated_at: expense.updated_at,
         } satisfies DdbExpenseFeed,
@@ -498,6 +501,7 @@ export async function updateExpenseInDynamo(input: UpdateExpenseInput): Promise<
                 split_type: expense.split_type,
                 is_deleted: expense.is_deleted,
                 is_settled: expense.is_settled,
+                payment_status: expense.payment_status || (expense.is_settled ? "paid" : "unpaid"),
                 created_at: expense.created_at,
                 updated_at: expense.updated_at,
               } satisfies DdbGroupExpenseFeed,
@@ -561,9 +565,10 @@ export async function updateExpensePaymentStatusInDynamo(
       new UpdateCommand({
         TableName: TABLE,
         Key: { PK: PK.user(p.user_id), SK: SK.expense(ts, expenseId) },
-        UpdateExpression: "SET is_settled = :settled, updated_at = :ts",
+        UpdateExpression: "SET is_settled = :settled, payment_status = :status, updated_at = :ts",
         ExpressionAttributeValues: {
           ":settled": isSettled,
+          ":status": paymentStatus,
           ":ts": updatedAt,
         },
       })
@@ -576,9 +581,10 @@ export async function updateExpensePaymentStatusInDynamo(
         new UpdateCommand({
           TableName: TABLE,
           Key: { PK: PK.group(expense.group_id), SK: SK.expense(ts, expenseId) },
-          UpdateExpression: "SET is_settled = :settled, updated_at = :ts",
+          UpdateExpression: "SET is_settled = :settled, payment_status = :status, updated_at = :ts",
           ExpressionAttributeValues: {
             ":settled": isSettled,
+            ":status": paymentStatus,
             ":ts": updatedAt,
           },
         })

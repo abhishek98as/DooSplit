@@ -133,30 +133,33 @@ export async function GET(request: NextRequest) {
   }
   results.tests.dynamoDb = dynamoDbTest;
 
-  // Gemini Test
-  const geminiTest: Record<string, any> = {
-    name: "Google Gemini Connection",
-    hasApiKey: Boolean(process.env.GEMINI_API_KEY),
+  // DeepSeek AI Test
+  const deepseekTest: Record<string, any> = {
+    name: "DeepSeek Connection",
+    hasApiKey: Boolean(process.env.DEEPSEEK_API_KEY),
   };
-  if (process.env.GEMINI_API_KEY) {
+  if (process.env.DEEPSEEK_API_KEY) {
     try {
-      const { GoogleGenerativeAI } = await import("@google/generative-ai");
-      const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-      const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-      const testResult = await model.generateContent("Test connection: Say OK");
-      geminiTest.passed = true;
-      geminiTest.response = testResult.response.text().trim();
+      const { deepSeekComplete } = await import("@/lib/ai/deepseek");
+      const reply = await deepSeekComplete({
+        system: "Reply with exactly OK",
+        user: "ping",
+        maxTokens: 16,
+      });
+      deepseekTest.passed = /ok/i.test(reply);
+      deepseekTest.response = reply.slice(0, 40);
+      if (!deepseekTest.passed) allPassed = false;
     } catch (error: any) {
-      geminiTest.passed = false;
-      geminiTest.error = error.message;
+      deepseekTest.passed = false;
+      deepseekTest.error = "Connection failed";
       allPassed = false;
     }
   } else {
-    geminiTest.passed = false;
-    geminiTest.error = "GEMINI_API_KEY is not defined in the environment variables.";
+    deepseekTest.passed = false;
+    deepseekTest.error = "AI is not configured";
     allPassed = false;
   }
-  results.tests.gemini = geminiTest;
+  results.tests.deepseek = deepseekTest;
 
   // Vercel AI SDK Test
   const aiSdkTest: Record<string, any> = {
@@ -164,45 +167,14 @@ export async function GET(request: NextRequest) {
   };
   try {
     const ai = await import("ai");
-    const googleSdk = await import("@ai-sdk/google");
     aiSdkTest.passed = true;
     aiSdkTest.aiVersion = ai ? "present" : "missing";
-    aiSdkTest.googleSdk = googleSdk ? "present" : "missing";
   } catch (error: any) {
     aiSdkTest.passed = false;
     aiSdkTest.error = error.message;
     allPassed = false;
   }
   results.tests.aiSdk = aiSdkTest;
-
-  // AI SDK Streaming Test
-  const aiSdkStreamTest: Record<string, any> = {
-    name: "Vercel AI SDK Streaming",
-  };
-  if (process.env.GEMINI_API_KEY) {
-    try {
-      const { createGoogleGenerativeAI } = await import("@ai-sdk/google");
-      const { streamText } = await import("ai");
-      const google = createGoogleGenerativeAI({ apiKey: process.env.GEMINI_API_KEY });
-      
-      const result = streamText({
-        model: google("gemini-2.5-flash") as any,
-        messages: [{ role: "user", content: "Say OK" }],
-      });
-      
-      aiSdkStreamTest.passed = true;
-      aiSdkStreamTest.response = "Stream initialized successfully";
-    } catch (error: any) {
-      aiSdkStreamTest.passed = false;
-      aiSdkStreamTest.error = error.message;
-      allPassed = false;
-    }
-  } else {
-    aiSdkStreamTest.passed = false;
-    aiSdkStreamTest.error = "GEMINI_API_KEY is not defined in the environment variables.";
-    allPassed = false;
-  }
-  results.tests.aiSdkStream = aiSdkStreamTest;
 
   const testNames = Object.keys(results.tests);
   const passedCount = testNames.filter((name) => results.tests[name].passed).length;

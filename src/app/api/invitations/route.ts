@@ -3,7 +3,7 @@ import crypto from "crypto";
 import { sendInviteEmail } from "@/lib/email";
 import { requireUser } from "@/lib/auth/require-user";
 import { getUserByEmail, getUserById } from "@/lib/dynamodb/entities/users";
-import { putInvitation, listInvitationsByOwner, getInvitationByToken, getInvitationById } from "@/lib/dynamodb/entities/invitations";
+import { putInvitation, listInvitationsByOwner } from "@/lib/dynamodb/entities/invitations";
 import { newAppId } from "@/lib/ids";
 
 export const dynamic = "force-dynamic";
@@ -22,6 +22,8 @@ function normalizeInvitation(inv: any) {
     email_normalized: inv.email_normalized || inv.email,
     token: inv.token,
     status: inv.status || "pending",
+    groupId: inv.group_id || null,
+    groupName: inv.group_name || null,
     createdAt: inv.created_at,
     created_at: inv.created_at,
     updatedAt: inv.updated_at,
@@ -56,6 +58,8 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json();
     const email = normalizeEmail(body?.email || "");
+    const groupId = body?.groupId ? String(body.groupId).trim() : "";
+    const groupName = body?.groupName ? String(body.groupName).trim() : "";
 
     if (!email) return NextResponse.json({ error: "Email is required" }, { status: 400 });
     if (!/^\S+@\S+\.\S+$/.test(email)) return NextResponse.json({ error: "Please enter a valid email address" }, { status: 400 });
@@ -69,17 +73,57 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "You cannot invite yourself" }, { status: 400 });
     }
 
-    // Check if user already exists
+    let resolvedGroupName = groupName;
+    if (groupId) {
+      const { getGroupById, getGroupMember } = await import("@/lib/dynamodb/entities/groups");
+      const membership = await getGroupMember(groupId, auth.user.id);
+      if (!membership) {
+        return NextResponse.json({ error: "You are not a member of this group" }, { status: 403 });
+      }
+      const group = await getGroupById(groupId);
+      if (!group || group.is_active === false) {
+        return NextResponse.json({ error: "Group not found" }, { status: 404 });
+      }
+      resolvedGroupName = resolvedGroupName || String(group.name || "");
+
+      // If user already on DooSplit, add them to the group directly
+      const existingUser = await getUserByEmail(email);
+      if (existingUser) {
+        const alreadyMember = await getGroupMember(groupId, existingUser.id);
+        if (alreadyMember) {
+          return NextResponse.json({
+            mode: "already_member",
+            message: "This person is already in the group.",
+          });
+        }
+        const nowIso = new Date().toISOString();
+        const { putGroupMember } = await import("@/lib/dynamodb/entities/groups");
+        await putGroupMember({
+          group_id: groupId,
+          user_id: existingUser.id,
+          role: "member",
+          status: "active",
+          joined_at: nowIso,
+          created_at: nowIso,
+          updated_at: nowIso,
+        });
+        return NextResponse.json({
+          mode: "group_member_added",
+          message: `${existingUser.name || email} was added to the group.`,
+          userId: existingUser.id,
+        });
+      }
+    }
+
+    // Check if user already exists (friend invite path)
     const existingUser = await getUserByEmail(email);
-    if (existingUser) {
+    if (existingUser && !groupId) {
       return NextResponse.json({
         mode: "friend_request_created",
         message: "User is already on DooSplit.",
       }, { status: 200 });
     }
 
-    // Check for existing invitation
-    const existingInvites = await getInvitationByToken("");
     const now = new Date().toISOString();
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
     const token = crypto.randomBytes(32).toString("hex");
@@ -95,6 +139,9 @@ export async function POST(request: NextRequest) {
       created_at: now,
       updated_at: now,
       expires_at: expiresAt,
+      ...(groupId
+        ? { group_id: groupId, group_name: resolvedGroupName || undefined }
+        : {}),
     };
 
     await putInvitation(invitation);

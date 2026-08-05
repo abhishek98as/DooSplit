@@ -6,13 +6,26 @@ import AppShell from "@/components/layout/AppShell";
 import { useNotes } from "@/components/notes/useNotes";
 import NoteCard from "@/components/notes/NoteCard";
 import NoteEditorModal from "@/components/notes/NoteEditorModal";
+import NoteShareModal from "@/components/notes/NoteShareModal";
+import NoteAccessSettings from "@/components/notes/NoteAccessSettings";
 import NotesFilterBar from "@/components/notes/NotesFilterBar";
 import NotesSettingsModal from "@/components/notes/NotesSettingsModal";
 import NotesToast from "@/components/notes/NotesToast";
 import NotesEmptyState from "@/components/notes/NotesEmptyState";
+import { notePermissions } from "@/components/notes/types";
+import type { NoteItem } from "@/components/notes/types";
 
 export default function NotesPage() {
   const notes = useNotes();
+  const [shareNote, setShareNote] = React.useState<NoteItem | null>(null);
+  const [accessNoteId, setAccessNoteId] = React.useState<string | null>(null);
+
+  const editingNote =
+    notes.editingId && !notes.editingId.startsWith("draft_")
+      ? notes.notes.find((n) => n.id === notes.editingId)
+      : undefined;
+  const isOwner = editingNote ? editingNote.isOwner !== false : true;
+  const perms = editingNote ? notePermissions(editingNote) : undefined;
 
   if (notes.loading) {
     return (
@@ -27,7 +40,6 @@ export default function NotesPage() {
   return (
     <AppShell>
       <div className="min-h-[calc(100vh-140px)] w-full relative px-4 py-4 flex flex-col gap-4">
-        {/* ── Header Row ──────────────────────────── */}
         <div className="flex items-center justify-between gap-3">
           <p className="text-xs text-neutral-500 dark:text-dark-text-tertiary md:hidden">
             {notes.filteredNotes.length} {notes.filteredNotes.length === 1 ? "note" : "notes"} · Keep track of lists, reminders & quick thoughts
@@ -51,7 +63,6 @@ export default function NotesPage() {
           </div>
         </div>
 
-        {/* ── Filter Bar (compact underline tabs + label chips) ────────────────── */}
         <NotesFilterBar
           currentView={notes.currentView}
           onViewChange={notes.setCurrentView}
@@ -65,7 +76,6 @@ export default function NotesPage() {
           onEmptyTrash={notes.emptyTrash}
         />
 
-        {/* ── Notes Grid ──────────────────────────── */}
         <div className="flex-1 min-w-0">
           {notes.filteredNotes.length === 0 ? (
             <NotesEmptyState searchQuery={notes.searchQuery} />
@@ -80,6 +90,7 @@ export default function NotesPage() {
                   onDelete={notes.deleteNote}
                   onToggleItemDone={notes.toggleCardItemDone}
                   onClick={notes.openEditor}
+                  onShare={(_e, n) => setShareNote(n)}
                 />
               ))}
             </div>
@@ -87,7 +98,6 @@ export default function NotesPage() {
         </div>
       </div>
 
-      {/* ── Mobile Floating Add Button ──────────────────────────── */}
       <button
         onClick={() => notes.openEditor()}
         className="fixed bottom-24 right-4 h-14 w-14 bg-primary text-white rounded-full flex items-center justify-center shadow-2xl hover:scale-105 active:scale-95 transition-transform z-30 md:hidden"
@@ -96,10 +106,8 @@ export default function NotesPage() {
         <Plus className="h-6 w-6" />
       </button>
 
-      {/* ── Toast ──────────────────────────── */}
       <NotesToast toast={notes.toast} onDismiss={() => notes.setToast(null)} />
 
-      {/* ── Editor Modal ──────────────────────────── */}
       <NoteEditorModal
         isOpen={notes.modalOpen}
         editingId={notes.editingId}
@@ -115,9 +123,30 @@ export default function NotesPage() {
         onUpdateDraftItem={notes.updateDraftItem}
         onToggleDraftItem={notes.toggleDraftItem}
         onRemoveDraftItem={notes.removeDraftItem}
+        isOwner={isOwner}
+        permissions={perms}
+        sharedByName={editingNote?.sharedBy?.name}
+        onShare={() => {
+          if (editingNote) setShareNote(editingNote);
+        }}
+        onManageAccess={() => {
+          if (editingNote) setAccessNoteId(editingNote.id);
+        }}
       />
 
-      {/* ── Settings Modal ──────────────────────────── */}
+      <NoteShareModal
+        isOpen={Boolean(shareNote)}
+        noteId={shareNote?.id || ""}
+        noteTitle={shareNote?.title || ""}
+        onClose={() => setShareNote(null)}
+      />
+
+      <NoteAccessSettings
+        isOpen={Boolean(accessNoteId)}
+        noteId={accessNoteId || ""}
+        onClose={() => setAccessNoteId(null)}
+      />
+
       <NotesSettingsModal
         isOpen={notes.settingsOpen}
         onClose={() => notes.setSettingsOpen(false)}

@@ -10,6 +10,8 @@ import Input from "@/components/ui/Input";
 import Modal from "@/components/ui/Modal";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
 import getOfflineStore from "@/lib/offline-store";
+import { useProAccess } from "@/contexts/ProAccessContext";
+import { ProBadge } from "@/components/ProGate";
 import {
   ArrowLeft,
   Pencil,
@@ -31,6 +33,9 @@ interface GroupMember {
     _id: string;
     name: string;
     email: string;
+    phone?: string | null;
+    isDummy?: boolean;
+    isRegistered?: boolean;
   } | null;
   role: string;
 }
@@ -54,6 +59,8 @@ interface Group {
   notes?: string;
   settleUpDate?: string;
   simplifyDebts?: boolean;
+  settleUpRemindersEnabled?: boolean;
+  defaultSplit?: { payerId?: string; method?: string } | null;
 }
 
 interface FriendOption {
@@ -137,6 +144,7 @@ function formatCurrency(amount: number, currency = "INR"): string {
 
 export default function GroupSettingsPage() {
   const { data: session, status } = useSession();
+  const { isPro, requirePro } = useProAccess();
   const router = useRouter();
   const params = useParams();
   const groupId = String(params.id || "");
@@ -155,6 +163,13 @@ export default function GroupSettingsPage() {
 
   const [showAddMembersModal, setShowAddMembersModal] = useState(false);
   const [addingMemberId, setAddingMemberId] = useState<string | null>(null);
+  const [addMemberTab, setAddMemberTab] = useState<"friends" | "guest" | "email">("friends");
+  const [guestName, setGuestName] = useState("");
+  const [guestPhone, setGuestPhone] = useState("");
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [guestSubmitting, setGuestSubmitting] = useState(false);
+  const [inviteSubmitting, setInviteSubmitting] = useState(false);
+  const [addMemberMsg, setAddMemberMsg] = useState<string | null>(null);
 
   const [inviteCopied, setInviteCopied] = useState(false);
 
@@ -348,12 +363,83 @@ export default function GroupSettingsPage() {
       }
 
       await fetchGroup();
+      await fetchFriends();
       setShowAddMembersModal(false);
+      setAddMemberMsg(null);
     } catch (error) {
       console.error("Failed to add member:", error);
       alert(error instanceof Error ? error.message : "Unable to add member.");
     } finally {
       setAddingMemberId(null);
+    }
+  };
+
+  const addGuestMember = async () => {
+    const name = guestName.trim();
+    if (!name) {
+      setAddMemberMsg("Enter a name for the guest member.");
+      return;
+    }
+    setGuestSubmitting(true);
+    setAddMemberMsg(null);
+    try {
+      const createRes = await fetch("/api/friends", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          dummyName: name,
+          phone: guestPhone.trim() || undefined,
+        }),
+      });
+      const createData = await createRes.json().catch(() => ({}));
+      if (!createRes.ok) {
+        throw new Error(createData.error || "Failed to create guest");
+      }
+      const guestId = createData.friendship?.friend?.id;
+      if (!guestId) throw new Error("Guest was created but no id returned");
+      await addMember(guestId);
+      setGuestName("");
+      setGuestPhone("");
+      setAddMemberTab("friends");
+    } catch (error) {
+      setAddMemberMsg(error instanceof Error ? error.message : "Unable to add guest");
+    } finally {
+      setGuestSubmitting(false);
+    }
+  };
+
+  const inviteByEmail = async () => {
+    const email = inviteEmail.trim().toLowerCase();
+    if (!email) {
+      setAddMemberMsg("Enter an email address.");
+      return;
+    }
+    setInviteSubmitting(true);
+    setAddMemberMsg(null);
+    try {
+      const res = await fetch("/api/invitations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email,
+          groupId,
+          groupName: group?.name,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to send invite");
+      }
+      setAddMemberMsg(data.message || "Invitation sent.");
+      setInviteEmail("");
+      if (data.mode === "group_member_added") {
+        await fetchGroup();
+        await fetchFriends();
+      }
+    } catch (error) {
+      setAddMemberMsg(error instanceof Error ? error.message : "Unable to invite");
+    } finally {
+      setInviteSubmitting(false);
     }
   };
 
@@ -714,6 +800,14 @@ export default function GroupSettingsPage() {
                               {member.userId?.name || "Invited Member"}
                               {isCurrentUser ? " (you)" : ""}
                             </p>
+                            {(member.userId?.isDummy || !member.userId?.isRegistered) && member.userId && (
+                              <span
+                                title="Unregistered guest (email/phone placeholder)"
+                                className="inline-flex items-center rounded-full bg-neutral-100 px-1.5 py-0.5 text-[10px] font-semibold text-neutral-500 dark:bg-dark-bg-tertiary dark:text-dark-text-tertiary"
+                              >
+                                ✉️ Guest
+                              </span>
+                            )}
                             {!member.userId && (
                               <span
                                 title="Unregistered member (invited)"
@@ -724,7 +818,9 @@ export default function GroupSettingsPage() {
                             )}
                           </div>
                           <p className="text-sm text-neutral-500 dark:text-dark-text-secondary">
-                            {member.userId?.email || "Pending registration"}
+                            {member.userId?.isDummy
+                              ? member.userId.phone || "Guest · not on DooSplit yet"
+                              : member.userId?.email || "Pending registration"}
                           </p>
                         </div>
                       </div>
@@ -831,7 +927,48 @@ export default function GroupSettingsPage() {
               </button>
             </div>
             
-            <div className="border-t border-neutral-100 dark:border-dark-border/40 pt-3">
+            <div className="border-t border-neutral-100 dark:border-dark-border/40 pt-3 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-medium text-neutral-900 dark:text-dark-text">
+                      Default split
+                    </p>
+                    <ProBadge />
+                  </div>
+                  <p className="text-xs text-neutral-500 dark:text-dark-text-secondary mt-0.5">
+                    {group.defaultSplit?.method
+                      ? `Paid by you · split ${group.defaultSplit.method}`
+                      : "Paid by you and split equally"}
+                  </p>
+                </div>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => {
+                    if (!requirePro("Default split")) return;
+                    const nextMethod =
+                      group.defaultSplit?.method === "exact" ? "equally" : "exact";
+                    void fetch(`/api/groups/${groupId}`, {
+                      method: "PUT",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        defaultSplit: {
+                          payerId: session?.user?.id,
+                          method: nextMethod,
+                        },
+                      }),
+                    }).then(async (res) => {
+                      if (res.ok) {
+                        const data = await res.json();
+                        if (data.group) setGroup(data.group);
+                      }
+                    });
+                  }}
+                >
+                  Change
+                </Button>
+              </div>
               <Button variant="secondary" onClick={openSimplifiedDebts} className="w-full">
                 <Wand2 className="mr-2 h-4 w-4" />
                 Review debt details
@@ -846,6 +983,7 @@ export default function GroupSettingsPage() {
             <CardTitle className="flex items-center gap-2">
               <FileText className="h-4 w-4 text-primary" />
               Expense Report
+              {!isPro && <ProBadge />}
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -854,7 +992,10 @@ export default function GroupSettingsPage() {
             </p>
             <div className="flex flex-wrap gap-2">
               <Button
-                onClick={generateGroupPdf}
+                onClick={() => {
+                  if (!requirePro("Expense report export")) return;
+                  void generateGroupPdf();
+                }}
                 disabled={exportingReport}
               >
                 {exportingReport ? (
@@ -871,7 +1012,10 @@ export default function GroupSettingsPage() {
               </Button>
               <Button
                 variant="secondary"
-                onClick={handleShareReport}
+                onClick={() => {
+                  if (!requirePro("Expense report export")) return;
+                  void handleShareReport();
+                }}
                 disabled={exportingReport}
               >
                 <Share2 className="mr-2 h-4 w-4" />
@@ -906,36 +1050,121 @@ export default function GroupSettingsPage() {
 
       <Modal
         isOpen={showAddMembersModal}
-        onClose={() => setShowAddMembersModal(false)}
+        onClose={() => {
+          setShowAddMembersModal(false);
+          setAddMemberMsg(null);
+        }}
         title="Add People"
       >
-        <div className="space-y-3">
-          {availableFriends.length === 0 ? (
-            <div className="rounded-lg border border-neutral-200 p-4 text-sm text-neutral-500 dark:border-dark-border dark:text-dark-text-secondary">
-              <div className="mb-2 flex items-center gap-2">
-                <Users className="h-4 w-4" />
-                Everyone is already in this group.
-              </div>
-            </div>
-          ) : (
-            availableFriends.map((friend) => (
-              <div
-                key={friend._id}
-                className="flex items-center justify-between rounded-lg border border-neutral-200 p-3 dark:border-dark-border"
+        <div className="space-y-4">
+          <div className="flex gap-1 rounded-lg border border-neutral-200 p-0.5 dark:border-dark-border">
+            {(
+              [
+                ["friends", "Friends"],
+                ["guest", "Guest"],
+                ["email", "Email"],
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => {
+                  setAddMemberTab(id);
+                  setAddMemberMsg(null);
+                }}
+                className={`flex-1 rounded-md px-2 py-1.5 text-xs font-semibold transition-colors ${
+                  addMemberTab === id
+                    ? "bg-primary text-white"
+                    : "text-neutral-600 dark:text-dark-text-secondary"
+                }`}
               >
-                <div>
-                  <p className="font-medium text-neutral-900 dark:text-dark-text">{friend.name}</p>
-                  <p className="text-sm text-neutral-500 dark:text-dark-text-secondary">{friend.email}</p>
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {addMemberMsg && (
+            <p className="rounded-lg bg-neutral-50 px-3 py-2 text-xs text-neutral-700 dark:bg-dark-bg-tertiary dark:text-dark-text-secondary">
+              {addMemberMsg}
+            </p>
+          )}
+
+          {addMemberTab === "friends" && (
+            <div className="space-y-3">
+              {availableFriends.length === 0 ? (
+                <div className="rounded-lg border border-neutral-200 p-4 text-sm text-neutral-500 dark:border-dark-border dark:text-dark-text-secondary">
+                  <div className="mb-2 flex items-center gap-2">
+                    <Users className="h-4 w-4" />
+                    Everyone is already in this group — try Guest or Email.
+                  </div>
                 </div>
-                <Button
-                  size="sm"
-                  onClick={() => addMember(friend._id)}
-                  disabled={addingMemberId === friend._id}
-                >
-                  {addingMemberId === friend._id ? "Adding..." : "Add"}
-                </Button>
-              </div>
-            ))
+              ) : (
+                availableFriends.map((friend) => (
+                  <div
+                    key={friend._id}
+                    className="flex items-center justify-between rounded-lg border border-neutral-200 p-3 dark:border-dark-border"
+                  >
+                    <div>
+                      <p className="font-medium text-neutral-900 dark:text-dark-text">{friend.name}</p>
+                      <p className="text-sm text-neutral-500 dark:text-dark-text-secondary">{friend.email}</p>
+                    </div>
+                    <Button
+                      size="sm"
+                      onClick={() => addMember(friend._id)}
+                      disabled={addingMemberId === friend._id}
+                    >
+                      {addingMemberId === friend._id ? "Adding..." : "Add"}
+                    </Button>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+
+          {addMemberTab === "guest" && (
+            <div className="space-y-3">
+              <p className="text-xs text-neutral-500 dark:text-dark-text-secondary">
+                Add someone who isn&apos;t on DooSplit yet (name + optional phone). They appear as a guest until they sign up.
+              </p>
+              <Input
+                placeholder="Name *"
+                value={guestName}
+                onChange={(e) => setGuestName(e.target.value)}
+              />
+              <Input
+                placeholder="Phone (optional)"
+                value={guestPhone}
+                onChange={(e) => setGuestPhone(e.target.value)}
+              />
+              <Button
+                className="w-full"
+                onClick={() => void addGuestMember()}
+                disabled={guestSubmitting}
+              >
+                {guestSubmitting ? "Adding..." : "Add guest to group"}
+              </Button>
+            </div>
+          )}
+
+          {addMemberTab === "email" && (
+            <div className="space-y-3">
+              <p className="text-xs text-neutral-500 dark:text-dark-text-secondary">
+                Invite by email. If they already use DooSplit, they join this group immediately.
+              </p>
+              <Input
+                type="email"
+                placeholder="friend@email.com"
+                value={inviteEmail}
+                onChange={(e) => setInviteEmail(e.target.value)}
+              />
+              <Button
+                className="w-full"
+                onClick={() => void inviteByEmail()}
+                disabled={inviteSubmitting}
+              >
+                {inviteSubmitting ? "Sending..." : "Send group invite"}
+              </Button>
+            </div>
           )}
         </div>
       </Modal>

@@ -94,7 +94,7 @@ export default function AddExpensePage() {
       reader.onloadend = async () => {
         try {
           const base64Data = reader.result as string;
-          const res = await fetch("/api/ai/scan", {
+          const res = await authFetch("/api/ai/scan", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({

@@ -1,9 +1,9 @@
 "use client";
 
 import React from "react";
-import { Pin, Bell, Check, Trash2, FolderArchive, Pencil } from "lucide-react";
+import { Pin, Bell, Check, Trash2, FolderArchive, Pencil, Share2, Users } from "lucide-react";
 import type { NoteItem } from "./types";
-import { COLOR_SCHEMES, formatTime, formatReminder } from "./types";
+import { COLOR_SCHEMES, formatTime, formatReminder, notePermissions } from "./types";
 
 interface NoteCardProps {
   note: NoteItem;
@@ -12,6 +12,7 @@ interface NoteCardProps {
   onDelete: (e: React.MouseEvent, note: NoteItem) => void;
   onToggleItemDone: (noteId: string, itemId: string) => void;
   onClick: (note: NoteItem) => void;
+  onShare?: (e: React.MouseEvent, note: NoteItem) => void;
 }
 
 export default function NoteCard({
@@ -21,12 +22,16 @@ export default function NoteCard({
   onDelete,
   onToggleItemDone,
   onClick,
+  onShare,
 }: NoteCardProps) {
   const scheme = COLOR_SCHEMES[note.color] || {
     bg: "bg-white dark:bg-dark-bg-secondary",
     border: "border-neutral-200 dark:border-dark-border hover:border-neutral-400 dark:hover:border-dark-border-hover",
     accent: "transparent"
   };
+  const isOwner = note.isOwner !== false;
+  const perms = notePermissions(note);
+  const canToggleItems = isOwner || perms.canUpdate;
 
   return (
     <div
@@ -44,8 +49,8 @@ export default function NoteCard({
         className="cursor-pointer p-4 pb-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 rounded-t-2xl"
         aria-label={`Open note: ${note.title || "Untitled"}`}
       >
-        {/* Pin button */}
-        {!note.id.startsWith("draft_") && !(note as any).isDraft && (
+        {/* Pin button — owner only */}
+        {!note.id.startsWith("draft_") && !(note as any).isDraft && isOwner && (
           <button
             onClick={e => { e.stopPropagation(); onTogglePin(e, note); }}
             className={`absolute top-3 right-3 p-1.5 rounded-lg text-neutral-400 hover:text-primary transition-colors ${
@@ -73,20 +78,22 @@ export default function NoteCard({
                   item.done ? "text-neutral-400 dark:text-dark-text-tertiary line-through" : "text-neutral-700 dark:text-dark-text-secondary"
                 }`}
               >
-                {/* Checkbox — stops propagation so it only toggles item, does NOT open editor */}
                 <button
                   type="button"
-                  onClick={e => { e.stopPropagation(); onToggleItemDone(note.id, item.id); }}
+                  disabled={!canToggleItems}
+                  onClick={e => {
+                    e.stopPropagation();
+                    if (canToggleItems) onToggleItemDone(note.id, item.id);
+                  }}
                   className={`h-4 w-4 shrink-0 rounded-md border flex items-center justify-center transition-all mt-0.5 ${
                     item.done
                       ? "bg-primary border-primary text-white"
                       : "border-neutral-300 dark:border-neutral-700"
-                  }`}
+                  } ${!canToggleItems ? "opacity-60 cursor-default" : ""}`}
                   aria-label={item.done ? "Mark undone" : "Mark done"}
                 >
                   {item.done && <Check className="h-3 w-3" />}
                 </button>
-                {/* Item text — clicking propagates up and opens the editor */}
                 <div className="flex flex-col min-w-0">
                   <span className="truncate">{item.text}</span>
                   <span className="text-[8px] text-neutral-400/80 leading-none mt-0.5 flex items-center gap-1.5">
@@ -118,6 +125,14 @@ export default function NoteCard({
           </div>
         )}
 
+        {/* Shared badge */}
+        {!isOwner && note.sharedBy && (
+          <div className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-sky-500/10 text-sky-600 dark:text-sky-400 font-bold rounded-full text-[9px] mb-2 mr-1">
+            <Users className="h-3 w-3" />
+            <span>Shared by {note.sharedBy.name}</span>
+          </div>
+        )}
+
         {/* Draft Badge */}
         {(note as any).isDraft && (
           <div className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-amber-500/10 text-amber-600 dark:text-amber-400 font-bold rounded-full text-[9px] mb-2">
@@ -133,7 +148,6 @@ export default function NoteCard({
         </div>
 
         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-          {/* Edit shortcut in footer — always visible on hover */}
           <button
             onClick={() => onClick(note)}
             title="Edit note"
@@ -141,7 +155,16 @@ export default function NoteCard({
           >
             <Pencil className="h-3.5 w-3.5" />
           </button>
-          {!note.id.startsWith("draft_") && !(note as any).isDraft && (
+          {isOwner && onShare && !note.id.startsWith("draft_") && !(note as any).isDraft && (
+            <button
+              onClick={e => { e.stopPropagation(); onShare(e, note); }}
+              title="Share note"
+              className="p-1 text-neutral-400 hover:text-primary rounded-md"
+            >
+              <Share2 className="h-3.5 w-3.5" />
+            </button>
+          )}
+          {isOwner && !note.id.startsWith("draft_") && !(note as any).isDraft && (
             <button
               onClick={e => onToggleArchive(e, note)}
               title="Archive"
@@ -150,13 +173,15 @@ export default function NoteCard({
               <FolderArchive className="h-3.5 w-3.5" />
             </button>
           )}
-          <button
-            onClick={e => onDelete(e, note)}
-            title="Delete"
-            className="p-1 text-neutral-400 hover:text-red-500 rounded-md"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
+          {isOwner && (
+            <button
+              onClick={e => onDelete(e, note)}
+              title="Delete"
+              className="p-1 text-neutral-400 hover:text-red-500 rounded-md"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
       </div>
     </div>

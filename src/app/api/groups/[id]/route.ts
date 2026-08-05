@@ -55,7 +55,10 @@ async function loadGroupPayload(
             _id: user.id,
             name: user.name,
             email: user.email,
+            phone: user.phone_number || null,
             profilePicture: user.photo_url || null,
+            isDummy: Boolean(user.is_dummy),
+            isRegistered: !user.is_dummy,
           }
         : null,
       role: member.role || "member",
@@ -107,6 +110,8 @@ async function loadGroupPayload(
       settleUpDate: group.settle_up_date || null,
       notes: group.notes || "",
       simplifyDebts: group.simplify_debts !== false,
+      settleUpRemindersEnabled: Boolean(group.settle_up_reminders_enabled),
+      defaultSplit: group.default_split || null,
     },
     memberIds,
   };
@@ -192,6 +197,21 @@ export async function PUT(
     if (body?.notes !== undefined) updatePayload.notes = String(body.notes).trim();
     if (body?.simplifyDebts !== undefined) {
       updatePayload.simplify_debts = Boolean(body.simplifyDebts);
+    }
+    if (body?.settleUpRemindersEnabled !== undefined) {
+      updatePayload.settle_up_reminders_enabled = Boolean(body.settleUpRemindersEnabled);
+    }
+    if (body?.defaultSplit !== undefined) {
+      updatePayload.default_split = body.defaultSplit
+        ? {
+            payerId: body.defaultSplit.payerId
+              ? String(body.defaultSplit.payerId)
+              : undefined,
+            method: body.defaultSplit.method
+              ? String(body.defaultSplit.method)
+              : "equally",
+          }
+        : null;
     }
     updatePayload.updated_at = new Date().toISOString();
 

@@ -23,6 +23,8 @@ function mapUserRow(row: any) {
     role: row.role ?? "user",
     isActive: row.is_active !== false,
     isDummy: !!row.is_dummy,
+    plan: row.plan === "pro" ? "pro" : "free",
+    planExpiresAt: row.plan_expires_at ?? null,
     authProvider: row.auth_provider ?? "email",
     emailVerified: !!row.email_verified,
     createdAt: row.created_at,

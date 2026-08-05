@@ -17,7 +17,9 @@ export async function GET(request: NextRequest) {
 
     const notifications = result.items.map((n: any) => ({
       _id: n.id, userId: n.user_id, type: n.type, title: n.title,
-      message: n.message, relatedId: n.related_id, isRead: n.is_read ?? false,
+      message: n.message || n.body || "", relatedId: n.related_id || n.data?.noteId || n.data?.groupId || n.data?.expenseId,
+      data: n.data || {},
+      isRead: n.is_read ?? false,
       createdAt: n.created_at,
     }));
 

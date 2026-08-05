@@ -129,6 +129,26 @@ export default function GroupsPage() {
   });
 
   useEffect(() => {
+    try {
+      const saved = localStorage.getItem("doosplit-show-settled-groups");
+      if (saved === "true") setShowSettledGroups(true);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        "doosplit-show-settled-groups",
+        showSettledGroups ? "true" : "false"
+      );
+    } catch {
+      // ignore
+    }
+  }, [showSettledGroups]);
+
+  useEffect(() => {
     if (status === "unauthenticated") {
       router.push("/auth/login");
     } else if (status === "authenticated") {
@@ -568,6 +588,102 @@ export default function GroupsPage() {
     return groups.reduce((sum, group) => sum + (groupBalances[group._id] ?? 0), 0);
   }, [groupBalances, groups]);
 
+  const nonGroupFriendDebts = useMemo(() => {
+    return friends
+      .filter((f) => Math.abs(Number(f.balance || 0)) > 0.01)
+      .sort((a, b) => Math.abs(b.balance) - Math.abs(a.balance))
+      .slice(0, 2);
+  }, [friends]);
+
+  const renderGroupCard = (group: Group, index: number, muted = false) => {
+    const balance = groupBalances[group._id] ?? 0;
+    const simplified = groupSimplifiedDebts[group._id] || [];
+    const myUserId = String(session?.user?.id || "");
+    const userDebts = simplified.filter(
+      (tx) => tx.from.id === myUserId || tx.to.id === myUserId
+    );
+
+    return (
+      <Link key={group._id} href={`/groups/${group._id}`}>
+        <div
+          className={`flex flex-col gap-3 rounded-2xl border p-4 transition-all duration-300 hover:shadow-md hover:-translate-y-0.5 ${
+            muted
+              ? "border-neutral-100 bg-neutral-50 opacity-80 dark:border-dark-border/50 dark:bg-dark-bg-tertiary/40"
+              : "border-neutral-200 bg-white dark:border-dark-border dark:bg-dark-bg-secondary"
+          } ${isReady ? "opacity-100 translate-y-0" : "opacity-0 translate-y-1"}`}
+          style={{ transitionDelay: `${Math.min(index * 40, 240)}ms` }}
+        >
+          <div className="flex items-center gap-4">
+            <div
+              className={`h-14 w-14 shrink-0 rounded-xl text-2xl flex items-center justify-center ${groupTypeColor(
+                group.type
+              )}`}
+            >
+              {groupTypeEmoji(group.type)}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <p className="truncate font-semibold text-neutral-900 dark:text-dark-text">
+                  {group.name}
+                </p>
+                {group.type === "trip" && (
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-primary/20 text-primary hover:bg-primary/30 transition-colors cursor-pointer"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      router.push(`/trip/${group._id}`);
+                    }}
+                  >
+                    Trip View ✈️
+                  </span>
+                )}
+              </div>
+              <p
+                className={`text-sm font-semibold ${
+                  balance < -0.01
+                    ? "text-coral"
+                    : balance > 0.01
+                    ? "text-primary"
+                    : "text-neutral-500 dark:text-dark-text-secondary"
+                }`}
+              >
+                {balance < -0.01
+                  ? `you owe ${formatCurrency(Math.abs(balance), group.currency || "INR")}`
+                  : balance > 0.01
+                  ? `you are owed ${formatCurrency(balance, group.currency || "INR")}`
+                  : "settled up"}
+              </p>
+            </div>
+            <ChevronRight className="h-4 w-4 shrink-0 text-neutral-400" />
+          </div>
+
+          {userDebts.length > 0 && (
+            <div className="border-t border-neutral-100 dark:border-dark-border/40 pt-2.5 space-y-1">
+              {userDebts.slice(0, 2).map((tx, idx) => {
+                const isOwed = tx.to.id === myUserId;
+                return (
+                  <p
+                    key={idx}
+                    className={`text-xs font-medium ${
+                      isOwed ? "text-primary/95" : "text-coral/95"
+                    }`}
+                  >
+                    {isOwed
+                      ? `${tx.from.name} owes you ${formatCurrency(tx.amount, group.currency || "INR")}`
+                      : `You owe ${tx.to.name} ${formatCurrency(tx.amount, group.currency || "INR")}`}
+                  </p>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </Link>
+    );
+  };
+
   if (status === "loading" || loading) {
     return (
       <AppShell>
@@ -653,38 +769,56 @@ export default function GroupsPage() {
         </div>
 
         {/* Non-Group Expenses Pinned Card */}
-        <div
-          className={`rounded-2xl border border-neutral-200 bg-white p-4 transition-all duration-300 hover:shadow-md hover:-translate-y-0.5 dark:border-dark-border dark:bg-dark-bg-secondary ${
-            isReady ? "opacity-100 translate-y-0" : "opacity-0 translate-y-1"
-          }`}
-        >
-          <div className="flex items-center gap-4">
-            <div className="h-14 w-14 shrink-0 rounded-xl bg-neutral-100 text-2xl flex items-center justify-center dark:bg-dark-bg-tertiary">
-              💼
+        <Link href="/expenses?filter=non-group">
+          <div
+            className={`rounded-2xl border border-neutral-200 bg-white p-4 transition-all duration-300 hover:shadow-md hover:-translate-y-0.5 dark:border-dark-border dark:bg-dark-bg-secondary ${
+              isReady ? "opacity-100 translate-y-0" : "opacity-0 translate-y-1"
+            }`}
+          >
+            <div className="flex items-center gap-4">
+              <div className="h-14 w-14 shrink-0 rounded-xl bg-neutral-100 text-2xl flex items-center justify-center dark:bg-dark-bg-tertiary">
+                💼
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="font-semibold text-neutral-900 dark:text-dark-text">
+                  Non-Group Expenses
+                </p>
+                <p
+                  className={`text-sm font-medium ${
+                    nonGroupBalance < 0
+                      ? "text-coral"
+                      : nonGroupBalance > 0
+                      ? "text-primary"
+                      : "text-neutral-500 dark:text-dark-text-secondary"
+                  }`}
+                >
+                  {nonGroupBalance < -0.01
+                    ? `you owe ${formatCurrency(Math.abs(nonGroupBalance))}`
+                    : nonGroupBalance > 0.01
+                    ? `you are owed ${formatCurrency(nonGroupBalance)}`
+                    : "you are settled"}
+                </p>
+                {nonGroupFriendDebts.length > 0 && (
+                  <div className="mt-1.5 space-y-0.5">
+                    {nonGroupFriendDebts.map((friend) => (
+                      <p
+                        key={friend._id}
+                        className={`text-xs font-medium ${
+                          friend.balance > 0 ? "text-primary/90" : "text-coral/90"
+                        }`}
+                      >
+                        {friend.balance > 0
+                          ? `${friend.name} owes you ${formatCurrency(friend.balance)}`
+                          : `You owe ${friend.name} ${formatCurrency(Math.abs(friend.balance))}`}
+                      </p>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <ChevronRight className="h-4 w-4 shrink-0 text-neutral-400" />
             </div>
-            <div className="min-w-0 flex-1">
-              <p className="font-semibold text-neutral-900 dark:text-dark-text">
-                Non-Group Expenses
-              </p>
-              <p
-                className={`text-sm font-medium ${
-                  nonGroupBalance < 0
-                    ? "text-coral"
-                    : nonGroupBalance > 0
-                    ? "text-primary"
-                    : "text-neutral-500 dark:text-dark-text-secondary"
-                }`}
-              >
-                {nonGroupBalance < -0.01
-                  ? `you owe ${formatCurrency(Math.abs(nonGroupBalance))}`
-                  : nonGroupBalance > 0.01
-                  ? `you are owed ${formatCurrency(nonGroupBalance)}`
-                  : "you are settled"}
-              </p>
-            </div>
-            <ChevronRight className="h-4 w-4 shrink-0 text-neutral-400" />
           </div>
-        </div>
+        </Link>
 
         <div className="space-y-3">
           {groups.length === 0 ? (
@@ -703,93 +837,30 @@ export default function GroupsPage() {
             </Card>
           ) : (
             <>
-              {filteredAndSortedGroups.map((group, index) => {
-                const balance = groupBalances[group._id] ?? 0;
-                const simplified = groupSimplifiedDebts[group._id] || [];
-                const myUserId = String(session?.user?.id || "");
-                const userDebts = simplified.filter(
-                  (tx) => tx.from.id === myUserId || tx.to.id === myUserId
-                );
+              {activeAndSettled.active.map((group, index) =>
+                renderGroupCard(group, index, false)
+              )}
 
-                return (
-                  <Link key={group._id} href={`/groups/${group._id}`}>
-                    <div
-                      className={`flex flex-col gap-3 rounded-2xl border border-neutral-200 bg-white p-4 transition-all duration-300 hover:shadow-md hover:-translate-y-0.5 dark:border-dark-border dark:bg-dark-bg-secondary ${
-                        isReady ? "opacity-100 translate-y-0" : "opacity-0 translate-y-1"
-                      }`}
-                      style={{ transitionDelay: `${Math.min(index * 40, 240)}ms` }}
+              {activeAndSettled.settled.length > 0 && (
+                <div className="pt-4 space-y-3">
+                  <div className="flex items-center justify-between px-1">
+                    <p className="text-xs font-bold uppercase tracking-wide text-neutral-500 dark:text-dark-text-tertiary">
+                      Previously settled groups ({activeAndSettled.settled.length})
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setShowSettledGroups((v) => !v)}
+                      className="text-xs font-semibold text-primary hover:underline"
                     >
-                      <div className="flex items-center gap-4">
-                        <div
-                          className={`h-14 w-14 shrink-0 rounded-xl text-2xl flex items-center justify-center ${groupTypeColor(
-                            group.type
-                          )}`}
-                        >
-                          {groupTypeEmoji(group.type)}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <p className="truncate font-semibold text-neutral-900 dark:text-dark-text">
-                              {group.name}
-                            </p>
-                            {group.type === "trip" && (
-                              <span
-                                role="button"
-                                tabIndex={0}
-                                className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-primary/20 text-primary hover:bg-primary/30 transition-colors cursor-pointer"
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  router.push(`/trip/${group._id}`);
-                                }}
-                              >
-                                Trip View ✈️
-                              </span>
-                            )}
-                          </div>
-                          <p
-                            className={`text-sm font-semibold ${
-                              balance < -0.01
-                                ? "text-coral"
-                                : balance > 0.01
-                                ? "text-primary"
-                                : "text-neutral-500 dark:text-dark-text-secondary"
-                            }`}
-                          >
-                            {balance < -0.01
-                              ? `you owe ${formatCurrency(Math.abs(balance), group.currency || "INR")}`
-                              : balance > 0.01
-                              ? `you are owed ${formatCurrency(balance, group.currency || "INR")}`
-                              : "settled up"}
-                          </p>
-                        </div>
-                        <ChevronRight className="h-4 w-4 shrink-0 text-neutral-400" />
-                      </div>
-
-                      {/* Sub-lines of largest balances */}
-                      {userDebts.length > 0 && (
-                        <div className="border-t border-neutral-100 dark:border-dark-border/40 pt-2.5 space-y-1">
-                          {userDebts.slice(0, 2).map((tx, idx) => {
-                            const isOwed = tx.to.id === myUserId;
-                            return (
-                              <p
-                                key={idx}
-                                className={`text-xs font-medium ${
-                                  isOwed ? "text-primary/95" : "text-coral/95"
-                                }`}
-                              >
-                                {isOwed
-                                  ? `${tx.from.name} owes you ${formatCurrency(tx.amount, group.currency || "INR")}`
-                                  : `You owe ${tx.to.name} ${formatCurrency(tx.amount, group.currency || "INR")}`}
-                              </p>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  </Link>
-                );
-              })}
+                      {showSettledGroups ? "Re-hide" : "Show"}
+                    </button>
+                  </div>
+                  {showSettledGroups &&
+                    activeAndSettled.settled.map((group, index) =>
+                      renderGroupCard(group, index, true)
+                    )}
+                </div>
+              )}
 
               <div className="pt-2 text-center">
                 <Button

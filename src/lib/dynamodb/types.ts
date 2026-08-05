@@ -34,6 +34,12 @@ export interface DdbUser extends DdbBase {
   preferences?: Record<string, unknown>;
   push_notifications_enabled?: boolean;
   email_notifications_enabled?: boolean;
+  fcm_tokens?: string[];
+  push_subscription?: unknown;
+  last_push_sent_at?: string;
+  /** Monetization: free | pro. Defaults to free when unset. */
+  plan?: "free" | "pro";
+  plan_expires_at?: string;
   created_at: string;
   updated_at: string;
 }
@@ -63,6 +69,11 @@ export interface DdbGroup extends DdbBase {
   notes?: string | null;
   settle_up_date?: string | null;
   simplify_debts?: boolean;
+  settle_up_reminders_enabled?: boolean;
+  default_split?: {
+    payerId?: string;
+    method?: string;
+  } | null;
   created_by: string;
   currency: string;
   is_active: boolean;
@@ -176,6 +187,7 @@ export interface DdbGroupExpenseFeed extends DdbBase {
   split_type: string;
   is_deleted: boolean;
   is_settled: boolean;
+  payment_status?: string;
   created_at: string;
   updated_at: string;
 }
@@ -233,12 +245,14 @@ export interface DdbNotification extends DdbBase {
   type: string;
   title: string;
   message: string;
+  data?: Record<string, unknown>;
   is_read: boolean;
   related_id?: string;
   related_type?: string;
   actor_id?: string;
   actor_name?: string;
   created_at: string;
+  updated_at?: string;
 }
 
 // ── Activities ────────────────────────────────────────────────────────────────
@@ -328,6 +342,16 @@ export interface DdbRecurringTemplate extends DdbBase {
   run_count: number;
   created_at: string;
   updated_at: string;
+  // API / cron compatibility — optional extras stored on the Dynamo item
+  name?: string;
+  status?: "active" | "paused" | "ended";
+  day_of_month?: number | null;
+  timezone?: string;
+  next_run_at?: string;
+  last_run_at?: string | null;
+  reminder_enabled?: boolean;
+  reminder_days_before?: number;
+  expense_payload?: Record<string, unknown>;
 }
 
 export interface DdbRecurringRun extends DdbBase {
@@ -393,6 +417,31 @@ export interface DdbNote extends DdbBase {
   archived: boolean;
   trashed: boolean;
   reminder?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Per-collaborator ACL on a shared note. Owner always has full access. */
+export interface NotePermissions {
+  canCreate: boolean;
+  canRead: boolean;
+  canUpdate: boolean;
+  canDelete: boolean;
+}
+
+export type NoteShareStatus = "pending" | "accepted" | "rejected";
+
+/** Canonical share row under NOTE#{noteId} / SHARE#{userId} (+ user mirror NOTE_ACCESS#). */
+export interface DdbNoteShare extends DdbBase {
+  entityType: "note_share";
+  id: string;
+  noteId: string;
+  ownerId: string;
+  userId: string;
+  status: NoteShareStatus;
+  permissions: NotePermissions;
+  invitedByName?: string;
+  noteTitle?: string;
   created_at: string;
   updated_at: string;
 }

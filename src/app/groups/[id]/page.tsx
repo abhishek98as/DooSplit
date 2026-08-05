@@ -12,6 +12,8 @@ import { ArrowLeft, Plus, Settings, ChevronRight, Receipt, Calendar, Users, File
 import Modal from "@/components/ui/Modal";
 import getOfflineStore from "@/lib/offline-store";
 import { simplifyGroupDebtsLocal, computeDirectGroupDebts } from "@/lib/split-solvers";
+import { useProAccess } from "@/contexts/ProAccessContext";
+import { ProBadge } from "@/components/ProGate";
 
 interface GroupMember {
   _id: string;
@@ -20,6 +22,8 @@ interface GroupMember {
     name: string;
     email: string;
     profilePicture?: string;
+    isDummy?: boolean;
+    isRegistered?: boolean;
   } | null;
   role: string;
   joinedAt: string;
@@ -44,6 +48,8 @@ interface Group {
   notes?: string | null;
   settleUpDate?: string | null;
   simplifyDebts?: boolean | null;
+  settleUpRemindersEnabled?: boolean | null;
+  defaultSplit?: { payerId?: string; method?: string } | null;
 }
 
 interface GroupExpenseParticipant {
@@ -181,6 +187,7 @@ function getCategoryIcon(category: string): string {
 
 export default function GroupDetailPage() {
   const { data: session, status } = useSession();
+  const { isPro, requirePro } = useProAccess();
   const router = useRouter();
   const params = useParams();
   const groupId = String(params.id || "");
@@ -849,6 +856,38 @@ export default function GroupDetailPage() {
           </button>
         </div>
 
+        <div className="mx-4 mt-3 flex items-center justify-between rounded-2xl border border-neutral-200 bg-white p-4 dark:border-dark-border dark:bg-dark-bg-secondary">
+          <div>
+            <div className="flex items-center gap-2">
+              <p className="text-sm font-semibold text-neutral-900 dark:text-dark-text">
+                Settle-up reminders
+              </p>
+              <ProBadge />
+            </div>
+            <p className="text-xs text-neutral-500 dark:text-dark-text-secondary mt-0.5">
+              Remind members when a settle-up date is set.
+            </p>
+          </div>
+          <button
+            onClick={() => {
+              if (!requirePro("Settle-up reminders")) return;
+              void updateGroupSetting({
+                settleUpRemindersEnabled: !group.settleUpRemindersEnabled,
+              } as Partial<Group>);
+            }}
+            disabled={updatingGroup}
+            className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+              group.settleUpRemindersEnabled ? "bg-primary" : "bg-neutral-200 dark:bg-dark-bg-tertiary"
+            }`}
+          >
+            <span
+              className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                group.settleUpRemindersEnabled ? "translate-x-5" : "translate-x-0"
+              }`}
+            />
+          </button>
+        </div>
+
         <div className="mx-4 mt-4 flex gap-2.5 overflow-x-auto pb-1 scrollbar-none">
           <Link href={`/settlements?groupId=${groupId}`} className="shrink-0">
             <button className="flex items-center gap-1.5 px-4 py-2 text-sm font-semibold rounded-xl bg-coral text-white shadow-sm hover:bg-coral/95 transition-all">
@@ -857,10 +896,13 @@ export default function GroupDetailPage() {
           </Link>
 
           <button
-            onClick={() => alert("Charts feature is locked for PRO users.")}
+            onClick={() => {
+              if (!requirePro("Charts")) return;
+              router.push(`/analytics?groupId=${groupId}`);
+            }}
             className="flex items-center gap-1.5 shrink-0 px-4 py-2 text-sm font-medium rounded-xl border border-neutral-200 bg-white dark:border-dark-border dark:bg-dark-bg-secondary text-neutral-800 dark:text-dark-text hover:bg-neutral-50 dark:hover:bg-dark-bg-tertiary transition-all"
           >
-            📊 Charts 🔒
+            📊 Charts {!isPro && "🔒"}
           </button>
 
           <button

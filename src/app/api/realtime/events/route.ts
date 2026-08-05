@@ -1,35 +1,26 @@
 /**
  * Real-time events endpoint — SSE (Server-Sent Events)
- *
- * For MongoDB Atlas free/shared tiers (M0/M2/M5), Change Streams are not available.
- * This endpoint uses periodic polling and emits events via SSE when data changes.
- *
- * For M10+ Atlas tiers, swap this with MongoDB Change Streams for true real-time.
- *
- * Client connects via EventSource, receives "data-updated" events when the
- * user's collections have changed since their last known timestamp.
+ * Polls DynamoDB activity logs for the authenticated user.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { getServerAppUser } from "@/lib/auth/server-session";
-import { ActivityLog, ExpenseParticipant } from "@/lib/mongodb/models";
+import { requireUser } from "@/lib/auth/require-user";
+import { queryActivitiesForUser } from "@/lib/dynamodb/entities/activities";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const POLL_INTERVAL_MS = 15_000; // 15 seconds
-const MAX_CONNECTION_MS = 5 * 60_000; // 5 minutes max per connection
+const POLL_INTERVAL_MS = 15_000;
+const MAX_CONNECTION_MS = 5 * 60_000;
 
 export async function GET(request: NextRequest) {
-  const user = await getServerAppUser(request);
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const auth = await requireUser(request);
+  if (auth.response || !auth.user) {
+    return auth.response as NextResponse;
   }
 
-  const userId = user.id;
-  const searchParams = request.nextUrl.searchParams;
-  const lastEventAt = searchParams.get("since") || new Date(0).toISOString();
+  const userId = auth.user.id;
+  const lastEventAt = request.nextUrl.searchParams.get("since") || new Date(0).toISOString();
 
-  // Create a readable stream for SSE
   const stream = new ReadableStream({
     async start(controller) {
       const encoder = new TextEncoder();
@@ -41,31 +32,27 @@ export async function GET(request: NextRequest) {
         controller.enqueue(encoder.encode(event));
       };
 
-      // Send initial heartbeat
       sendEvent({ type: "connected", userId, at: new Date().toISOString() });
 
-      // Poll for new activity
       const poll = async () => {
         try {
-          // Check if we've exceeded max connection time
           if (Date.now() - startedAt > MAX_CONNECTION_MS) {
             sendEvent({ type: "reconnect", reason: "max_connection_time" });
             controller.close();
             return;
           }
 
-          // Check for new activity logs since last known timestamp
-          const newActivities = await ActivityLog.find({
-            userId,
-            createdAt: { $gt: lastKnownTimestamp },
-          })
-            .sort({ createdAt: -1 })
-            .limit(5)
-            .lean();
+          const { items } = await queryActivitiesForUser(userId, 5);
+          const newActivities = items.filter((a) => {
+            const created = new Date(a.createdAt || 0).getTime();
+            return created > lastKnownTimestamp.getTime();
+          });
 
           if (newActivities.length > 0) {
             lastKnownTimestamp = new Date(
-              Math.max(...newActivities.map((a: any) => new Date(a.createdAt).getTime()))
+              Math.max(
+                ...newActivities.map((a) => new Date(a.createdAt || 0).getTime())
+              )
             );
 
             sendEvent({
@@ -80,16 +67,16 @@ export async function GET(request: NextRequest) {
         }
       };
 
-      // Initial poll
       await poll();
-
-      // Set up polling interval
       const interval = setInterval(poll, POLL_INTERVAL_MS);
 
-      // Cleanup on stream close
       request.signal.addEventListener("abort", () => {
         clearInterval(interval);
-        controller.close();
+        try {
+          controller.close();
+        } catch {
+          // already closed
+        }
       });
     },
   });
@@ -99,7 +86,6 @@ export async function GET(request: NextRequest) {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache, no-transform",
       Connection: "keep-alive",
-      "X-Accel-Buffering": "no",
     },
   });
 }

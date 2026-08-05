@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth/require-user";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import {
+  AI_NOT_CONFIGURED,
+  deepSeekComplete,
+  getDeepSeekApiKey,
+  stripJsonFence,
+  toSafeAiError,
+} from "@/lib/ai/deepseek";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
@@ -12,40 +18,41 @@ export async function POST(request: NextRequest) {
       return auth.response as NextResponse;
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      return NextResponse.json(
-        { error: "GEMINI_API_KEY is not configured on the server." },
-        { status: 500 }
-      );
+    if (!getDeepSeekApiKey()) {
+      return NextResponse.json({ error: AI_NOT_CONFIGURED }, { status: 503 });
     }
 
     const { description } = await request.json();
-    if (!description || !description.trim()) {
+    if (!description || !String(description).trim()) {
       return NextResponse.json(
         { error: "Missing required field: 'description'." },
         { status: 400 }
       );
     }
 
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+    const responseText = await deepSeekComplete({
+      system:
+        "Predict expense categories. Reply with ONLY one lowercase category from: food, entertainment, travel, utilities, shopping, services, housing, other",
+      user: `Description: ${String(description).slice(0, 500)}`,
+      maxTokens: 32,
+    });
 
-    const promptText = `
-      Predict the single best matching expense category for this description: "${description}"
-      Choose from: food, entertainment, travel, utilities, shopping, services, housing, other
-      Return ONLY the category name in lowercase. Do not include punctuation, spaces, or any other characters.
-    `;
-
-    const result = await model.generateContent(promptText);
-    const category = result.response.text().trim().toLowerCase();
-
-    return NextResponse.json({ category });
+    const allowed = new Set([
+      "food",
+      "entertainment",
+      "travel",
+      "utilities",
+      "shopping",
+      "services",
+      "housing",
+      "other",
+    ]);
+    const category = stripJsonFence(responseText).toLowerCase().replace(/[^a-z]/g, "");
+    return NextResponse.json({
+      category: allowed.has(category) ? category : "other",
+    });
   } catch (error: any) {
-    console.error("[ai/suggest] Error suggesting category:", error);
-    return NextResponse.json(
-      { error: error?.message || "Failed to suggest category with AI." },
-      { status: 500 }
-    );
+    console.error("[ai/suggest] Error:", error);
+    return NextResponse.json({ error: toSafeAiError(error) }, { status: 500 });
   }
 }

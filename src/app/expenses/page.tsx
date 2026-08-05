@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, Suspense } from "react";
+import { useState, useEffect, useRef, useCallback, Suspense } from "react";
 import { useSession } from "@/lib/auth/react-session";
 import { useRouter, useSearchParams } from "next/navigation";
 import AppShell from "@/components/layout/AppShell";
@@ -110,6 +110,18 @@ function ExpenseSearchFocus({
       return () => clearTimeout(id);
     }
   }, [searchParams, inputRef]);
+  return null;
+}
+
+function ApplyFilterFromQuery({
+  onFilter,
+}: {
+  onFilter: (filter: string | null) => void;
+}) {
+  const searchParams = useSearchParams();
+  useEffect(() => {
+    onFilter(searchParams.get("filter"));
+  }, [searchParams, onFilter]);
   return null;
 }
 
@@ -261,7 +273,7 @@ export default function ExpensesPage() {
       if (selectedCategory !== "all") {
         params.append("category", selectedCategory);
       }
-      if (selectedGroup !== "all") {
+      if (selectedGroup !== "all" && selectedGroup !== "non-group") {
         params.append("groupId", selectedGroup);
       }
       if (selectedStatus !== "all") {
@@ -607,6 +619,10 @@ export default function ExpensesPage() {
       expense.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       (expense.createdBy?.name || "").toLowerCase().includes(searchQuery.toLowerCase());
 
+    if (selectedGroup === "non-group" && expense.groupId) {
+      return false;
+    }
+
     // Filter by settled status
     if (!showSettled) {
       const allSettled = expense.paymentStatus === "paid";
@@ -645,10 +661,18 @@ export default function ExpensesPage() {
     );
   }
 
+  const applyUrlFilter = useCallback((filter: string | null) => {
+    if (filter === "non-group") {
+      setSelectedGroup("non-group");
+      setShowFilters(true);
+    }
+  }, []);
+
   return (
     <AppShell>
       <Suspense fallback={null}>
         <ExpenseSearchFocus inputRef={searchInputRef} />
+        <ApplyFilterFromQuery onFilter={applyUrlFilter} />
       </Suspense>
       <div className="p-4 md:p-6 max-w-7xl mx-auto">
         {/* Header */}

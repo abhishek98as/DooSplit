@@ -50,6 +50,8 @@ export async function updateGroup(
       | "notes"
       | "settle_up_date"
       | "simplify_debts"
+      | "settle_up_reminders_enabled"
+      | "default_split"
       | "currency"
       | "is_active"
       | "member_count"

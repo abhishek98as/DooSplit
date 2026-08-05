@@ -371,6 +371,10 @@ export function useNotes(): UseNotesReturn {
           };
           setNotes(prev => prev.map(n => n.id === editingId ? normalized : n));
           setToast({ message: "Note updated", type: "success" });
+        } else {
+          const data = await res.json().catch(() => ({}));
+          setToast({ message: data.error || "Failed to update note", type: "warn" });
+          return;
         }
       } else {
         const res = await fetch("/api/notes", {
@@ -400,6 +404,10 @@ export function useNotes(): UseNotesReturn {
 
   const togglePin = async (e: React.MouseEvent, note: NoteItem) => {
     e.stopPropagation();
+    if (note.isOwner === false) {
+      setToast({ message: "Only the owner can pin this note", type: "warn" });
+      return;
+    }
     try {
       const res = await fetch(`/api/notes/${note.id}`, {
         method: "PUT", headers: { "Content-Type": "application/json" },
@@ -415,6 +423,10 @@ export function useNotes(): UseNotesReturn {
 
   const toggleArchive = async (e: React.MouseEvent | null, note: NoteItem) => {
     if (e) e.stopPropagation();
+    if (note.isOwner === false) {
+      setToast({ message: "Only the owner can archive this note", type: "warn" });
+      return;
+    }
     try {
       const res = await fetch(`/api/notes/${note.id}`, {
         method: "PUT", headers: { "Content-Type": "application/json" },
@@ -435,6 +447,10 @@ export function useNotes(): UseNotesReturn {
 
   const deleteNote = async (e: React.MouseEvent, note: NoteItem) => {
     e.stopPropagation();
+    if (note.isOwner === false) {
+      setToast({ message: "Only the owner can delete this note", type: "warn" });
+      return;
+    }
     if (note.id.startsWith("draft_") || (note as any).isDraft) {
       clearDraft(note.id);
       setToast({ message: "Draft discarded", type: "success" });
@@ -475,6 +491,10 @@ export function useNotes(): UseNotesReturn {
   const toggleCardItemDone = async (noteId: string, itemId: string) => {
     const note = notes.find(n => n.id === noteId);
     if (!note || !note.items) return;
+    if (note.isOwner === false && !note.permissions?.canUpdate) {
+      setToast({ message: "You do not have permission to update items", type: "warn" });
+      return;
+    }
     const updatedItems = note.items.map(item => {
       if (item.id === itemId) return { ...item, done: !item.done, updatedAt: new Date().toISOString() };
       return item;
@@ -487,12 +507,15 @@ export function useNotes(): UseNotesReturn {
       if (res.ok) {
         const data = await res.json();
         setNotes(prev => prev.map(n => n.id === noteId ? data.note : n));
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setToast({ message: data.error || "Update failed", type: "warn" });
       }
     } catch (err) { console.error(err); }
   };
 
   const emptyTrash = async () => {
-    const trashedNotes = notes.filter(n => n.trashed);
+    const trashedNotes = notes.filter(n => n.trashed && n.isOwner !== false);
     if (trashedNotes.length === 0) {
       setToast({ message: "Trash is already empty", type: "info" });
       return;

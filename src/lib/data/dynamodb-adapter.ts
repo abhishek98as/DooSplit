@@ -29,6 +29,7 @@ import {
   listExpenseIdsByParticipant,
 } from "../dynamodb/entities";
 import { batchGetItems, queryAll } from "../dynamodb/helpers";
+import { convertAmountSync, FALLBACK_RATES_TO_INR } from "@/lib/fx";
 import { PK, SK } from "../dynamodb/keys";
 import { TABLE } from "../dynamodb/tables";
 
@@ -146,6 +147,19 @@ export async function computePairwiseBalancesForUserDynamo(
 
     const rawParticipants = await batchGetItems(uniqueKeys, TABLE);
     const participantsByExpense = new Map<string, Array<{ user_id: string; amount_paid: number; amount_owed: number }>>();
+    const expenseCurrencyById = new Map<string, string>();
+
+    // Load expense currencies for FX conversion into INR (friend balances display currency)
+    const expenseMetaKeys = myExpenseIds.map((eid) => ({
+      PK: PK.expense(eid),
+      SK: SK.meta,
+    }));
+    const expenseMetas = await batchGetItems(expenseMetaKeys, TABLE);
+    for (const meta of expenseMetas) {
+      const eid = String((meta as any).id || (meta as any).expense_id || "");
+      if (!eid) continue;
+      expenseCurrencyById.set(eid, String((meta as any).currency || "INR"));
+    }
 
     for (const p of rawParticipants) {
       const eid = String((p as any).expense_id || "");
@@ -160,14 +174,21 @@ export async function computePairwiseBalancesForUserDynamo(
     }
 
     // Step 3: Compute pairwise transfers using the same algorithm as balance-service.ts
-    for (const [, rows] of participantsByExpense.entries()) {
+    for (const [expenseId, rows] of participantsByExpense.entries()) {
       const transfers = buildTransfersForExpense(rows);
+      const currency = expenseCurrencyById.get(expenseId) || "INR";
       for (const t of transfers) {
         if (t.from === userId || t.to === userId) {
           const otherId = t.from === userId ? t.to : t.from;
           if (!otherId || otherId === userId) continue;
           if (!friendSet.has(otherId)) continue;
-          const delta = t.to === userId ? t.amount : -t.amount;
+          const amountInr = convertAmountSync(
+            t.amount,
+            currency,
+            "INR",
+            FALLBACK_RATES_TO_INR
+          );
+          const delta = t.to === userId ? amountInr : -amountInr;
           balances.set(otherId, round2((balances.get(otherId) || 0) + delta));
         }
       }
@@ -179,7 +200,13 @@ export async function computePairwiseBalancesForUserDynamo(
   for (const s of settlementItems) {
     const fromId = String(s.from_user_id || "");
     const toId = String(s.to_user_id || "");
-    const amount = toNumber(s.amount);
+    const currency = String((s as any).currency || "INR");
+    const amount = convertAmountSync(
+      toNumber(s.amount),
+      currency,
+      "INR",
+      FALLBACK_RATES_TO_INR
+    );
     if (amount <= 0 || s.is_deleted) continue;
 
     if (fromId === userId && toId && friendSet.has(toId)) {
