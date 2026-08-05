@@ -146,8 +146,8 @@ export async function GET(request: NextRequest) {
         user: "ping",
         maxTokens: 16,
       });
-      deepseekTest.passed = /ok/i.test(reply);
-      deepseekTest.response = reply.slice(0, 40);
+      deepseekTest.passed = /ok/i.test(reply.text);
+      deepseekTest.response = reply.text.slice(0, 40);
       if (!deepseekTest.passed) allPassed = false;
     } catch (error: any) {
       deepseekTest.passed = false;

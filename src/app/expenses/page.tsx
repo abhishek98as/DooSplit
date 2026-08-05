@@ -577,16 +577,23 @@ export default function ExpensesPage() {
   };
 
   const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    return new Intl.DateTimeFormat("en-IN", {
-      day: "numeric",
-      month: "short",
-      year: "numeric",
-    }).format(date);
+    try {
+      const date = new Date(dateString);
+      if (Number.isNaN(date.getTime())) return "—";
+      return new Intl.DateTimeFormat("en-IN", {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+      }).format(date);
+    } catch {
+      return "—";
+    }
   };
 
   const formatCurrency = (amount: number, currency: string) => {
-    return `₹${amount.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    const n = Number(amount);
+    const safe = Number.isFinite(n) ? n : 0;
+    return `₹${safe.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   };
 
   const getCategoryIcon = (category: string) => {
@@ -614,13 +621,25 @@ export default function ExpensesPage() {
     }
   };
 
-  const filteredExpenses = expenses.filter((expense) => {
+  const filteredExpenses = (Array.isArray(expenses) ? expenses : []).filter((expense) => {
+    if (!expense || typeof expense !== "object") return false;
     const matchesSearch =
-      expense.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (expense.createdBy?.name || "").toLowerCase().includes(searchQuery.toLowerCase());
+      String(expense.description || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+      String(expense.createdBy?.name || "").toLowerCase().includes(searchQuery.toLowerCase());
 
     if (selectedGroup === "non-group" && expense.groupId) {
       return false;
+    }
+
+    if (selectedStatus !== "all") {
+      const status = expense.paymentStatus || "unpaid";
+      if (selectedStatus === "settled" || selectedStatus === "paid") {
+        if (status !== "paid") return false;
+      } else if (selectedStatus === "unsettled") {
+        if (status === "paid") return false;
+      } else if (status !== selectedStatus) {
+        return false;
+      }
     }
 
     // Filter by settled status
@@ -970,7 +989,7 @@ export default function ExpensesPage() {
                                 <span>•</span>
                                 <span className="flex items-center gap-1">
                                   <Users className="w-3 h-3" />
-                                  {expense.groupId.name}
+                                  {expense.groupId?.name || "Group"}
                                 </span>
                               </>
                             ) : (

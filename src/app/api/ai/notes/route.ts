@@ -7,6 +7,11 @@ import {
   stripJsonFence,
   toSafeAiError,
 } from "@/lib/ai/deepseek";
+import {
+  assertAiWeeklyAllowance,
+  recordAiTokenUsage,
+  weeklyLimitResponse,
+} from "@/lib/ai/usage";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -20,6 +25,11 @@ export async function POST(request: NextRequest) {
 
     if (!getDeepSeekApiKey()) {
       return NextResponse.json({ error: AI_NOT_CONFIGURED }, { status: 503 });
+    }
+
+    const usage = await assertAiWeeklyAllowance(auth.user.id);
+    if (usage.exhausted) {
+      return NextResponse.json(weeklyLimitResponse(usage), { status: 429 });
     }
 
     const { note, action, customPrompt } = await request.json();
@@ -62,12 +72,13 @@ Return ONLY valid JSON matching:
 }
 `;
 
-    const responseText = await deepSeekComplete({
+    const { text: responseText, totalTokens } = await deepSeekComplete({
       system: `You are an expert AI assistant inside a notes app. ${systemInstructions}`,
       user: userPrompt,
       jsonMode: true,
       maxTokens: 4096,
     });
+    await recordAiTokenUsage(auth.user.id, totalTokens);
 
     const parsedData = JSON.parse(stripJsonFence(responseText));
     return NextResponse.json({ data: parsedData });

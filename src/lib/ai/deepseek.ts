@@ -45,7 +45,7 @@ export async function deepSeekComplete(params: {
   user: string;
   maxTokens?: number;
   jsonMode?: boolean;
-}): Promise<string> {
+}): Promise<{ text: string; totalTokens: number }> {
   try {
     const client = createDeepSeekClient();
     const res = await client.chat.completions.create({
@@ -62,7 +62,9 @@ export async function deepSeekComplete(params: {
         ? { response_format: { type: "json_object" as const } }
         : {}),
     } as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming);
-    return res.choices[0]?.message?.content?.trim() || "";
+    const text = res.choices[0]?.message?.content?.trim() || "";
+    const totalTokens = Number(res.usage?.total_tokens || 0);
+    return { text, totalTokens };
   } catch (err: any) {
     if (err?.message === AI_NOT_CONFIGURED) throw err;
     console.error("[deepseek] complete failed:", err?.message || err);

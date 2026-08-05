@@ -14,6 +14,11 @@ import {
   SYSTEM_PROMPT,
   executeAiTool,
 } from "@/lib/ai/tools";
+import {
+  assertAiWeeklyAllowance,
+  recordAiTokenUsage,
+  weeklyLimitResponse,
+} from "@/lib/ai/usage";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -35,12 +40,19 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: AI_NOT_CONFIGURED }, { status: 503 });
     }
 
-    const rate = checkAiChatRateLimit(auth.user.id);
+    const userId = auth.user.id;
+
+    const rate = checkAiChatRateLimit(userId);
     if (!rate.ok) {
       return NextResponse.json(
         { error: "Too many AI requests. Please wait a moment." },
         { status: 429, headers: { "Retry-After": String(rate.retryAfterSec || 60) } }
       );
+    }
+
+    const usage = await assertAiWeeklyAllowance(userId);
+    if (usage.exhausted) {
+      return NextResponse.json(weeklyLimitResponse(usage), { status: 429 });
     }
 
     const body = await request.json().catch(() => ({}));
@@ -53,7 +65,7 @@ export async function POST(request: NextRequest) {
     }
 
     const actor = {
-      id: auth.user.id,
+      id: userId,
       name: auth.user.name,
       email: auth.user.email,
     };
@@ -131,9 +143,19 @@ export async function POST(request: NextRequest) {
           const client = createDeepSeekClient();
           let steps = 0;
           const maxSteps = 8;
+          let sessionTokens = 0;
 
           while (steps < maxSteps) {
             steps += 1;
+            const midUsage = await assertAiWeeklyAllowance(userId);
+            if (midUsage.exhausted) {
+              send({
+                type: "limit",
+                message: "Weekly AI limit exhausted",
+                usage: midUsage,
+              });
+              break;
+            }
             send({ type: "status", status: steps === 1 ? "thinking" : "working" });
 
             const completion = await client.chat.completions.create({
@@ -143,6 +165,7 @@ export async function POST(request: NextRequest) {
               tool_choice: "auto",
               max_tokens: 8192,
               stream: true,
+              stream_options: { include_usage: true },
               reasoning_effort: "high",
               // DeepSeek thinking mode
               ...( { thinking: { type: "enabled" } } as object ),
@@ -156,6 +179,9 @@ export async function POST(request: NextRequest) {
             >();
 
             for await (const chunk of completion) {
+              if ((chunk as any).usage?.total_tokens) {
+                sessionTokens += Number((chunk as any).usage.total_tokens || 0);
+              }
               const choice = chunk.choices[0];
               if (!choice) continue;
               const delta = choice.delta as OpenAI.Chat.ChatCompletionChunk.Choice.Delta & {
@@ -250,6 +276,18 @@ export async function POST(request: NextRequest) {
             }
 
             // Continue loop so model can respond after tools
+          }
+
+          if (sessionTokens > 0) {
+            const finalUsage = await recordAiTokenUsage(userId, sessionTokens);
+            send({ type: "usage", usage: finalUsage });
+            if (finalUsage.exhausted) {
+              send({
+                type: "limit",
+                message: "Weekly AI limit exhausted",
+                usage: finalUsage,
+              });
+            }
           }
 
           send({ type: "done" });

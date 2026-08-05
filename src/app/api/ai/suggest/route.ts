@@ -7,6 +7,11 @@ import {
   stripJsonFence,
   toSafeAiError,
 } from "@/lib/ai/deepseek";
+import {
+  assertAiWeeklyAllowance,
+  recordAiTokenUsage,
+  weeklyLimitResponse,
+} from "@/lib/ai/usage";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
@@ -22,6 +27,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: AI_NOT_CONFIGURED }, { status: 503 });
     }
 
+    const usage = await assertAiWeeklyAllowance(auth.user.id);
+    if (usage.exhausted) {
+      return NextResponse.json(weeklyLimitResponse(usage), { status: 429 });
+    }
+
     const { description } = await request.json();
     if (!description || !String(description).trim()) {
       return NextResponse.json(
@@ -30,12 +40,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const responseText = await deepSeekComplete({
+    const { text: responseText, totalTokens } = await deepSeekComplete({
       system:
         "Predict expense categories. Reply with ONLY one lowercase category from: food, entertainment, travel, utilities, shopping, services, housing, other",
       user: `Description: ${String(description).slice(0, 500)}`,
       maxTokens: 32,
     });
+    await recordAiTokenUsage(auth.user.id, totalTokens);
 
     const allowed = new Set([
       "food",
