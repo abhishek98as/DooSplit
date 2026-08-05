@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth/require-user";
-import { FeatureFeedback } from "@/lib/mongodb/models";
 import { newAppId } from "@/lib/ids";
+import { putFeedback } from "@/lib/dynamodb/entities/feedback";
 
 export const dynamic = "force-dynamic";
 
@@ -31,17 +31,17 @@ export async function POST(request: NextRequest) {
     const feedbackId = newAppId();
     const now = new Date();
 
-    await FeatureFeedback.create({
-      _id: feedbackId,
-      type,
-      message,
-      screen: screen || null,
-      created_by: auth.user.id,
-      created_by_name: auth.user.name || "",
-      created_by_email: auth.user.email || "",
+    await putFeedback({
+      id: feedbackId,
+      category: type,
+      title: screen || "Feedback",
+      description: message,
       status: "new",
-      created_at: now,
-      updated_at: now,
+      priority: "medium",
+      upvotes: 0,
+      downvotes: 0,
+      created_by: auth.user.id,
+      created_at: now.toISOString(),
     });
 
     return NextResponse.json(

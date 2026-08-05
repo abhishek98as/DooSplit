@@ -9,7 +9,6 @@ import { getActiveRepository } from "@/lib/data";
 import { getServerFirebaseUser } from "@/lib/auth/firebase-session";
 import { newAppId } from "@/lib/ids";
 import { notifyFriendRequest } from "@/lib/notificationService";
-import { FieldValue, getAdminDb } from "@/lib/firestore/admin";
 import { logFriendAdded } from "@/lib/activity-logger";
 import { normalizeEmail, normalizeName } from "@/lib/social/keys";
 import {
@@ -33,33 +32,9 @@ const FRIEND_CACHE_SCOPES = [
 ];
 
 async function findUserByEmail(email: string) {
-  const db = getAdminDb();
-  const lowered = normalizeEmail(email);
-  if (!lowered) {
-    return null;
-  }
-
-  const snap = await db
-    .collection("users")
-    .where("email_normalized", "==", lowered)
-    .limit(1)
-    .get();
-  if (!snap.empty) {
-    const doc = snap.docs[0];
-    return { id: doc.id, ...((doc.data() as any) || {}) };
-  }
-
-  const fallback = await db
-    .collection("users")
-    .where("email", "==", String(email).trim())
-    .limit(1)
-    .get();
-  if (fallback.empty) {
-    return null;
-  }
-
-  const doc = fallback.docs[0];
-  return { id: doc.id, ...((doc.data() as any) || {}) };
+  const { getUserByEmail } = await import("@/lib/dynamodb/entities/users");
+  const lowered = normalizeEmail(email) || email.toLowerCase().trim();
+  return getUserByEmail(lowered);
 }
 
 export async function GET(request: NextRequest) {
@@ -115,7 +90,6 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json();
     const { email, userId: friendUserId, dummyName } = body || {};
-    const db = getAdminDb();
 
     if (dummyName) {
       const trimmedName = String(dummyName).trim();
@@ -130,24 +104,21 @@ export async function POST(request: NextRequest) {
       const dummyEmail = `dummy_${Date.now()}_${Math.random().toString(36).slice(2, 8)}@placeholder.doosplit`;
       const nowIso = new Date().toISOString();
 
-      const existingDummySnap = await db
-        .collection("users")
-        .where("created_by", "==", userId)
-        .where("is_dummy", "==", true)
-        .limit(200)
-        .get();
-      const existingDummy = existingDummySnap.docs.find((doc) => {
-        const row = doc.data() || {};
-        return String(row.name || "").trim().toLowerCase() === trimmedName.toLowerCase();
-      });
-      if (existingDummy) {
+      const { listDummiesCreatedByUser, putUser } = await import(
+        "@/lib/dynamodb/entities/users"
+      );
+      const existingDummies = await listDummiesCreatedByUser(userId);
+      const duplicate = existingDummies.find(
+        (d) => String(d.name || "").trim().toLowerCase() === trimmedName.toLowerCase()
+      );
+      if (duplicate) {
         return NextResponse.json(
           { error: "A dummy friend with this name already exists" },
           { status: 409 }
         );
       }
 
-      await db.collection("users").doc(dummyId).set({
+      await putUser({
         id: dummyId,
         name: trimmedName,
         name_normalized: normalizeName(trimmedName),
@@ -155,19 +126,9 @@ export async function POST(request: NextRequest) {
         email_normalized: normalizeEmail(dummyEmail),
         is_dummy: true,
         created_by: userId,
-        role: "user",
         is_active: true,
-        auth_provider: "dummy",
-        email_verified: false,
-        default_currency: "INR",
-        timezone: "Asia/Kolkata",
-        language: "en",
-        push_notifications_enabled: false,
-        email_notifications_enabled: false,
         created_at: nowIso,
         updated_at: nowIso,
-        _created_at: FieldValue.serverTimestamp(),
-        _updated_at: FieldValue.serverTimestamp(),
       });
 
       await upsertBidirectionalFriendship({
@@ -211,12 +172,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const { getUserById } = await import("@/lib/dynamodb/entities/users");
     let friendUser: any = null;
     if (targetUserId) {
-      const targetDoc = await db.collection("users").doc(targetUserId).get();
-      if (targetDoc.exists) {
-        friendUser = { id: targetDoc.id, ...(targetDoc.data() || {}) };
-      }
+      friendUser = await getUserById(targetUserId);
     } else if (targetEmail) {
       friendUser = await findUserByEmail(targetEmail);
     }
@@ -257,13 +216,9 @@ export async function POST(request: NextRequest) {
     });
     const friendshipId = friendshipWrite.forwardId;
 
-
     try {
       await notifyFriendRequest(
-        {
-          id: userId,
-          name: user.name || "Someone",
-        },
+        { id: userId, name: user.name || "Someone" },
         friendId
       );
     } catch (notifError) {
@@ -275,23 +230,23 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       {
         message: "Friend request sent successfully",
+        friendshipId,
         friendship: {
-          id: friendshipId,
           friend: {
             id: friendId,
-            name: friendUser.name || "Unknown",
-            email: friendUser.email || "",
+            name: friendUser.name,
+            email: friendUser.email,
+            profilePicture: friendUser.photo_url || null,
           },
         },
       },
       { status: 201 }
     );
   } catch (error: any) {
-    console.error("Send friend request error:", error);
+    console.error("Add friend error:", error);
     return NextResponse.json(
-      { error: "Failed to send friend request" },
+      { error: error.message || "Failed to add friend" },
       { status: 500 }
     );
   }
 }
-

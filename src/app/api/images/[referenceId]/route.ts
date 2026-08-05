@@ -1,30 +1,89 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth/require-user";
 import { deleteManagedImage, getManagedImageByReferenceId } from "@/lib/storage/image-storage";
+import { ImageType } from "@/lib/storage/image-types";
+import { getExpenseById, getExpenseParticipant } from "@/lib/dynamodb/entities/expenses";
+import { getGroupMember } from "@/lib/dynamodb/entities/groups";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
-// GET /api/images/[referenceId] - Get image details
+type ManagedImageLike = {
+  type: string;
+  entityId: string;
+};
+
+function normalizeImageType(type: string): string {
+  const t = String(type || "").toLowerCase();
+  if (t === "expense_receipt") return ImageType.EXPENSE;
+  return t;
+}
+
+/**
+ * Who may view/delete an image:
+ * - user_profile: any authenticated user may view; only owner may delete
+ * - expense / expense_receipt: creator, participant, or group member
+ * - general: only the entityId user (uploader convention)
+ */
+async function canAccessImage(
+  userId: string,
+  image: ManagedImageLike,
+  action: "read" | "write"
+): Promise<boolean> {
+  const type = normalizeImageType(image.type);
+  const entityId = String(image.entityId || "");
+
+  if (type === ImageType.USER_PROFILE) {
+    if (action === "write") return entityId === userId;
+    return true; // authenticated viewers may load avatars
+  }
+
+  if (type === ImageType.EXPENSE) {
+    if (!entityId) return false;
+    const expense = await getExpenseById(entityId);
+    if (!expense || expense.is_deleted) return false;
+    if (String(expense.created_by || "") === userId) return true;
+
+    const participant = await getExpenseParticipant(entityId, userId);
+    if (participant) return true;
+
+    const groupId = String(expense.group_id || "");
+    if (groupId) {
+      const membership = await getGroupMember(groupId, userId);
+      if (membership) return true;
+    }
+    return false;
+  }
+
+  // general / unknown — entityId must be the requesting user
+  return entityId === userId;
+}
+
+// GET /api/images/[referenceId] - Get image details (auth required)
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ referenceId: string }> }
 ) {
   try {
-    const { referenceId } = await params;
+    const auth = await requireUser(request);
+    if (auth.response || !auth.user) {
+      return auth.response as NextResponse;
+    }
 
+    const { referenceId } = await params;
     const image = await getManagedImageByReferenceId(referenceId);
     if (!image) {
       return NextResponse.json({ error: "Image not found" }, { status: 404 });
     }
 
-    return NextResponse.json({ image });
+    const allowed = await canAccessImage(auth.user.id, image, "read");
+    if (!allowed) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
 
-  } catch (error: any) {
+    return NextResponse.json({ image });
+  } catch (error: unknown) {
     console.error("Get image error:", error);
-    return NextResponse.json(
-      { error: "Failed to get image" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to get image" }, { status: 500 });
   }
 }
 
@@ -40,40 +99,27 @@ export async function DELETE(
     }
 
     const { referenceId } = await params;
-
-    // Get image details first to check ownership
     const image = await getManagedImageByReferenceId(referenceId);
     if (!image) {
       return NextResponse.json({ error: "Image not found" }, { status: 404 });
     }
 
-    // Check if user owns this image (for user profiles and expenses)
-    if (image.type === 'user_profile' && image.entityId !== auth.user.id) {
-      return NextResponse.json({ error: "Cannot delete another user's profile image" }, { status: 403 });
-    }
-
-    // For expense images, check if user has permission (would need to check expense ownership)
-    // This is a simplified check - in production, you'd verify expense ownership
-    if (image.type === 'expense') {
-      // TODO: Add expense ownership verification
+    const allowed = await canAccessImage(auth.user.id, image, "write");
+    if (!allowed) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
     const success = await deleteManagedImage(referenceId);
-
     if (success) {
       return NextResponse.json({
         success: true,
-        message: "Image deleted successfully"
+        message: "Image deleted successfully",
       });
-    } else {
-      return NextResponse.json({ error: "Failed to delete image" }, { status: 500 });
     }
 
-  } catch (error: any) {
+    return NextResponse.json({ error: "Failed to delete image" }, { status: 500 });
+  } catch (error: unknown) {
     console.error("Delete image error:", error);
-    return NextResponse.json(
-      { error: "Failed to delete image" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to delete image" }, { status: 500 });
   }
 }

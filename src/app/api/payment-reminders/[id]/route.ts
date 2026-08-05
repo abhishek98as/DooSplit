@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth/require-user";
-import { FieldValue, getAdminDb } from "@/lib/firestore/admin";
 import { toIso } from "@/lib/firestore/route-helpers";
 
 export const dynamic = "force-dynamic";
@@ -26,16 +25,13 @@ export async function PUT(
       );
     }
 
-    const db = getAdminDb();
-    const ref = db.collection("payment_reminders").doc(id);
-    const snap = await ref.get();
-    if (!snap.exists) {
-      return NextResponse.json(
-        { error: "Payment reminder not found" },
-        { status: 404 }
-      );
+    const { getReminderById, updateReminderStatus } = await import(
+      "@/lib/dynamodb/entities/reminders"
+    );
+    const reminder = await getReminderById(id);
+    if (!reminder) {
+      return NextResponse.json({ error: "Payment reminder not found" }, { status: 404 });
     }
-    const reminder: any = { id: snap.id, ...((snap.data() as any) || {}) };
 
     if (action === "mark_read") {
       if (String(reminder.to_user_id || "") !== auth.user.id) {
@@ -55,22 +51,16 @@ export async function PUT(
     }
 
     const nowIso = new Date().toISOString();
-    const patch =
-      action === "mark_read"
-        ? { status: "read", read_at: nowIso }
-        : { status: "paid", paid_at: nowIso };
+    if (action === "mark_read") {
+      await updateReminderStatus(id, "read", nowIso, undefined, { read_at: nowIso });
+    } else {
+      await updateReminderStatus(id, "paid", nowIso, undefined, { paid_at: nowIso });
+    }
 
-    await ref.set(
-      {
-        ...patch,
-        updated_at: nowIso,
-        _updated_at: FieldValue.serverTimestamp(),
-      },
-      { merge: true }
-    );
-
-    const updatedSnap = await ref.get();
-    const updated: any = { id: updatedSnap.id, ...((updatedSnap.data() as any) || {}) };
+    const updated = await getReminderById(id);
+    if (!updated) {
+      return NextResponse.json({ error: "Failed to load updated reminder" }, { status: 500 });
+    }
 
     return NextResponse.json(
       {
@@ -79,15 +69,13 @@ export async function PUT(
           status: updated.status,
           readAt: toIso(updated.read_at),
           paidAt: toIso(updated.paid_at),
-          updatedAt: toIso(updated.updated_at || updated._updated_at),
+          updatedAt: toIso(updated.updated_at),
         },
         message: `Payment reminder ${action === "mark_read" ? "marked as read" : "marked as paid"}`,
       },
       {
         status: 200,
-        headers: {
-          "X-Doosplit-Route-Ms": String(Date.now() - routeStart),
-        },
+        headers: { "X-Doosplit-Route-Ms": String(Date.now() - routeStart) },
       }
     );
   } catch (error: any) {

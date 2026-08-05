@@ -147,6 +147,8 @@ export default function AddExpensePage() {
   const [selectedGroup, setSelectedGroup] = useState<Group | null>(null);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [paidBy, setPaidBy] = useState<string>("");
+  const [payerMode, setPayerMode] = useState<"single" | "multiple">("single");
+  const [payerAmounts, setPayerAmounts] = useState<Record<string, string>>({});
   const [simulatorMethod, setSimulatorMethod] = useState<"equally" | "exact" | "percentage">("equally");
   const [simPercentageByUser, setSimPercentageByUser] = useState<Record<string, string>>({});
   const [simExactByUser, setSimExactByUser] = useState<Record<string, string>>({});
@@ -201,7 +203,7 @@ export default function AddExpensePage() {
     if (amount) {
       calculateSplit();
     }
-  }, [amount, selectedFriends, splitMethod]);
+  }, [amount, selectedFriends, splitMethod, paidBy, payerMode, payerAmounts]);
 
   useEffect(() => {
     if (!session?.user?.id) {
@@ -304,13 +306,36 @@ export default function AddExpensePage() {
     0
   );
 
-  const calculateItemizedSplit = (): Participant[] => {
-    const allPeople = [
-      ...(session?.user?.id
-        ? [{ id: session.user.id, name: "You" }]
-        : []),
-      ...selectedFriends.map((f) => ({ id: String(f.friend.id || ""), name: f.friend.name })),
+  const getSplitPeople = () =>
+    [
+      ...(session?.user?.id ? [{ id: session.user.id, name: "You" }] : []),
+      ...selectedFriends.map((f) => ({
+        id: String(f.friend.id || ""),
+        name: f.friend.name,
+      })),
     ].filter((p) => Boolean(p.id));
+
+  const getPaidAmountForUser = (userId: string, totalAmount: number): number => {
+    if (payerMode === "multiple") {
+      return round2(parseFloat(payerAmounts[userId] || "0") || 0);
+    }
+    return paidBy === userId ? totalAmount : 0;
+  };
+
+  const buildPayersPayload = (totalAmount: number) => {
+    if (payerMode === "multiple") {
+      return getSplitPeople()
+        .map((person) => ({
+          userId: person.id,
+          amount: round2(parseFloat(payerAmounts[person.id] || "0") || 0),
+        }))
+        .filter((p) => p.amount > 0);
+    }
+    return undefined;
+  };
+
+  const calculateItemizedSplit = (): Participant[] => {
+    const allPeople = getSplitPeople();
 
     const owedMap: Record<string, number> = {};
     for (const person of allPeople) {
@@ -352,7 +377,7 @@ export default function AddExpensePage() {
       userId: person.id,
       name: person.name,
       owedAmount: owedMap[person.id] || 0,
-      paidAmount: paidBy === person.id ? totalAmount : 0,
+      paidAmount: getPaidAmountForUser(person.id, totalAmount),
     }));
   };
 
@@ -386,7 +411,7 @@ export default function AddExpensePage() {
       userId: session?.user?.id || "",
       name: "You",
       owedAmount: splitMethod === "equally" ? userShare : 0,
-      paidAmount: paidBy === session?.user?.id ? totalAmount : 0,
+      paidAmount: getPaidAmountForUser(session?.user?.id || "", totalAmount),
       exactAmount: splitMethod === "exact" ? round2(totalAmount / numPeople) : undefined,
       percentage: splitMethod === "percentage" ? round2(100 / numPeople) : undefined,
       shares: splitMethod === "shares" ? 1 : undefined,
@@ -399,7 +424,7 @@ export default function AddExpensePage() {
         userId: friend.friend.id,
         name: friend.friend.name,
         owedAmount: splitMethod === "equally" ? friendShare : 0,
-        paidAmount: paidBy === friend.friend.id ? totalAmount : 0,
+        paidAmount: getPaidAmountForUser(String(friend.friend.id || ""), totalAmount),
         exactAmount: splitMethod === "exact" ? round2(totalAmount / numPeople) : undefined,
         percentage: splitMethod === "percentage" ? round2(100 / numPeople) : undefined,
         shares: splitMethod === "shares" ? 1 : undefined,
@@ -499,6 +524,20 @@ export default function AddExpensePage() {
 
       // Prepare expense data
       const finalAmount = splitMethod === "itemized" ? itemizedTotal : parseFloat(amount);
+      const payers = buildPayersPayload(finalAmount);
+      if (payerMode === "multiple") {
+        if (!payers || payers.length === 0) {
+          alert("Select at least one payer and enter amounts.");
+          setSubmitting(false);
+          return;
+        }
+        const payerTotal = payers.reduce((sum, p) => sum + p.amount, 0);
+        if (Math.abs(payerTotal - finalAmount) > 0.01) {
+          alert(`Payer amounts (₹${payerTotal.toFixed(2)}) must equal expense total (₹${finalAmount.toFixed(2)}).`);
+          setSubmitting(false);
+          return;
+        }
+      }
       const expenseData = {
         amount: finalAmount,
         description,
@@ -506,7 +545,8 @@ export default function AddExpensePage() {
         date,
         currency,
         groupId: selectedGroup?._id,
-        paidBy,
+        paidBy: payerMode === "single" ? paidBy : undefined,
+        payers,
         participants: resolvedParticipants,
         notes,
         images: [], // Empty initially
@@ -1005,6 +1045,141 @@ export default function AddExpensePage() {
               </div>
             </div>
 
+            {/* Paid by */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <label className="block text-sm font-medium text-neutral-700 dark:text-dark-text">
+                  Paid by
+                </label>
+                <div className="flex gap-1 rounded-lg border border-neutral-200 dark:border-dark-border p-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setPayerMode("single")}
+                    className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all ${
+                      payerMode === "single"
+                        ? "bg-primary text-white"
+                        : "text-neutral-600 dark:text-dark-text-secondary"
+                    }`}
+                  >
+                    One person
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPayerMode("multiple");
+                      const people = getSplitPeople();
+                      const total =
+                        splitMethod === "itemized" ? itemizedTotal : parseFloat(amount) || 0;
+                      if (Object.keys(payerAmounts).length === 0 && paidBy && total > 0) {
+                        setPayerAmounts({ [paidBy]: total.toFixed(2) });
+                      } else if (Object.keys(payerAmounts).length === 0 && people[0]) {
+                        setPayerAmounts({
+                          [people[0].id]: (total > 0 ? total : 0).toFixed(2),
+                        });
+                      }
+                    }}
+                    className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all ${
+                      payerMode === "multiple"
+                        ? "bg-primary text-white"
+                        : "text-neutral-600 dark:text-dark-text-secondary"
+                    }`}
+                  >
+                    Multiple
+                  </button>
+                </div>
+              </div>
+
+              {payerMode === "single" ? (
+                <div className="flex flex-wrap gap-2">
+                  {getSplitPeople().map((person) => (
+                    <button
+                      key={person.id}
+                      type="button"
+                      onClick={() => setPaidBy(person.id)}
+                      className={`px-3 py-1.5 rounded-full text-sm font-medium transition-all ${
+                        paidBy === person.id
+                          ? "bg-primary text-white"
+                          : "bg-neutral-100 dark:bg-dark-bg-tertiary text-neutral-700 dark:text-dark-text-secondary hover:bg-primary/20"
+                      }`}
+                    >
+                      {person.name}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="space-y-2 rounded-xl border border-neutral-200 dark:border-dark-border p-3">
+                  {getSplitPeople().map((person) => {
+                    const isPayer = person.id in payerAmounts;
+                    return (
+                      <div
+                        key={person.id}
+                        className="flex items-center gap-3"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPayerAmounts((prev) => {
+                              const next = { ...prev };
+                              if (person.id in next) {
+                                delete next[person.id];
+                              } else {
+                                next[person.id] = "0";
+                              }
+                              return next;
+                            });
+                          }}
+                          className={`min-w-[5.5rem] px-2 py-1 rounded-full text-xs font-medium transition-all ${
+                            isPayer
+                              ? "bg-primary text-white"
+                              : "bg-neutral-100 dark:bg-dark-bg-tertiary text-neutral-600"
+                          }`}
+                        >
+                          {person.name}
+                        </button>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          disabled={!isPayer}
+                          value={payerAmounts[person.id] ?? ""}
+                          onChange={(e) =>
+                            setPayerAmounts((prev) => ({
+                              ...prev,
+                              [person.id]: e.target.value,
+                            }))
+                          }
+                          placeholder="0.00"
+                          className="flex-1"
+                        />
+                      </div>
+                    );
+                  })}
+                  {(() => {
+                    const total =
+                      splitMethod === "itemized" ? itemizedTotal : parseFloat(amount) || 0;
+                    const paidTotal = Object.values(payerAmounts).reduce(
+                      (sum, v) => sum + (parseFloat(v) || 0),
+                      0
+                    );
+                    const remaining = round2(total - paidTotal);
+                    return (
+                      <p
+                        className={`text-xs ${
+                          Math.abs(remaining) < 0.01
+                            ? "text-green-600"
+                            : "text-amber-600"
+                        }`}
+                      >
+                        {Math.abs(remaining) < 0.01
+                          ? "Payer amounts match the total"
+                          : `Remaining to assign: ₹${remaining.toFixed(2)}`}
+                      </p>
+                    );
+                  })()}
+                </div>
+              )}
+            </div>
+
             {/* Itemized Split Section */}
             {splitMethod === "itemized" && (
               <div className="rounded-xl border-2 border-primary/30 p-4 space-y-4 bg-primary/5 dark:bg-primary/10">
@@ -1413,12 +1588,12 @@ export default function AddExpensePage() {
                     <div className="flex items-center gap-3">
                       <div className="h-10 w-10 bg-primary/10 rounded-full flex items-center justify-center">
                         <span className="text-primary font-semibold">
-                          {friend.friend.name.charAt(0).toUpperCase()}
+                          {friend.friend.name?.charAt(0)?.toUpperCase() || "?"}
                         </span>
                       </div>
                       <div className="text-left">
                         <p className="text-sm font-medium text-neutral-900 dark:text-dark-text">
-                          {friend.friend.name}
+                          {friend.friend.name || friend.friend.email || "Unknown"}
                         </p>
                         <p className="text-xs text-neutral-500">
                           {friend.friend.email}

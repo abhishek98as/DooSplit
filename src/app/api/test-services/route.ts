@@ -5,7 +5,31 @@ import { getServerAppUser } from "@/lib/auth/server-session";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * Diagnostics only. Disabled in production unless ENABLE_TEST_SERVICES=true
+ * and Authorization: Bearer <CRON_SECRET or TEST_SERVICES_SECRET>.
+ */
+function isDiagnosticsAllowed(request: NextRequest): boolean {
+  const enabled =
+    process.env.NODE_ENV !== "production" ||
+    process.env.ENABLE_TEST_SERVICES === "true";
+  if (!enabled) return false;
+
+  // Non-production: allow without secret for local debugging
+  if (process.env.NODE_ENV !== "production") return true;
+
+  const expected =
+    process.env.TEST_SERVICES_SECRET || process.env.CRON_SECRET || "";
+  if (!expected) return false;
+  const authHeader = request.headers.get("authorization");
+  return authHeader === `Bearer ${expected}`;
+}
+
 export async function GET(request: NextRequest) {
+  if (!isDiagnosticsAllowed(request)) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
   const results: Record<string, any> = {
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV,
@@ -197,6 +221,10 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  if (!isDiagnosticsAllowed(request)) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
   try {
     const body = await request.json();
     const idToken = String(body?.idToken || "");

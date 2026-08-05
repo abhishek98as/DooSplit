@@ -7,8 +7,7 @@ import {
 } from "@/lib/cache";
 import { requireUser } from "@/lib/auth/require-user";
 import { getActiveRepository } from "@/lib/data";
-import { createGroupInFirestore } from "@/lib/firestore/write-operations";
-import { getAdminDb } from "@/lib/firestore/admin";
+import { createGroupInRepos } from "@/lib/firestore/write-operations";
 import { logGroupCreated } from "@/lib/activity-logger";
 
 export const dynamic = "force-dynamic";
@@ -92,28 +91,23 @@ export async function POST(request: NextRequest) {
       members: allMemberIds,
     };
 
-    const groupId = await createGroupInFirestore(groupData);
-    const db = getAdminDb();
+    const groupId = await createGroupInRepos(groupData);
 
-    const [groupDoc, membersSnap] = await Promise.all([
-      db.collection("groups").doc(groupId).get(),
-      db.collection("group_members").where("group_id", "==", groupId).get(),
+    const { getGroupById, listGroupMembers } = await import(
+      "@/lib/dynamodb/entities/groups"
+    );
+    const [g, m] = await Promise.all([
+      getGroupById(groupId),
+      listGroupMembers(groupId),
     ]);
-
-    const groupRow = groupDoc.exists ? groupDoc.data() || {} : {};
-    const members = membersSnap.docs.map((doc: any) => {
-      const row = doc.data() || {};
-      return {
-        _id: doc.id,
-        groupId: String(row.group_id || groupId),
-        userId: String(row.user_id || ""),
-        role: String(row.role || "member"),
-        joinedAt:
-          typeof row.joined_at?.toDate === "function"
-            ? row.joined_at.toDate().toISOString()
-            : row.joined_at || new Date().toISOString(),
-      };
-    });
+    const groupRow: any = g || {};
+    const members = m.map((row) => ({
+      _id: `${groupId}_${row.user_id}`,
+      groupId: row.group_id,
+      userId: row.user_id,
+      role: row.role || "member",
+      joinedAt: row.joined_at,
+    }));
 
     void logGroupCreated({
       actorId: userId,
@@ -128,7 +122,6 @@ export async function POST(request: NextRequest) {
       ["groups", "activities", "dashboard-activity", "analytics"]
     );
 
-    // Return success response
     return NextResponse.json({
       success: true,
       groupId,

@@ -1,19 +1,33 @@
 import { NextRequest, NextResponse } from "next/server";
 import { invalidateUsersCache } from "@/lib/cache";
 import { requireUser } from "@/lib/auth/require-user";
-import { FieldValue, getAdminDb } from "@/lib/firestore/admin";
 import { logActivity } from "@/lib/activity-logger";
-import { groupMemberDocId } from "@/lib/social/keys";
-import { fetchDocsByIds, mapUser, toIso, uniqueStrings } from "@/lib/firestore/route-helpers";
+import { toIso, uniqueStrings } from "@/lib/firestore/route-helpers";
 import { GROUP_MUTATION_CACHE_SCOPES } from "@/lib/cache-scopes";
+import {
+  listGroupMembers,
+  getGroupMember,
+  putGroupMember,
+  getGroupById,
+} from "@/lib/dynamodb/entities/groups";
+import { getUsersByIds, getUserById } from "@/lib/dynamodb/entities/users";
+import { getDynamoDB } from "@/lib/dynamodb/client";
+import { TABLE } from "@/lib/dynamodb/tables";
+import { PK, SK } from "@/lib/dynamodb/keys";
+import { DeleteCommand } from "@aws-sdk/lib-dynamodb";
 
 function mapMembers(members: any[], usersMap: Map<string, any>) {
   return members.map((member: any) => {
     const user = usersMap.get(String(member.user_id || ""));
     return {
-      _id: String(member.id || ""),
+      _id: member.id || `${member.group_id}_${member.user_id}`,
       groupId: String(member.group_id || ""),
-      userId: user ? mapUser(user) : null,
+      userId: user ? {
+        _id: user.id,
+        name: user.name,
+        email: user.email,
+        profilePicture: user.photo_url || user.profile_picture || null,
+      } : null,
       role: String(member.role || "member"),
       joinedAt: toIso(member.joined_at || member.created_at || member._created_at),
       createdAt: toIso(member.created_at || member._created_at),
@@ -23,15 +37,16 @@ function mapMembers(members: any[], usersMap: Map<string, any>) {
 }
 
 async function loadGroupMembers(groupId: string) {
-  const db = getAdminDb();
-  const membersSnap = await db
-    .collection("group_members")
-    .where("group_id", "==", groupId)
-    .get();
-  const members = membersSnap.docs.map((doc: any) => ({ id: doc.id, ...((doc.data() as any) || {}) }));
-  const userIds = uniqueStrings((members || []).map((member: any) => String(member.user_id || "")));
-  const usersMap = await fetchDocsByIds("users", userIds);
-  return mapMembers(members || [], usersMap);
+  const members = await listGroupMembers(groupId);
+  const userIds = uniqueStrings(members.map((member: any) => String(member.user_id || "")));
+  const ddbUsers = await getUsersByIds(userIds);
+  const usersMap = new Map<string, any>();
+  for (const u of ddbUsers) {
+    if (u) {
+      usersMap.set(u.id, u);
+    }
+  }
+  return mapMembers(members, usersMap);
 }
 
 export async function POST(
@@ -56,35 +71,22 @@ export async function POST(
       );
     }
 
-    const db = getAdminDb();
-    const adminMembershipSnap = await db
-      .collection("group_members")
-      .where("group_id", "==", id)
-      .where("user_id", "==", currentUserId)
-      .where("role", "==", "admin")
-      .limit(1)
-      .get();
-    if (adminMembershipSnap.empty) {
+    const adminMembership = await getGroupMember(id, currentUserId);
+    if (!adminMembership || adminMembership.role !== "admin") {
       return NextResponse.json(
         { error: "Only group admins can add members" },
         { status: 403 }
       );
     }
 
-    const userExists = await db.collection("users").doc(newMemberId).get();
-    if (!userExists.exists) {
+    const userExists = await getUserById(newMemberId);
+    if (!userExists) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
-    const newMemberName =
-      String(userExists.data()?.name || "").trim() || "a member";
+    const newMemberName = userExists.name || "a member";
 
-    const existingMemberSnap = await db
-      .collection("group_members")
-      .where("group_id", "==", id)
-      .where("user_id", "==", newMemberId)
-      .limit(1)
-      .get();
-    if (!existingMemberSnap.empty) {
+    const existingMember = await getGroupMember(id, newMemberId);
+    if (existingMember) {
       return NextResponse.json(
         { error: "User is already a member" },
         { status: 400 }
@@ -92,17 +94,14 @@ export async function POST(
     }
 
     const nowIso = new Date().toISOString();
-    const memberId = groupMemberDocId(id, newMemberId);
-    await db.collection("group_members").doc(memberId).set({
-      id: memberId,
+    await putGroupMember({
       group_id: id,
       user_id: newMemberId,
       role: "member",
+      status: "active",
       joined_at: nowIso,
       created_at: nowIso,
       updated_at: nowIso,
-      _created_at: FieldValue.serverTimestamp(),
-      _updated_at: FieldValue.serverTimestamp(),
     });
 
     const members = await loadGroupMembers(id);
@@ -114,9 +113,8 @@ export async function POST(
       ])
     );
 
-    const groupDoc = await db.collection("groups").doc(id).get();
-    const groupName =
-      String(groupDoc.data()?.name || "").trim() || "Group";
+    const group = await getGroupById(id);
+    const groupName = group?.name || "Group";
 
     void logActivity({
       userIds: affectedUserIds,
@@ -185,20 +183,13 @@ export async function DELETE(
       );
     }
 
-    const db = getAdminDb();
-    const membershipSnap = await db
-      .collection("group_members")
-      .where("group_id", "==", id)
-      .where("user_id", "==", currentUserId)
-      .limit(1)
-      .get();
-    if (membershipSnap.empty) {
+    const membership = await getGroupMember(id, currentUserId);
+    if (!membership) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
-    const membership = membershipSnap.docs[0].data() || {};
 
     const isSelfRemoval = memberIdToRemove === currentUserId;
-    const isAdmin = String(membership.role || "") === "admin";
+    const isAdmin = membership.role === "admin";
     if (!isSelfRemoval && !isAdmin) {
       return NextResponse.json(
         { error: "Only admins can remove other members" },
@@ -207,31 +198,22 @@ export async function DELETE(
     }
 
     if (isAdmin && isSelfRemoval) {
-      const adminCountSnap = await db
-        .collection("group_members")
-        .where("group_id", "==", id)
-        .where("role", "==", "admin")
-        .get();
-      if (adminCountSnap.size <= 1) {
+      const members = await listGroupMembers(id);
+      const adminCount = members.filter((m) => m.role === "admin").length;
+      if (adminCount <= 1) {
         return NextResponse.json(
           {
-            error:
-              "Cannot leave group as the only admin. Promote another member first.",
+            error: "Cannot leave group as the only admin. Promote another member first.",
           },
           { status: 400 }
         );
       }
     }
 
-    const targetMembershipSnap = await db
-      .collection("group_members")
-      .where("group_id", "==", id)
-      .where("user_id", "==", memberIdToRemove)
-      .limit(1)
-      .get();
-    if (!targetMembershipSnap.empty) {
-      await targetMembershipSnap.docs[0].ref.delete();
-    }
+    await getDynamoDB().send(new DeleteCommand({
+      TableName: TABLE,
+      Key: { PK: PK.group(id), SK: SK.member(memberIdToRemove) },
+    }));
 
     const members = await loadGroupMembers(id);
     const affectedUserIds = Array.from(
@@ -264,4 +246,3 @@ export async function DELETE(
     );
   }
 }
-

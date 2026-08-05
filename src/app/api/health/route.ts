@@ -26,10 +26,10 @@ export async function GET() {
     FIREBASE_SERVICE_ACCOUNT_KEY: Boolean(process.env.FIREBASE_SERVICE_ACCOUNT_KEY),
     FIREBASE_SESSION_COOKIE_NAME: Boolean(process.env.FIREBASE_SESSION_COOKIE_NAME),
     SESSION_SECRET: Boolean(process.env.SESSION_SECRET),
-    MONGODB_URI: Boolean(process.env.MONGODB_URI),
+    AWS_REGION: Boolean(process.env.AWS_REGION),
+    DYNAMODB_TABLE: Boolean(process.env.DYNAMODB_TABLE),
   };
 
-  // Redis has been removed — caching is now in-process memory only.
   checks.redis = { status: "disabled", message: "Redis removed — using in-process memory cache" };
 
   checks.firebaseAuth = {
@@ -37,38 +37,23 @@ export async function GET() {
     error: firebaseInitError || null,
   };
 
-  // Ping the active data backend instead of always hitting Firestore.
-  // DATA_BACKEND=mongodb → ping MongoDB; firestore → ping Firestore; dynamodb → skip ping.
-  if (dataBackend === "mongodb") {
-    try {
-      const { getMongoDb } = await import("@/lib/mongodb/client");
-      const start = Date.now();
-      await getMongoDb();
-      checks.mongodb = { status: "connected", pingMs: Date.now() - start };
-    } catch (error: any) {
-      checks.mongodb = { status: "error", error: error.message };
-    }
-  } else if (dataBackend === "firestore") {
-    try {
-      const { getAdminDb } = await import("@/lib/firestore/admin");
-      const db = getAdminDb();
-      const start = Date.now();
-      await db.collection("users").limit(1).get();
-      checks.firestore = { status: "connected", pingMs: Date.now() - start };
-    } catch (error: any) {
-      checks.firestore = { status: "error", error: error.message };
-    }
-  } else if (dataBackend === "dynamodb") {
-    checks.dynamodb = { status: "not-checked", message: "DynamoDB ping not implemented in health check" };
+  try {
+    const { getDynamoDB } = await import("@/lib/dynamodb/client");
+    const { TABLE } = await import("@/lib/dynamodb/tables");
+    const { GetCommand } = await import("@aws-sdk/lib-dynamodb");
+    const start = Date.now();
+    await getDynamoDB().send(
+      new GetCommand({
+        TableName: TABLE,
+        Key: { PK: "__health__", SK: "__ping__" },
+      })
+    );
+    checks.dynamodb = { status: "connected", pingMs: Date.now() - start };
+  } catch (error: any) {
+    checks.dynamodb = { status: "error", error: error.message };
   }
 
-  const dbCheck =
-    dataBackend === "mongodb"
-      ? checks.mongodb?.status === "connected"
-      : dataBackend === "firestore"
-      ? checks.firestore?.status === "connected"
-      : true; // dynamodb: skip
-
+  const dbCheck = checks.dynamodb?.status === "connected";
   const isHealthy = checks.firebaseAuth.initialized && dbCheck;
 
   return NextResponse.json(

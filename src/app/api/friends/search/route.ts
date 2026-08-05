@@ -1,30 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth/require-user";
-import { getAdminDb } from "@/lib/firestore/admin";
 import { normalizeName } from "@/lib/social/keys";
+import {
+  getUserByEmail,
+  searchUsersByNamePrefix,
+} from "@/lib/dynamodb/entities/users";
+import { getFriendship } from "@/lib/dynamodb/entities/friendships";
 
 export const dynamic = "force-dynamic";
 
-function chunk<T>(values: T[], size: number): T[][] {
-  if (values.length === 0) {
-    return [];
-  }
-  const chunks: T[][] = [];
-  for (let i = 0; i < values.length; i += size) {
-    chunks.push(values.slice(i, i + size));
-  }
-  return chunks;
-}
-
 function uniqueStrings(values: Array<string | null | undefined>): string[] {
   return Array.from(new Set(values.map((value) => String(value || "")).filter(Boolean)));
-}
-
-function compareStatusPriority(status: string): number {
-  if (status === "accepted") return 3;
-  if (status === "pending") return 2;
-  if (status === "rejected") return 1;
-  return 0;
 }
 
 async function getFriendshipStatuses(
@@ -32,69 +18,44 @@ async function getFriendshipStatuses(
   candidateIds: string[]
 ): Promise<Map<string, string>> {
   const ids = uniqueStrings(candidateIds);
-  if (ids.length === 0) {
-    return new Map();
-  }
-
-  const db = getAdminDb();
   const statuses = new Map<string, string>();
-  for (const idChunk of chunk(ids, 30)) {
-    const snap = await db
-      .collection("friendships")
-      .where("user_id", "==", userId)
-      .where("friend_id", "in", idChunk)
-      .get();
-    for (const doc of snap.docs) {
-      const row = doc.data() || {};
-      const friendId = String(row.friend_id || "");
-      const status = String(row.status || "none");
-      const existing = statuses.get(friendId);
-      if (!existing || compareStatusPriority(status) > compareStatusPriority(existing)) {
-        statuses.set(friendId, status);
-      }
-    }
-  }
-
+  await Promise.all(
+    ids.map(async (friendId) => {
+      const f = await getFriendship(userId, friendId);
+      if (f) statuses.set(friendId, f.status);
+    })
+  );
   return statuses;
 }
 
-async function searchUsers(query: string, limit = 10): Promise<any[]> {
-  const db = getAdminDb();
+async function searchUsers(query: string, limit = 10) {
   const term = normalizeName(query);
-  const max = `${term}\uf8ff`;
-  const isEmailQuery = term.includes("@");
+  const results = new Map<string, any>();
 
-  if (isEmailQuery) {
-    const snap = await db
-      .collection("users")
-      .where("email_normalized", ">=", term)
-      .where("email_normalized", "<=", max)
-      .limit(limit)
-      .get();
-    return snap.docs.map((doc) => ({ id: doc.id, ...((doc.data() as any) || {}) }));
+  // Exact email hit (GSI1)
+  if (term.includes("@")) {
+    const byEmail = await getUserByEmail(term);
+    if (byEmail) {
+      results.set(byEmail.id, byEmail);
+    }
   }
 
-  const [nameSnap, emailSnap] = await Promise.all([
-    db
-      .collection("users")
-      .where("name_normalized", ">=", term)
-      .where("name_normalized", "<=", max)
-      .limit(limit)
-      .get(),
-    db
-      .collection("users")
-      .where("email_normalized", ">=", term)
-      .where("email_normalized", "<=", max)
-      .limit(limit)
-      .get(),
-  ]);
-
-  const dedup = new Map<string, any>();
-  for (const doc of [...nameSnap.docs, ...emailSnap.docs]) {
-    dedup.set(doc.id, { id: doc.id, ...((doc.data() as any) || {}) });
+  // Name prefix via GSI3 (no Scan)
+  const byName = await searchUsersByNamePrefix(term, limit);
+  for (const user of byName) {
+    results.set(user.id, user);
   }
 
-  return Array.from(dedup.values()).slice(0, limit);
+  return Array.from(results.values())
+    .slice(0, limit)
+    .map((item) => ({
+      id: item.id,
+      name: item.name,
+      email: item.email,
+      profile_picture: item.photo_url || null,
+      is_dummy: item.is_dummy,
+      is_active: item.is_active,
+    }));
 }
 
 export async function GET(request: NextRequest) {
@@ -126,7 +87,7 @@ export async function GET(request: NextRequest) {
       users.map((user) => String(user.id))
     );
 
-    const usersWithStatus = users.map((user: any) => ({
+    const usersWithStatus = users.map((user) => ({
       id: user.id,
       name: user.name,
       email: user.email,
@@ -135,12 +96,8 @@ export async function GET(request: NextRequest) {
     }));
 
     return NextResponse.json({ users: usersWithStatus }, { status: 200 });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Search users error:", error);
-    return NextResponse.json(
-      { error: "Failed to search users" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to search users" }, { status: 500 });
   }
 }
-

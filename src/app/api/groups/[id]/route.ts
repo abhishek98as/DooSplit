@@ -6,9 +6,8 @@ import {
   invalidateUsersCache,
 } from "@/lib/cache";
 import { requireUser } from "@/lib/auth/require-user";
-import { FieldValue, getAdminDb } from "@/lib/firestore/admin";
 import { computeGroupMemberNetBalances } from "@/lib/data/balance-service";
-import { fetchDocsByIds, mapUser, round2, toIso, uniqueStrings } from "@/lib/firestore/route-helpers";
+import { round2, uniqueStrings } from "@/lib/firestore/route-helpers";
 import { GROUP_MUTATION_CACHE_SCOPES } from "@/lib/cache-scopes";
 import { logGroupDeleted } from "@/lib/activity-logger";
 
@@ -19,101 +18,95 @@ async function loadGroupPayload(
   groupId: string,
   userId: string
 ): Promise<{ group: any; memberIds: string[] }> {
-  const db = getAdminDb();
-  const membershipSnap = await db
-    .collection("group_members")
-    .where("group_id", "==", groupId)
-    .where("user_id", "==", userId)
-    .limit(1)
-    .get();
-  if (membershipSnap.empty) {
+  const { getGroupById, getGroupMember, listGroupMembers } = await import(
+    "@/lib/dynamodb/entities/groups"
+  );
+  const { getUsersByIds } = await import("@/lib/dynamodb/entities/users");
+
+  const membership = await getGroupMember(groupId, userId);
+  if (!membership) {
     throw new Error("Forbidden");
   }
-  const membership = membershipSnap.docs[0].data() || {};
 
-  const groupDoc = await db.collection("groups").doc(groupId).get();
-  if (!groupDoc.exists || groupDoc.data()?.is_active === false) {
+  const group = await getGroupById(groupId);
+  if (!group || group.is_active === false) {
     throw new Error("Group not found");
   }
-  const group: any = { id: groupDoc.id, ...((groupDoc.data() as any) || {}) };
 
-  const membersSnap = await db
-    .collection("group_members")
-    .where("group_id", "==", groupId)
-    .get();
-  const members = membersSnap.docs.map((doc: any) => ({ id: doc.id, ...((doc.data() as any) || {}) }));
-
+  const members = await listGroupMembers(groupId);
   const userIds = uniqueStrings([
     String(group.created_by || ""),
-    ...members.map((member: any) => String(member.user_id || "")),
+    ...members.map((member) => String(member.user_id || "")),
   ]);
-  const usersMap = await fetchDocsByIds("users", userIds);
 
-  const payloadMembers = members.map((member: any) => {
+  const ddbUsers = await getUsersByIds(userIds);
+  const usersMap = new Map<string, (typeof ddbUsers)[number]>();
+  for (const u of ddbUsers) {
+    if (u) usersMap.set(u.id, u);
+  }
+
+  const payloadMembers = members.map((member) => {
     const user = usersMap.get(String(member.user_id || ""));
     return {
-      _id: String(member.id || ""),
-      groupId: String(member.group_id || ""),
-      userId: user ? mapUser(user) : null,
-      role: String(member.role || "member"),
-      joinedAt: toIso(member.joined_at || member.created_at || member._created_at),
-      createdAt: toIso(member.created_at || member._created_at),
-      updatedAt: toIso(member.updated_at || member._updated_at),
+      _id: `${groupId}_${member.user_id}`,
+      groupId: member.group_id,
+      userId: user
+        ? {
+            _id: user.id,
+            name: user.name,
+            email: user.email,
+            profilePicture: user.photo_url || null,
+          }
+        : null,
+      role: member.role || "member",
+      joinedAt: member.joined_at,
+      createdAt: member.created_at,
+      updatedAt: member.updated_at,
     };
   });
 
   const memberIds = uniqueStrings(
-    payloadMembers.map((member: any) => String(member.userId?._id || ""))
+    payloadMembers.map((member) => String(member.userId?._id || ""))
   );
 
-  let balances: Array<{ userId: string; userName: string; balance: number }> = [];
-  try {
-    const balanceMap = await computeGroupMemberNetBalances(groupId);
-    balances = memberIds.map((memberId) => {
-      const memberUser = usersMap.get(memberId);
-      const memberName =
-        String(memberUser?.name || "").trim() ||
-        payloadMembers.find((member: any) => String(member.userId?._id) === memberId)?.userId
-          ?.name ||
-        "Unknown";
-      return {
-        userId: memberId,
-        userName: memberName,
-        balance: round2(balanceMap.get(memberId) || 0),
-      };
-    });
-  } catch (balanceError) {
-    console.error("Failed to compute group balances:", balanceError);
-    balances = memberIds.map((memberId) => {
-      const memberUser = usersMap.get(memberId);
-      return {
-        userId: memberId,
-        userName: String(memberUser?.name || "Unknown"),
-        balance: 0,
-      };
-    });
-  }
+  // Fail loudly — never pretend balances are settled (₹0) on compute errors
+  const balanceMap = await computeGroupMemberNetBalances(groupId);
+  const balances = memberIds.map((memberId) => {
+    const memberUser = usersMap.get(memberId);
+    return {
+      userId: memberId,
+      userName: memberUser?.name || "Unknown",
+      balance: round2(balanceMap.get(memberId) || 0),
+    };
+  });
 
   const creator = usersMap.get(String(group.created_by || ""));
   return {
     group: {
-      _id: String(group.id || ""),
-      name: String(group.name || ""),
-      description: String(group.description || ""),
+      _id: group.id,
+      name: group.name,
+      description: group.description || "",
       image: group.image || null,
-      type: String(group.type || "trip"),
-      currency: String(group.currency || "INR"),
-      createdBy: creator ? mapUser(creator) : null,
-      isActive: group.is_active !== false,
-      createdAt: toIso(group.created_at || group._created_at),
-      updatedAt: toIso(group.updated_at || group._updated_at),
+      type: group.type || "trip",
+      currency: group.currency || "INR",
+      createdBy: creator
+        ? {
+            _id: creator.id,
+            name: creator.name,
+            email: creator.email,
+            profilePicture: creator.photo_url || null,
+          }
+        : null,
+      isActive: true,
+      createdAt: group.created_at,
+      updatedAt: group.updated_at,
       members: payloadMembers,
       memberCount: payloadMembers.length,
-      userRole: String(membership.role || "member"),
+      userRole: membership.role || "member",
       balances,
-      settleUpDate: group.settleUpDate || group.settle_up_date || null,
+      settleUpDate: group.settle_up_date || null,
       notes: group.notes || "",
-      simplifyDebts: group.simplifyDebts !== false && group.simplify_debts !== false,
+      simplifyDebts: group.simplify_debts !== false,
     },
     memberIds,
   };
@@ -152,10 +145,7 @@ export async function GET(
       return NextResponse.json({ error: "Group not found" }, { status: 404 });
     }
     console.error("Get group error:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch group" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to fetch group" }, { status: 500 });
   }
 }
 
@@ -171,16 +161,12 @@ export async function PUT(
       return auth.response as NextResponse;
     }
     const userId = auth.user.id;
-    const db = getAdminDb();
 
-    const membershipSnap = await db
-      .collection("group_members")
-      .where("group_id", "==", id)
-      .where("user_id", "==", userId)
-      .where("role", "==", "admin")
-      .limit(1)
-      .get();
-    if (membershipSnap.empty) {
+    const { getGroupMember, updateGroup } = await import(
+      "@/lib/dynamodb/entities/groups"
+    );
+    const membership = await getGroupMember(id, userId);
+    if (!membership || membership.role !== "admin") {
       return NextResponse.json(
         { error: "Only group admins can update group details" },
         { status: 403 }
@@ -188,58 +174,39 @@ export async function PUT(
     }
 
     const body = await request.json();
-    const updatePayload: Record<string, any> = {};
-    if (body?.name !== undefined) {
-      updatePayload.name = String(body.name).trim();
-    }
+    const updatePayload: Record<string, unknown> = {};
+    if (body?.name !== undefined) updatePayload.name = String(body.name).trim();
     if (body?.description !== undefined) {
       updatePayload.description = body.description ? String(body.description) : "";
     }
     if (body?.image !== undefined) {
       updatePayload.image = body.image ? String(body.image) : null;
     }
-    if (body?.type !== undefined) {
-      updatePayload.type = String(body.type);
-    }
-    if (body?.currency !== undefined) {
-      updatePayload.currency = String(body.currency);
-    }
+    if (body?.type !== undefined) updatePayload.type = String(body.type);
+    if (body?.currency !== undefined) updatePayload.currency = String(body.currency);
     if (body?.settleUpDate !== undefined) {
-      updatePayload.settleUpDate = body.settleUpDate ? String(body.settleUpDate) : null;
+      updatePayload.settle_up_date = body.settleUpDate
+        ? String(body.settleUpDate)
+        : null;
     }
-    if (body?.notes !== undefined) {
-      updatePayload.notes = String(body.notes).trim();
-    }
+    if (body?.notes !== undefined) updatePayload.notes = String(body.notes).trim();
     if (body?.simplifyDebts !== undefined) {
-      updatePayload.simplifyDebts = Boolean(body.simplifyDebts);
+      updatePayload.simplify_debts = Boolean(body.simplifyDebts);
     }
     updatePayload.updated_at = new Date().toISOString();
-    updatePayload._updated_at = FieldValue.serverTimestamp();
 
-    const groupRef = db.collection("groups").doc(id);
-    const groupDoc = await groupRef.get();
-    if (!groupDoc.exists || groupDoc.data()?.is_active === false) {
-      return NextResponse.json({ error: "Group not found" }, { status: 404 });
-    }
-
-    await groupRef.set(updatePayload, { merge: true });
+    await updateGroup(id, updatePayload as any);
     const { group, memberIds } = await loadGroupPayload(id, userId);
 
-    await invalidateUsersCache(
-      Array.from(new Set([userId, ...memberIds])),
-      [...GROUP_MUTATION_CACHE_SCOPES]
-    );
+    await invalidateUsersCache(Array.from(new Set([userId, ...memberIds])), [
+      ...GROUP_MUTATION_CACHE_SCOPES,
+    ]);
 
     return NextResponse.json(
-      {
-        message: "Group updated successfully",
-        group,
-      },
+      { message: "Group updated successfully", group },
       {
         status: 200,
-        headers: {
-          "X-Doosplit-Route-Ms": String(Date.now() - routeStart),
-        },
+        headers: { "X-Doosplit-Route-Ms": String(Date.now() - routeStart) },
       }
     );
   } catch (error: any) {
@@ -263,36 +230,28 @@ export async function DELETE(
       return auth.response as NextResponse;
     }
     const userId = auth.user.id;
-    const db = getAdminDb();
 
-    const membershipSnap = await db
-      .collection("group_members")
-      .where("group_id", "==", id)
-      .where("user_id", "==", userId)
-      .where("role", "==", "admin")
-      .limit(1)
-      .get();
-    if (membershipSnap.empty) {
+    const { getGroupMember, getGroupById, updateGroup, listGroupMembers } =
+      await import("@/lib/dynamodb/entities/groups");
+    const { queryGroupExpenseFeed } = await import(
+      "@/lib/dynamodb/entities/expenses"
+    );
+
+    const membership = await getGroupMember(id, userId);
+    if (!membership || membership.role !== "admin") {
       return NextResponse.json(
         { error: "Only group admins can delete the group" },
         { status: 403 }
       );
     }
 
-    const groupDoc = await db.collection("groups").doc(id).get();
-    if (!groupDoc.exists || groupDoc.data()?.is_active === false) {
+    const group = await getGroupById(id);
+    if (!group || group.is_active === false) {
       return NextResponse.json({ error: "Group not found" }, { status: 404 });
     }
-    const groupName =
-      String(groupDoc.data()?.name || "").trim() || "Untitled Group";
 
-    const unsettledExpensesSnap = await db
-      .collection("expenses")
-      .where("group_id", "==", id)
-      .where("is_deleted", "==", false)
-      .limit(1)
-      .get();
-    if (!unsettledExpensesSnap.empty) {
+    const { items: groupExpenses } = await queryGroupExpenseFeed(id, 1);
+    if (groupExpenses.length > 0) {
       return NextResponse.json(
         {
           error:
@@ -302,20 +261,13 @@ export async function DELETE(
       );
     }
 
-    const membersSnap = await db
-      .collection("group_members")
-      .where("group_id", "==", id)
-      .get();
-    const memberIds = membersSnap.docs.map((doc: any) => String(doc.data()?.user_id || ""));
+    const members = await listGroupMembers(id);
+    const memberIds = members.map((m) => m.user_id);
 
-    await db.collection("groups").doc(id).set(
-      {
-        is_active: false,
-        updated_at: new Date().toISOString(),
-        _updated_at: FieldValue.serverTimestamp(),
-      },
-      { merge: true }
-    );
+    await updateGroup(id, {
+      is_active: false,
+      updated_at: new Date().toISOString(),
+    });
 
     const affectedUserIds = Array.from(new Set([userId, ...memberIds]));
 
@@ -323,7 +275,7 @@ export async function DELETE(
       actorId: userId,
       actorName: auth.user.name || "Someone",
       groupId: id,
-      groupName,
+      groupName: group.name || "Untitled Group",
       memberIds: affectedUserIds,
     });
 
@@ -333,17 +285,11 @@ export async function DELETE(
       { message: "Group deleted successfully" },
       {
         status: 200,
-        headers: {
-          "X-Doosplit-Route-Ms": String(Date.now() - routeStart),
-        },
+        headers: { "X-Doosplit-Route-Ms": String(Date.now() - routeStart) },
       }
     );
   } catch (error: any) {
     console.error("Delete group error:", error);
-    return NextResponse.json(
-      { error: "Failed to delete group" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to delete group" }, { status: 500 });
   }
 }
-

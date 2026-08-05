@@ -8,9 +8,6 @@ import {
 import { getServerAppUser, verifyFirebaseIdTokenClaims } from "@/lib/auth/server-session";
 import { getAdminAuth } from "@/lib/firestore/admin";
 import { normalizeEmail, normalizeName } from "@/lib/social/keys";
-import { User } from "@/lib/mongodb/models";
-import { getMongoDb } from "@/lib/mongodb/client";
-import { getDataBackendMode } from "@/lib/data/config";
 
 function getSessionSecret(): Uint8Array {
   const secret = process.env.SESSION_SECRET;
@@ -22,63 +19,35 @@ function getSessionSecret(): Uint8Array {
 
 export const dynamic = "force-dynamic";
 
-async function ensureUserDoc(decoded: { uid: string; email?: string; name?: string | null; picture?: string | null }) {
-  const backend = getDataBackendMode();
-  if (backend === "dynamodb") {
-    const { getUserById, putUser, updateUser } = await import("@/lib/dynamodb/entities/users");
-    const existing = await getUserById(decoded.uid);
-    if (!existing) {
-      const now = new Date().toISOString();
-      await putUser({
-        id: decoded.uid,
-        email: decoded.email || "",
-        email_normalized: normalizeEmail(decoded.email || ""),
-        name: decoded.name || "User",
-        name_normalized: normalizeName(decoded.name || "User"),
-        photo_url: decoded.picture || "",
-        is_active: true,
-        created_at: now,
-        updated_at: now,
-      });
-    } else if (decoded.picture && existing.photo_url !== decoded.picture) {
-      const now = new Date().toISOString();
-      await updateUser(decoded.uid, {
-        photo_url: decoded.picture,
-        updated_at: now,
-      });
-    }
-  } else {
-    await getMongoDb();
-    await User.findOneAndUpdate(
-      { _id: decoded.uid },
-      {
-        $setOnInsert: {
-          _id: decoded.uid,
-          email: decoded.email || "",
-          email_normalized: normalizeEmail(decoded.email || ""),
-          name: decoded.name || "User",
-          name_normalized: normalizeName(decoded.name || "User"),
-          phone: null,
-          profile_picture: decoded.picture || null,
-          default_currency: "INR",
-          timezone: "Asia/Kolkata",
-          language: "en",
-          is_active: true,
-          is_dummy: false,
-          created_by: null,
-          role: "user",
-          email_verified: true,
-          auth_provider: "firebase",
-          push_notifications_enabled: false,
-          email_notifications_enabled: true,
-          fcm_tokens: [],
-          created_at: new Date(),
-          updated_at: new Date(),
-        },
-        $set: decoded.picture ? { profile_picture: decoded.picture } : {},
-      },
-      { upsert: true, new: false }
-    );
+async function ensureUserDoc(decoded: {
+  uid: string;
+  email?: string;
+  name?: string | null;
+  picture?: string | null;
+}) {
+  const { getUserById, putUser, updateUser } = await import(
+    "@/lib/dynamodb/entities/users"
+  );
+  const existing = await getUserById(decoded.uid);
+  if (!existing) {
+    const now = new Date().toISOString();
+    await putUser({
+      id: decoded.uid,
+      email: decoded.email || "",
+      email_normalized: normalizeEmail(decoded.email || ""),
+      name: decoded.name || "User",
+      name_normalized: normalizeName(decoded.name || "User"),
+      photo_url: decoded.picture || "",
+      is_active: true,
+      created_at: now,
+      updated_at: now,
+    });
+  } else if (decoded.picture && existing.photo_url !== decoded.picture) {
+    const now = new Date().toISOString();
+    await updateUser(decoded.uid, {
+      photo_url: decoded.picture,
+      updated_at: now,
+    });
   }
 }
 

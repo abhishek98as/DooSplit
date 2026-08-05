@@ -8,3 +8,5 @@ export const LOCKS_TABLE =
 /** GSI index names */
 export const GSI1 = "GSI1";
 export const GSI2 = "GSI2";
+/** Sparse multi-access: user name prefix, reminder-by-status, friendship-by-id */
+export const GSI3 = "GSI3";

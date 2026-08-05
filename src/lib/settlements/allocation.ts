@@ -1,20 +1,17 @@
 import "server-only";
 
-import { getMongooseInstance } from "@/lib/mongodb/client";
+import { getDynamoDB } from "@/lib/dynamodb/client";
+import { TABLE } from "@/lib/dynamodb/tables";
+import { PK, SK } from "@/lib/dynamodb/keys";
+import { PutCommand } from "@aws-sdk/lib-dynamodb";
+import { queryAll } from "@/lib/dynamodb/helpers";
 import {
-  Expense,
-  ExpenseParticipant,
-  SettlementAllocation,
-} from "@/lib/mongodb/models";
-import {
-  chunk,
-  round2,
-  toIso,
-  toNum,
-  uniqueStrings,
-} from "@/lib/mongodb/route-helpers";
-import { newAppId } from "@/lib/ids";
-import { normalizePaymentStatus } from "@/lib/expenses/payment-status";
+  listExpenseIdsByParticipant,
+  listExpenseParticipants,
+  getExpensesByIds,
+} from "@/lib/dynamodb/entities/expenses";
+import { updateExpensePaymentStatusInDynamo } from "@/lib/dynamodb/write-operations";
+import { round2, toIso, toNum, uniqueStrings } from "@/lib/firestore/route-helpers";
 
 interface Transfer {
   from: string;
@@ -83,15 +80,20 @@ function buildTransfersForExpense(participants: any[]): Transfer[] {
 }
 
 async function fetchParticipantsByExpenseIds(expenseIds: string[]): Promise<any[]> {
-  const ids = uniqueStrings(expenseIds);
-  if (ids.length === 0) return [];
-  return ExpenseParticipant.find({ expense_id: { $in: ids } }).lean();
+  if (expenseIds.length === 0) return [];
+  const arrays = await Promise.all(expenseIds.map(eid => listExpenseParticipants(eid)));
+  return arrays.flat();
 }
 
-async function fetchAllocationsByExpenseIds(expenseIds: string[]): Promise<any[]> {
-  const ids = uniqueStrings(expenseIds);
-  if (ids.length === 0) return [];
-  return SettlementAllocation.find({ expense_id: { $in: ids } }).lean();
+async function fetchAllocationsForExpense(expenseId: string): Promise<any[]> {
+  return queryAll<any>({
+    TableName: TABLE,
+    KeyConditionExpression: "PK = :pk AND begins_with(SK, :prefix)",
+    ExpressionAttributeValues: {
+      ":pk": PK.expense(expenseId),
+      ":prefix": "ALLOC#",
+    },
+  });
 }
 
 function toDateMs(value: any): number {
@@ -114,36 +116,35 @@ export async function allocateSettlementToExpenses(input: {
     return { allocations: [], updatedExpenses: [], affectedUserIds: [] };
   }
 
-  const [fromParticipants, toParticipants] = await Promise.all([
-    ExpenseParticipant.find({ user_id: input.fromUserId }).lean(),
-    ExpenseParticipant.find({ user_id: input.toUserId }).lean(),
+  // 1. Get all expense IDs for fromUserId and toUserId
+  const [fromExpenseObjs, toExpenseObjs] = await Promise.all([
+    listExpenseIdsByParticipant(input.fromUserId),
+    listExpenseIdsByParticipant(input.toUserId),
   ]);
 
-  const fromExpenseIds = new Set(
-    fromParticipants.map((doc: any) => String(doc.expense_id || ""))
-  );
+  const fromExpenseIds = new Set(fromExpenseObjs.map((e) => e.expense_id));
   const sharedExpenseIds = uniqueStrings(
-    toParticipants
-      .map((doc: any) => String(doc.expense_id || ""))
-      .filter((expenseId) => fromExpenseIds.has(expenseId))
+    toExpenseObjs
+      .map((e) => e.expense_id)
+      .filter((eid) => fromExpenseIds.has(eid))
   );
+
   if (sharedExpenseIds.length === 0) {
     return { allocations: [], updatedExpenses: [], affectedUserIds: [] };
   }
 
-  const expenses = await Expense.find({
-    _id: { $in: sharedExpenseIds },
-    is_deleted: { $ne: true },
-  }).lean();
+  // 2. Fetch candidate expenses
+  const expenses = await getExpensesByIds(sharedExpenseIds);
 
   const candidateExpenses = expenses
-    .filter((e: any) => normalizePaymentStatus(e.payment_status, "unpaid") !== "disputed")
-    .filter((e: any) => normalizePaymentStatus(e.payment_status, "unpaid") !== "paid")
-    .filter((e: any) => {
+    .filter((e) => !e.is_deleted)
+    .filter((e) => e.payment_status !== "disputed")
+    .filter((e) => e.payment_status !== "paid")
+    .filter((e) => {
       if (input.groupId === undefined || input.groupId === null || input.groupId === "") return true;
       return String(e.group_id || "") === String(input.groupId);
     })
-    .sort((a: any, b: any) => {
+    .sort((a, b) => {
       const left = toDateMs(a.date || a.created_at);
       const right = toDateMs(b.date || b.created_at);
       return left - right;
@@ -153,13 +154,18 @@ export async function allocateSettlementToExpenses(input: {
     return { allocations: [], updatedExpenses: [], affectedUserIds: [] };
   }
 
-  const candidateExpenseIds = candidateExpenses.map((e: any) => String(e._id || ""));
-  const participantRows = await fetchParticipantsByExpenseIds(candidateExpenseIds);
-  const existingAllocations = await fetchAllocationsByExpenseIds(candidateExpenseIds);
+  const candidateExpenseIds = candidateExpenses.map((e) => e.id);
+
+  // 3. Fetch participants and existing allocations for candidate expenses
+  const [participantRows, existingAllocationsArray] = await Promise.all([
+    fetchParticipantsByExpenseIds(candidateExpenseIds),
+    Promise.all(candidateExpenseIds.map((eid) => fetchAllocationsForExpense(eid))),
+  ]);
+  const existingAllocations = existingAllocationsArray.flat();
 
   const participantsByExpense = new Map<string, any[]>();
   for (const participant of participantRows) {
-    const expenseId = String(participant.expense_id || "");
+    const expenseId = participant.expense_id;
     const rows = participantsByExpense.get(expenseId) || [];
     rows.push(participant);
     participantsByExpense.set(expenseId, rows);
@@ -167,7 +173,7 @@ export async function allocateSettlementToExpenses(input: {
 
   const allocationsByExpense = new Map<string, any[]>();
   for (const allocation of existingAllocations) {
-    const expenseId = String(allocation.expense_id || "");
+    const expenseId = allocation.expense_id;
     const rows = allocationsByExpense.get(expenseId) || [];
     rows.push(allocation);
     allocationsByExpense.set(expenseId, rows);
@@ -177,90 +183,98 @@ export async function allocateSettlementToExpenses(input: {
   const createdAllocations: SettlementAllocationResult["allocations"] = [];
   const updatedExpenses: SettlementAllocationResult["updatedExpenses"] = [];
   const now = new Date();
-  const mongoose = getMongooseInstance();
-  const session = await mongoose.startSession();
+  const client = getDynamoDB();
 
-  try {
-    await session.withTransaction(async () => {
-      for (const expense of candidateExpenses) {
-        if (remaining <= 0.01) break;
+  for (const expense of candidateExpenses) {
+    if (remaining <= 0.01) break;
 
-        const expenseId = String(expense._id || (expense as any).id || "");
-        const participants = participantsByExpense.get(expenseId) || [];
-        const transfers = buildTransfersForExpense(participants);
-        const matchingDebt = transfers
-          .filter((t) => t.from === input.fromUserId && t.to === input.toUserId)
-          .reduce((sum, t) => round2(sum + t.amount), 0);
-        if (matchingDebt <= 0.01) continue;
+    const expenseId = expense.id;
+    const participants = participantsByExpense.get(expenseId) || [];
+    const transfers = buildTransfersForExpense(participants);
+    const matchingDebt = transfers
+      .filter((t) => t.from === input.fromUserId && t.to === input.toUserId)
+      .reduce((sum, t) => round2(sum + t.amount), 0);
+    if (matchingDebt <= 0.01) continue;
 
-        const existingForDirection = (allocationsByExpense.get(expenseId) || [])
-          .filter(
-            (a: any) =>
-              String(a.from_user_id || "") === input.fromUserId &&
-              String(a.to_user_id || "") === input.toUserId
-          )
-          .reduce((sum, a: any) => round2(sum + toNum(a.amount)), 0);
-        const directionOutstanding = round2(matchingDebt - existingForDirection);
-        if (directionOutstanding <= 0.01) continue;
+    const existingForDirection = (allocationsByExpense.get(expenseId) || [])
+      .filter(
+        (a) =>
+          String(a.from_user_id || "") === input.fromUserId &&
+          String(a.to_user_id || "") === input.toUserId
+      )
+      .reduce((sum, a) => round2(sum + (a.amount || 0)), 0);
+    const directionOutstanding = round2(matchingDebt - existingForDirection);
+    if (directionOutstanding <= 0.01) continue;
 
-        const allocationAmount = round2(Math.min(remaining, directionOutstanding));
-        const allocationId = `${input.settlementId}_${expenseId}_${input.fromUserId}_${input.toUserId}`;
+    const allocationAmount = round2(Math.min(remaining, directionOutstanding));
+    const allocationId = `${input.settlementId}_${expenseId}_${input.fromUserId}_${input.toUserId}`;
 
-        await SettlementAllocation.create(
-          [{
-            _id: allocationId,
-            settlement_id: input.settlementId,
-            expense_id: expenseId,
-            from_user_id: input.fromUserId,
-            to_user_id: input.toUserId,
-            amount: allocationAmount,
-            created_by: input.actorId,
-            created_at: now,
-          }],
-          { session }
-        );
-
-        createdAllocations.push({
-          id: allocationId,
-          settlementId: input.settlementId,
-          expenseId,
-          fromUserId: input.fromUserId,
-          toUserId: input.toUserId,
-          amount: allocationAmount,
-        });
-        remaining = round2(remaining - allocationAmount);
-
-        const allExpenseDebt = transfers.reduce((sum, t) => round2(sum + t.amount), 0);
-        const existingAllocatedTotal = (allocationsByExpense.get(expenseId) || [])
-          .reduce((sum, a: any) => round2(sum + toNum(a.amount)), 0);
-        const nextAllocatedTotal = round2(existingAllocatedTotal + allocationAmount);
-        const nextStatus = nextAllocatedTotal >= allExpenseDebt - 0.01 ? "paid" : "partially_paid";
-
-        await Expense.updateOne(
-          { _id: expenseId },
-          {
-            $set: {
-              payment_status: nextStatus,
-              payment_status_updated_at: now,
-              payment_status_updated_by: input.actorId,
-              settlement_allocated_amount: nextAllocatedTotal,
-              settlement_total_debt_amount: allExpenseDebt,
-              updated_at: now,
-            },
-          },
-          { session }
-        );
-
-        updatedExpenses.push({
-          expenseId,
-          paymentStatus: nextStatus,
-          allocatedAmount: nextAllocatedTotal,
-          totalDebtAmount: allExpenseDebt,
-        });
+    // Write allocation to SETTLEMENT#<settlementId> / ALLOC#<expenseId>
+    await client.send(new PutCommand({
+      TableName: TABLE,
+      Item: {
+        PK: PK.settlement(input.settlementId),
+        SK: SK.alloc(expenseId),
+        entityType: "settlement_allocation",
+        settlement_id: input.settlementId,
+        expense_id: expenseId,
+        amount: allocationAmount,
+        from_user_id: input.fromUserId,
+        to_user_id: input.toUserId,
+        created_by: input.actorId,
+        created_at: now.toISOString(),
+        updated_at: now.toISOString(),
       }
+    }));
+
+    // Write allocation to EXPENSE#<expenseId> / ALLOC#<settlementId>#<fromUserId>#<toUserId>
+    await client.send(new PutCommand({
+      TableName: TABLE,
+      Item: {
+        PK: PK.expense(expenseId),
+        SK: `ALLOC#${input.settlementId}#${input.fromUserId}#${input.toUserId}`,
+        entityType: "settlement_allocation",
+        settlement_id: input.settlementId,
+        expense_id: expenseId,
+        amount: allocationAmount,
+        from_user_id: input.fromUserId,
+        to_user_id: input.toUserId,
+        created_by: input.actorId,
+        created_at: now.toISOString(),
+        updated_at: now.toISOString(),
+      }
+    }));
+
+    createdAllocations.push({
+      id: allocationId,
+      settlementId: input.settlementId,
+      expenseId,
+      fromUserId: input.fromUserId,
+      toUserId: input.toUserId,
+      amount: allocationAmount,
     });
-  } finally {
-    await session.endSession();
+    remaining = round2(remaining - allocationAmount);
+
+    const allExpenseDebt = transfers.reduce((sum, t) => round2(sum + t.amount), 0);
+    const existingAllocatedTotal = (allocationsByExpense.get(expenseId) || [])
+      .reduce((sum, a) => round2(sum + (a.amount || 0)), 0);
+    const nextAllocatedTotal = round2(existingAllocatedTotal + allocationAmount);
+    const nextStatus = nextAllocatedTotal >= allExpenseDebt - 0.01 ? "paid" : "partially_paid";
+
+    // Update payment status in DynamoDB (and propagate to participants and feed items)
+    await updateExpensePaymentStatusInDynamo(
+      expenseId,
+      nextStatus,
+      input.actorId,
+      now.toISOString()
+    );
+
+    updatedExpenses.push({
+      expenseId,
+      paymentStatus: nextStatus,
+      allocatedAmount: nextAllocatedTotal,
+      totalDebtAmount: allExpenseDebt,
+    });
   }
 
   return {
@@ -269,9 +283,9 @@ export async function allocateSettlementToExpenses(input: {
     affectedUserIds: uniqueStrings(
       participantRows
         .filter((participant) =>
-          updatedExpenses.some((expense) => expense.expenseId === String(participant.expense_id || ""))
+          updatedExpenses.some((expense) => expense.expenseId === participant.expense_id)
         )
-        .map((participant) => String(participant.user_id || ""))
+        .map((participant) => participant.user_id)
     ),
   };
 }

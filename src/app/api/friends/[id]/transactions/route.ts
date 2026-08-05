@@ -5,20 +5,10 @@ import {
   getOrSetCacheJson,
 } from "@/lib/cache";
 import { requireUser } from "@/lib/auth/require-user";
-import { Expense, ExpenseParticipant, Settlement } from "@/lib/mongodb/models";
-import {
-  fetchDocsByIds,
-  mapUser,
-  toIso,
-  toNum,
-  uniqueStrings,
-} from "@/lib/mongodb/route-helpers";
-import { logSlowRoute } from "@/lib/firestore/route-helpers";
-import { User } from "@/lib/mongodb/models";
+import { toNum, uniqueStrings } from "@/lib/mongodb/route-helpers";
 import { getFriendshipStatus } from "@/lib/social/friendship-store";
 
 export const dynamic = "force-dynamic";
-export const preferredRegion = "iad1";
 
 export async function GET(
   request: NextRequest,
@@ -34,6 +24,7 @@ export async function GET(
     const userId = auth.user.id;
     const friendId = id;
 
+    // Check friendship status
     const friendship = await getFriendshipStatus(userId, friendId);
     if (friendship.status !== "accepted") {
       return NextResponse.json({ error: "Friend not found" }, { status: 404 });
@@ -48,143 +39,154 @@ export async function GET(
     const payload = await getOrSetCacheJson(cacheKey, CACHE_TTL.activities, async () => {
       const transactions: any[] = [];
 
-      const [userParticipants, friendParticipants] = await Promise.all([
-        ExpenseParticipant.find({ user_id: userId }).lean(),
-        ExpenseParticipant.find({ user_id: friendId }).lean(),
-      ]);
+      // 1. Fetch user's expenses from DynamoDB feed
+      const { queryUserExpenseFeed, listExpenseIdsByParticipant, listExpenseParticipants } = await import("@/lib/dynamodb/entities/expenses");
+      const { items: allUserExpenses } = await queryUserExpenseFeed(userId, 5000);
 
-      const pairByExpense = new Map<string, any[]>();
-      for (const participant of [...userParticipants, ...friendParticipants]) {
-        const key = String(participant.expense_id || "");
-        const list = pairByExpense.get(key) || [];
-        list.push(participant);
-        pairByExpense.set(key, list);
-      }
+      // 2. Fetch friend's participant list to find shared expenses
+      const friendExpenseRefs = await listExpenseIdsByParticipant(friendId);
+      const friendExpenseIds = new Set(friendExpenseRefs.map((r) => r.expense_id));
+      const sharedExpenses = allUserExpenses.filter((e) => friendExpenseIds.has(e.expense_id));
 
-      const expenseIds = Array.from(pairByExpense.entries())
-        .filter(([, participants]) => {
-          const users = new Set(participants.map((p) => String(p.user_id || "")));
-          return users.has(userId) && users.has(friendId);
-        })
-        .map(([expenseId]) => expenseId);
-
-      if (expenseIds.length > 0) {
-        const [expensesById, allParticipants] = await Promise.all([
-          fetchDocsByIds(Expense, expenseIds),
-          (async () => {
-            const results = await Promise.all(
-              expenseIds.map((eid) =>
-                ExpenseParticipant.find({ expense_id: eid }).lean()
-              )
-            );
-            return results.flat();
-          })(),
-        ]);
-
-        const expenses = Array.from(expensesById.values()).filter((row: any) => !row.is_deleted) as any[];
+      if (sharedExpenses.length > 0) {
+        // Fetch participant rows of each shared expense to evaluate settles and amount splits
+        const participantsLists = await Promise.all(
+          sharedExpenses.map((e) => listExpenseParticipants(e.expense_id))
+        );
 
         const settledByExpense = new Map<string, boolean>();
-        for (const participant of allParticipants || []) {
-          const key = String(participant.expense_id || "");
-          if (!settledByExpense.has(key)) {
-            settledByExpense.set(key, true);
+        const pairByExpense = new Map<string, any[]>();
+        
+        for (let idx = 0; idx < sharedExpenses.length; idx++) {
+          const expenseId = sharedExpenses[idx].expense_id;
+          const plist = participantsLists[idx] || [];
+          pairByExpense.set(expenseId, plist);
+
+          // Mark settled only if all participants are settled
+          let isSettled = true;
+          for (const p of plist) {
+            if (!p.is_settled) {
+              isSettled = false;
+              break;
+            }
           }
-          if (!participant.is_settled) {
-            settledByExpense.set(key, false);
-          }
+          settledByExpense.set(expenseId, isSettled);
         }
 
-        const userIds = uniqueStrings((expenses || []).map((expense: any) => String(expense.created_by || "")));
+        const creatorIds = uniqueStrings(sharedExpenses.map((e) => e.created_by));
         const groupIds = uniqueStrings(
-          (expenses || []).map((expense: any) =>
-            expense.group_id ? String(expense.group_id) : ""
-          )
+          sharedExpenses.map((e) => e.group_id).filter((g): g is string => !!g)
         );
-        const [usersMap, groupsMap] = await Promise.all([
-          fetchDocsByIds("users", userIds),
-          fetchDocsByIds("groups", groupIds),
+
+        const { getUsersByIds } = await import("@/lib/dynamodb/entities/users");
+        const { getGroupsByIds } = await import("@/lib/dynamodb/entities/groups");
+
+        const [usersList, groupsList] = await Promise.all([
+          getUsersByIds(creatorIds),
+          getGroupsByIds(groupIds),
         ]);
 
-        for (const expense of expenses || []) {
-          const participants = pairByExpense.get(String(expense.id || "")) || [];
-          const userParticipant = participants.find(
-            (participant: any) => String(participant.user_id || "") === userId
-          );
-          if (!userParticipant) {
-            continue;
-          }
+        const usersMap = new Map<string, any>(
+          usersList.map((u) => [
+            u.id,
+            {
+              id: u.id,
+              name: u.name || "Unknown",
+              email: u.email || "",
+              profilePicture: u.photo_url || null,
+            },
+          ])
+        );
 
-          const netAmount = toNum(userParticipant.owed_amount);
-          const isPositive =
-            toNum(userParticipant.amount_paid) > toNum(userParticipant.amount_owed);
-          const creator = usersMap.get(String(expense.created_by || "")) as any;
-          const group = (expense.group_id
-            ? groupsMap.get(String(expense.group_id || ""))
-            : null) as any;
+        const groupsMap = new Map<string, any>(
+          groupsList.map((g) => [g.id, g])
+        );
+
+        for (const expense of sharedExpenses) {
+          const plist = pairByExpense.get(expense.expense_id) || [];
+          const userParticipant = plist.find((p) => p.user_id === userId);
+          if (!userParticipant) continue;
+
+          const amountPaid = toNum(userParticipant.amount_paid);
+          const amountOwed = toNum(userParticipant.amount_owed);
+          const isPositive = amountPaid > amountOwed;
+          // For friend feed context, netAmount is how much they paid minus owed
+          const netAmount = isPositive ? amountPaid - amountOwed : amountOwed - amountPaid;
+
+          const creator = usersMap.get(expense.created_by);
+          const group = expense.group_id ? groupsMap.get(expense.group_id) : null;
 
           transactions.push({
-            id: String(expense.id || ""),
+            id: expense.expense_id,
             type: "expense",
-            description: String(expense.description || ""),
+            description: expense.description || "Untitled",
             amount: Math.abs(netAmount),
-            currency: String(expense.currency || "INR"),
-            createdAt: toIso(expense.created_at || expense._created_at),
+            currency: expense.currency || "INR",
+            createdAt: expense.created_at,
             isSettlement: false,
-            settled: settledByExpense.get(String(expense.id || "")) ?? false,
+            settled: settledByExpense.get(expense.expense_id) ?? false,
             group: group
               ? {
-                  id: String(group.id || ""),
-                  name: String(group.name || "Group"),
+                  id: group.id,
+                  name: group.name || "Group",
                 }
               : null,
             isPositive,
-            user: creator ? mapUser(creator) : null,
+            user: creator || null,
           });
         }
       }
 
-      const rawSettlements = await Settlement.find({
-        $or: [
-          { from_user_id: userId, to_user_id: friendId },
-          { from_user_id: friendId, to_user_id: userId },
-        ],
-      }).lean();
-      const settlements = rawSettlements
-        .map((doc: any) => ({ ...doc, id: String(doc._id) }))
-        .sort((a: any, b: any) => {
-        const aMs = new Date(toIso(a.created_at || a._created_at || a.date)).getTime();
-        const bMs = new Date(toIso(b.created_at || b._created_at || b.date)).getTime();
-        return bMs - aMs;
+      // 3. Fetch settlements between user and friend using DynamoDB feed index
+      const { queryUserSettlementFeed } = await import("@/lib/dynamodb/entities/settlements");
+      const { items: allSettlements } = await queryUserSettlementFeed(userId, 5000, undefined, { friendId });
+
+      // Deduplicate settlements since they have sent and received feeds per settlement
+      const seenSettlementIds = new Set<string>();
+      const settlements = allSettlements.filter((s) => {
+        if (seenSettlementIds.has(s.settlement_id)) return false;
+        seenSettlementIds.add(s.settlement_id);
+        return true;
       });
 
       const settlementUserIds = uniqueStrings(
-        settlements.flatMap((settlement: any) => [
-          String(settlement.from_user_id || ""),
-          String(settlement.to_user_id || ""),
+        settlements.flatMap((s) => [s.from_user_id, s.to_user_id])
+      );
+
+      const { getUsersByIds } = await import("@/lib/dynamodb/entities/users");
+      const settlementUsers = await getUsersByIds(settlementUserIds);
+      const settlementUsersMap = new Map<string, any>(
+        settlementUsers.map((u) => [
+          u.id,
+          {
+            id: u.id,
+            name: u.name || "Unknown",
+            email: u.email || "",
+            profilePicture: u.photo_url || null,
+          },
         ])
       );
-      const settlementUsersMap = await fetchDocsByIds("users", settlementUserIds);
 
-      for (const settlement of settlements || []) {
-        const isFromUser = String(settlement.from_user_id || "") === userId;
-        const otherUser = (isFromUser
-          ? settlementUsersMap.get(String(settlement.to_user_id || ""))
-          : settlementUsersMap.get(String(settlement.from_user_id || ""))) as any;
+      for (const settlement of settlements) {
+        const isFromUser = settlement.from_user_id === userId;
+        const otherUserId = isFromUser ? settlement.to_user_id : settlement.from_user_id;
+        const otherUser = settlementUsersMap.get(otherUserId);
         const action = isFromUser ? "paid" : "received payment from";
 
         transactions.push({
-          id: String(settlement.id || ""),
+          id: settlement.settlement_id,
           type: "settlement",
           description: `You ${action} ${otherUser?.name || "Unknown"}`,
           amount: toNum(settlement.amount),
-          currency: String(settlement.currency || "INR"),
-          createdAt: toIso(settlement.created_at || settlement._created_at || settlement.date),
+          currency: settlement.currency || "INR",
+          createdAt: settlement.created_at,
           isSettlement: true,
           settled: true,
-          user: otherUser ? mapUser(otherUser) : null,
+          user: otherUser || null,
         });
       }
 
+      // Sort chronological newest first
       transactions.sort(
         (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
       );
@@ -195,11 +197,10 @@ export async function GET(
       };
     });
 
-    const routeMs = logSlowRoute("/api/friends/[id]/transactions", routeStart);
     return NextResponse.json(payload, {
       status: 200,
       headers: {
-        "X-Doosplit-Route-Ms": String(routeMs),
+        "X-Doosplit-Route-Ms": String(Date.now() - routeStart),
       },
     });
   } catch (error: any) {
@@ -210,4 +211,3 @@ export async function GET(
     );
   }
 }
-

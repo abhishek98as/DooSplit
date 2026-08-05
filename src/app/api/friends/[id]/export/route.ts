@@ -1,8 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth/require-user";
-import { getAdminDb } from "@/lib/firestore/admin";
-import { fetchDocsByIds, toIso, toNum, uniqueStrings } from "@/lib/firestore/route-helpers";
 import { getFriendshipStatus } from "@/lib/social/friendship-store";
+import { getUserById } from "@/lib/dynamodb/entities/users";
+import {
+  listExpenseIdsByParticipant,
+  getExpensesByIds,
+  listExpenseParticipants,
+} from "@/lib/dynamodb/entities/expenses";
+import { queryUserSettlementFeed } from "@/lib/dynamodb/entities/settlements";
+import { getGroupById } from "@/lib/dynamodb/entities/groups";
 
 export const dynamic = "force-dynamic";
 
@@ -31,186 +37,112 @@ export async function GET(
       return NextResponse.json({ error: "Friend not found" }, { status: 404 });
     }
 
-    const db = getAdminDb();
-    const [userParticipantsSnap, friendParticipantsSnap] = await Promise.all([
-      db.collection("expense_participants").where("user_id", "==", userId).get(),
-      db.collection("expense_participants").where("user_id", "==", friendId).get(),
-    ]);
+    const friendUser = await getUserById(friendId);
+    const friendName = friendUser?.name || "Friend";
 
-    const pairParticipants: any[] = [
-      ...userParticipantsSnap.docs.map((doc) => ({
-        id: doc.id,
-        ...((doc.data() as any) || {}),
-      })),
-      ...friendParticipantsSnap.docs.map((doc) => ({
-        id: doc.id,
-        ...((doc.data() as any) || {}),
-      })),
-    ];
+    const myExpenseRefs = await listExpenseIdsByParticipant(userId);
+    const friendExpenseRefs = await listExpenseIdsByParticipant(friendId);
+    const friendExpenseIds = new Set(friendExpenseRefs.map((r) => r.expense_id));
+    const pairExpenseIds = myExpenseRefs
+      .map((r) => r.expense_id)
+      .filter((eid) => friendExpenseIds.has(eid));
 
-    const pairByExpense = new Map<string, any[]>();
-    for (const participant of pairParticipants || []) {
-      const expenseId = String(participant.expense_id || "");
-      const list = pairByExpense.get(expenseId) || [];
-      list.push(participant);
-      pairByExpense.set(expenseId, list);
-    }
+    let expenses: any[] = [];
+    const expenseList: any[] = [];
+    if (pairExpenseIds.length > 0) {
+      expenses = await getExpensesByIds(pairExpenseIds);
+      expenses = expenses.filter((e) => e && !e.is_deleted);
 
-    const expenseIds = Array.from(pairByExpense.entries())
-      .filter(([, participants]) => {
-        const users = new Set(participants.map((participant) => String(participant.user_id || "")));
-        return users.has(userId) && users.has(friendId);
-      })
-      .map(([expenseId]) => expenseId);
+      for (const expense of expenses) {
+        const participants = await listExpenseParticipants(expense.id);
+        const userParticipant = participants.find((p) => p.user_id === userId);
+        if (!userParticipant) continue;
 
-    const expensesById = await fetchDocsByIds("expenses", expenseIds);
-    const expenses = Array.from(expensesById.values())
-      .filter((row: any) => !row.is_deleted)
-      .sort((a, b) => {
-        const aMs = new Date(toIso(a.date || a.created_at || a._created_at)).getTime();
-        const bMs = new Date(toIso(b.date || b.created_at || b._created_at)).getTime();
-        return bMs - aMs;
-      });
-
-    const settledByExpense = new Map<string, boolean>();
-    for (const expenseId of expenseIds) {
-      const snap = await db
-        .collection("expense_participants")
-        .where("expense_id", "==", expenseId)
-        .get();
-      for (const doc of snap.docs) {
-        const row = doc.data() || {};
-        const key = String(row.expense_id || "");
-        if (!settledByExpense.has(key)) {
-          settledByExpense.set(key, true);
+        let groupName = "";
+        if (expense.group_id) {
+          const group = await getGroupById(expense.group_id);
+          groupName = group?.name || "";
         }
-        if (!row.is_settled) {
-          settledByExpense.set(key, false);
-        }
+
+        expenseList.push({
+          date: expense.date || expense.created_at,
+          description: expense.description,
+          category: expense.category || "Other",
+          amountPaid: Number(userParticipant.amount_paid || 0),
+          amountOwed: Number(userParticipant.amount_owed || 0),
+          groupName,
+          type: "Expense",
+          status: userParticipant.is_settled ? "Settled" : "Unsettled",
+        });
       }
     }
 
-    const groupIds = uniqueStrings(
-      expenses
-        .map((expense: any) => (expense.group_id ? String(expense.group_id) : ""))
-        .filter(Boolean)
+    const { items: allSettlements } = await queryUserSettlementFeed(userId, 2000);
+    const settlements = allSettlements.filter(
+      (s) =>
+        !s.is_deleted &&
+        ((s.from_user_id === userId && s.to_user_id === friendId) ||
+          (s.from_user_id === friendId && s.to_user_id === userId))
     );
-    const groupsMap = await fetchDocsByIds("groups", groupIds);
 
-    const [outgoingSettlementsSnap, incomingSettlementsSnap] = await Promise.all([
-      db
-        .collection("settlements")
-        .where("from_user_id", "==", userId)
-        .where("to_user_id", "==", friendId)
-        .get(),
-      db
-        .collection("settlements")
-        .where("from_user_id", "==", friendId)
-        .where("to_user_id", "==", userId)
-        .get(),
-    ]);
-    const settlementRows: any[] = [
-      ...outgoingSettlementsSnap.docs.map((doc) => ({
-        id: doc.id,
-        ...((doc.data() as any) || {}),
-      })),
-      ...incomingSettlementsSnap.docs.map((doc) => ({
-        id: doc.id,
-        ...((doc.data() as any) || {}),
-      })),
-    ].sort((a: any, b: any) => {
-      const aMs = new Date(toIso(a.date || a.created_at || a._created_at)).getTime();
-      const bMs = new Date(toIso(b.date || b.created_at || b._created_at)).getTime();
-      return bMs - aMs;
-    });
+    const settlementList = await Promise.all(
+      settlements.map(async (settlement) => {
+        let groupName = "";
+        if (settlement.group_id) {
+          const group = await getGroupById(settlement.group_id);
+          groupName = group?.name || "";
+        }
 
-    const usersMap = await fetchDocsByIds("users", [userId, friendId]);
+        const isFromUser = settlement.from_user_id === userId;
+        return {
+          date: settlement.date,
+          description: isFromUser ? `Paid to ${friendName}` : `Received from ${friendName}`,
+          category: "Payment",
+          amountPaid: isFromUser ? Number(settlement.amount || 0) : 0,
+          amountOwed: isFromUser ? 0 : Number(settlement.amount || 0),
+          groupName,
+          type: "Settlement",
+          status: "Settled",
+        };
+      })
+    );
 
-    const expenseRows: string[][] = [];
-    expenseRows.push([
-      "Date",
-      "Description",
-      "Category",
-      "Amount",
-      "Your Share",
-      "Group",
-      "Type",
-      "Status",
-    ]);
+    const allItems = [...expenseList, ...settlementList].sort(
+      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+    );
 
-    for (const expense of expenses) {
-      const participants = pairByExpense.get(String(expense.id || "")) || [];
-      const userParticipant = participants.find(
-        (participant: any) => String(participant.user_id || "") === userId
-      );
-      const friendParticipant = participants.find(
-        (participant: any) => String(participant.user_id || "") === friendId
-      );
-      if (!userParticipant || !friendParticipant) {
-        continue;
-      }
-
-      const isSettled = settledByExpense.get(String(expense.id || "")) ?? false;
-      const userShare = toNum(userParticipant.owed_amount);
-      const amount = toNum(expense.amount);
-      const currency = String(expense.currency || "INR");
-      const symbol = currency === "INR" ? "INR " : `${currency} `;
-      const dateIso = toIso(expense.date || expense.created_at || expense._created_at);
-
-      expenseRows.push([
-        dateIso ? new Date(dateIso).toLocaleDateString() : "",
-        String(expense.description || ""),
-        String(expense.category || "other").charAt(0).toUpperCase() +
-          String(expense.category || "other").slice(1),
-        `${symbol}${amount.toFixed(2)}`,
-        `${symbol}${userShare.toFixed(2)}`,
-        expense.group_id ? groupsMap.get(String(expense.group_id))?.name || "Group" : "Non-Group",
-        toNum(userParticipant.amount_paid) > 0 ? "Paid" : "Owed",
-        isSettled ? "Settled" : "Outstanding",
-      ]);
-    }
-
-    const settlementRowsCsv: string[][] = [];
-    settlementRowsCsv.push(["Date", "Description", "Amount", "Type"]);
-
-    for (const settlement of settlementRows || []) {
-      const isFromUser = String(settlement.from_user_id || "") === userId;
-      const otherUser = isFromUser
-        ? usersMap.get(String(settlement.to_user_id || ""))
-        : usersMap.get(String(settlement.from_user_id || ""));
-      const action = isFromUser ? "Paid" : "Received";
-      const currency = String(settlement.currency || "INR");
-      const symbol = currency === "INR" ? "INR " : `${currency} `;
-      const dateIso = toIso(settlement.date || settlement.created_at || settlement._created_at);
-
-      settlementRowsCsv.push([
-        dateIso ? new Date(dateIso).toLocaleDateString() : "",
-        `Settlement - ${action} ${otherUser?.name || "Unknown"}`,
-        `${symbol}${toNum(settlement.amount).toFixed(2)}`,
-        action,
-      ]);
-    }
-
-    const allRows = [
-      ["EXPENSES"],
-      ...expenseRows,
-      [""],
-      ["SETTLEMENTS"],
-      ...settlementRowsCsv,
+    const csvHeaders = ["Date", "Description", "Category", "Amount Paid", "Amount Owed", "Group Name", "Type", "Status"];
+    const csvLines = [
+      csvHeaders.join(","),
+      ...allItems.map((item) =>
+        csvRow([
+          item.date,
+          item.description,
+          item.category,
+          item.amountPaid,
+          item.amountOwed,
+          item.groupName,
+          item.type,
+          item.status,
+        ])
+      ),
     ];
 
-    const csvContent = allRows.map((row) => csvRow(row)).join("\n");
-    return new NextResponse(csvContent, {
+    const csvData = csvLines.join("\n");
+    const safeFriendName = friendName.toLowerCase().replace(/[^a-z0-9]/g, "_");
+
+    return new NextResponse(csvData, {
+      status: 200,
       headers: {
-        "Content-Type": "text/csv",
-        "Content-Disposition": `attachment; filename="friend-expenses-${friendId}.csv"`,
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Disposition": `attachment; filename="doosplit_report_${safeFriendName}.csv"`,
         "X-Doosplit-Route-Ms": String(Date.now() - routeStart),
       },
     });
   } catch (error: any) {
-    console.error("Export friend expenses error:", error);
+    console.error("Export friend transactions error:", error);
     return NextResponse.json(
-      { error: "Failed to export expenses" },
+      { error: "Failed to export transactions" },
       { status: 500 }
     );
   }

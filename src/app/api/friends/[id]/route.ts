@@ -7,7 +7,6 @@ import {
 } from "@/lib/cache";
 import { requireUser } from "@/lib/auth/require-user";
 import { notifyFriendAccepted } from "@/lib/notificationService";
-import { getAdminDb } from "@/lib/firestore/admin";
 import { logFriendAdded, logFriendRemoved } from "@/lib/activity-logger";
 import {
   deleteBidirectionalFriendship,
@@ -16,6 +15,16 @@ import {
   resolveFriendshipPairByAnyId,
   upsertBidirectionalFriendship,
 } from "@/lib/social/friendship-store";
+import { getUserById } from "@/lib/dynamodb/entities/users";
+import { getFriendship } from "@/lib/dynamodb/entities/friendships";
+import { listGroupsForUser, getGroupById } from "@/lib/dynamodb/entities/groups";
+import {
+  listExpenseIdsByParticipant,
+  getExpensesByIds,
+  listExpenseParticipants,
+} from "@/lib/dynamodb/entities/expenses";
+import { queryGroupSettlements } from "@/lib/dynamodb/entities/settlements";
+import { computePairwiseBalancesForUserDynamo } from "@/lib/data/dynamodb-adapter";
 
 export const dynamic = "force-dynamic";
 
@@ -27,44 +36,35 @@ function round2(value: number): number {
   return Number(value.toFixed(2));
 }
 
-function uniqueStrings(values: Array<string | null | undefined>): string[] {
-  return Array.from(new Set(values.map((value) => String(value || "")).filter(Boolean)));
-}
-
-function chunk<T>(values: T[], size: number): T[][] {
-  if (values.length === 0) {
-    return [];
+function buildTransfersForExpense(participants: any[]): Array<{ from: string; to: string; amount: number }> {
+  const netMap = new Map<string, number>();
+  for (const p of participants) {
+    const uid = String(p.user_id || p.userId || "");
+    if (!uid) continue;
+    const net = toNum(p.amount_paid || p.paid_amount || 0) - toNum(p.amount_owed || p.owed_amount || 0);
+    netMap.set(uid, round2((netMap.get(uid) || 0) + net));
   }
-
-  const chunks: T[][] = [];
-  for (let i = 0; i < values.length; i += size) {
-    chunks.push(values.slice(i, i + size));
+  const debtors: Array<{ userId: string; amount: number }> = [];
+  const creditors: Array<{ userId: string; amount: number }> = [];
+  for (const [uid, net] of netMap.entries()) {
+    if (net < -0.01) debtors.push({ userId: uid, amount: round2(Math.abs(net)) });
+    else if (net > 0.01) creditors.push({ userId: uid, amount: round2(net) });
   }
-  return chunks;
-}
-
-async function fetchDocsByIds(collection: string, ids: string[]): Promise<Map<string, any>> {
-  const uniqueIds = uniqueStrings(ids);
-  if (uniqueIds.length === 0) {
-    return new Map();
+  debtors.sort((a, b) => b.amount - a.amount);
+  creditors.sort((a, b) => b.amount - a.amount);
+  const transfers: Array<{ from: string; to: string; amount: number }> = [];
+  let i = 0, j = 0;
+  while (i < debtors.length && j < creditors.length) {
+    const debtor = debtors[i];
+    const creditor = creditors[j];
+    const settled = round2(Math.min(debtor.amount, creditor.amount));
+    if (settled > 0.01) transfers.push({ from: debtor.userId, to: creditor.userId, amount: settled });
+    debtor.amount = round2(debtor.amount - settled);
+    creditor.amount = round2(creditor.amount - settled);
+    if (debtor.amount <= 0.01) i++;
+    if (creditor.amount <= 0.01) j++;
   }
-
-  const db = getAdminDb();
-  const rows = new Map<string, any>();
-  for (const idChunk of chunk(uniqueIds, 200)) {
-    const refs = idChunk.map((id) => db.collection(collection).doc(id));
-    const docs = await db.getAll(...refs);
-    for (const doc of docs) {
-      if (doc.exists) {
-        rows.set(doc.id, {
-          id: doc.id,
-          ...((doc.data() as any) || {}),
-        });
-      }
-    }
-  }
-
-  return rows;
+  return transfers;
 }
 
 export async function GET(
@@ -93,229 +93,114 @@ export async function GET(
     );
 
     const payload = await getOrSetCacheJson(cacheKey, CACHE_TTL.activities, async () => {
-      const db = getAdminDb();
-      const friendDoc = await db.collection("users").doc(friendId).get();
-      if (!friendDoc.exists) {
+      const f = await getFriendship(userId, friendId);
+      if (!f || f.status !== "accepted") {
         throw new Error("Friend not found");
       }
-      const friend: any = {
-        id: friendDoc.id,
-        ...(friendDoc.data() || {}),
-      };
 
-      const pairParticipantsSnap = await db
-        .collection("expense_participants")
-        .where("user_id", "in", [userId, friendId])
-        .get();
-      const pairParticipants: any[] = pairParticipantsSnap.docs.map((doc) => ({
-        id: doc.id,
-        ...((doc.data() as any) || {}),
-      }));
-
-      const participantsByExpense = new Map<string, any[]>();
-      for (const participant of pairParticipants) {
-        const expenseId = String(participant.expense_id);
-        const list = participantsByExpense.get(expenseId) || [];
-        list.push(participant);
-        participantsByExpense.set(expenseId, list);
+      const friendUser = await getUserById(friendId);
+      if (!friendUser) {
+        throw new Error("Friend not found");
       }
 
-      const pairExpenseIds = Array.from(participantsByExpense.entries())
-        .filter(([, entries]) => {
-          const users = new Set(entries.map((entry) => String(entry.user_id)));
-          return users.has(userId) && users.has(friendId);
-        })
-        .map(([expenseId]) => expenseId);
+      const balanceMap = await computePairwiseBalancesForUserDynamo(userId, [friendId]);
+      const balance = balanceMap.get(friendId) || 0;
 
-      let balance = 0;
-      let groupBreakdown: Array<{
-        groupId: string;
-        groupName: string;
-        balance: number;
-        lastActivity: string | null;
-      }> = [];
+      const myMemberships = await listGroupsForUser(userId);
+      const friendMemberships = await listGroupsForUser(friendId);
+      const myGroupIds = new Set(myMemberships.map((m) => m.group_id));
+      const commonGroupIds = friendMemberships
+        .map((m) => m.group_id)
+        .filter((gid) => myGroupIds.has(gid));
 
-      // Transfer-based algorithm: build net maps per expense, then do greedy debtor-creditor matching
-      function buildTransfersForExpense(participants: any[]): Array<{ from: string; to: string; amount: number }> {
-        const netMap = new Map<string, number>();
-        for (const p of participants) {
-          const uid = String(p.user_id || "");
-          if (!uid) continue;
-          const net = toNum(p.amount_paid) - toNum(p.amount_owed);
-          netMap.set(uid, round2((netMap.get(uid) || 0) + net));
-        }
-        const debtors: Array<{ userId: string; amount: number }> = [];
-        const creditors: Array<{ userId: string; amount: number }> = [];
-        for (const [uid, net] of netMap.entries()) {
-          if (net < -0.01) debtors.push({ userId: uid, amount: round2(Math.abs(net)) });
-          else if (net > 0.01) creditors.push({ userId: uid, amount: round2(net) });
-        }
-        debtors.sort((a, b) => b.amount - a.amount);
-        creditors.sort((a, b) => b.amount - a.amount);
-        const transfers: Array<{ from: string; to: string; amount: number }> = [];
-        let i = 0, j = 0;
-        while (i < debtors.length && j < creditors.length) {
-          const debtor = debtors[i];
-          const creditor = creditors[j];
-          const settled = round2(Math.min(debtor.amount, creditor.amount));
-          if (settled > 0.01) transfers.push({ from: debtor.userId, to: creditor.userId, amount: settled });
-          debtor.amount = round2(debtor.amount - settled);
-          creditor.amount = round2(creditor.amount - settled);
-          if (debtor.amount <= 0.01) i++;
-          if (creditor.amount <= 0.01) j++;
-        }
-        return transfers;
-      }
-
-      let pairExpenses: any[] = [];
-      if (pairExpenseIds.length > 0) {
-        const expensesById = await fetchDocsByIds("expenses", pairExpenseIds);
-        for (const expenseId of pairExpenseIds) {
-          const expense = expensesById.get(expenseId);
-          if (expense && !expense.is_deleted) {
-            pairExpenses.push(expense);
-          }
-        }
-
-        // Use transfer-based algorithm (consistent with balance-service.ts)
-        for (const expense of pairExpenses) {
-          const participants = participantsByExpense.get(String(expense.id)) || [];
-          const transfers = buildTransfersForExpense(participants);
-          for (const transfer of transfers) {
-            if (transfer.from === userId || transfer.to === userId) {
-              const otherUserId = transfer.from === userId ? transfer.to : transfer.from;
-              if (otherUserId !== friendId) continue;
-              // positive balance = friend owes user
-              const delta = transfer.to === userId ? transfer.amount : -transfer.amount;
-              balance = round2(balance + delta);
-            }
-          }
-        }
-      }
-
-      const [outgoingSettlementsSnap, incomingSettlementsSnap] = await Promise.all([
-        db
-          .collection("settlements")
-          .where("from_user_id", "==", userId)
-          .where("to_user_id", "==", friendId)
-          .get(),
-        db
-          .collection("settlements")
-          .where("from_user_id", "==", friendId)
-          .where("to_user_id", "==", userId)
-          .get(),
-      ]);
-      const settlements: any[] = [
-        ...outgoingSettlementsSnap.docs.map((doc) => ({ id: doc.id, ...((doc.data() as any) || {}) })),
-        ...incomingSettlementsSnap.docs.map((doc) => ({ id: doc.id, ...((doc.data() as any) || {}) })),
-      ];
-
-      // Bug 1 fix: correct settlement sign convention
-      // from === userId means user paid friend → user's debt decreases → balance improves (moves positive)
-      // from === friendId means friend paid user → friend's debt decreases → balance decreases
-      for (const settlement of settlements) {
-        const amount = toNum(settlement.amount);
-        if (String(settlement.from_user_id) === userId) {
-          balance = round2(balance + amount); // user paid friend: debt cleared, balance improves
-        } else {
-          balance = round2(balance - amount); // friend paid user: friend's debt cleared, balance decreases
-        }
-      }
-
-      const [userMembershipsSnap, friendMembershipsSnap] = await Promise.all([
-        db.collection("group_members").where("user_id", "==", userId).get(),
-        db.collection("group_members").where("user_id", "==", friendId).get(),
-      ]);
-      const userMemberships = userMembershipsSnap.docs.map((doc) => doc.data() || {});
-      const friendMemberships = friendMembershipsSnap.docs.map((doc) => doc.data() || {});
-
-      const userGroupIds = new Set(userMemberships.map((row: any) => String(row.group_id)));
-      const commonGroupIds = uniqueStrings(
-        friendMemberships
-          .map((row: any) => String(row.group_id))
-          .filter((groupId: string) => userGroupIds.has(groupId))
-      );
-
+      let groupBreakdown: any[] = [];
       if (commonGroupIds.length > 0) {
-        const groupsById = await fetchDocsByIds("groups", commonGroupIds);
+        const friendExpenseRefs = await listExpenseIdsByParticipant(friendId);
+        const friendExpenseIds = new Set(friendExpenseRefs.map((r) => r.expense_id));
+
+        const myExpenseRefs = await listExpenseIdsByParticipant(userId);
+        const pairExpenseIds = myExpenseRefs
+          .map((r) => r.expense_id)
+          .filter((eid) => friendExpenseIds.has(eid));
+
+        let pairExpenses: any[] = [];
+        if (pairExpenseIds.length > 0) {
+          const expenses = await getExpensesByIds(pairExpenseIds);
+          pairExpenses = expenses.filter((e) => e && !e.is_deleted);
+        }
 
         const grouped = new Map<string, any[]>();
         for (const expense of pairExpenses) {
-          if (!expense.group_id) {
-            continue;
-          }
-          const key = String(expense.group_id);
-          const list = grouped.get(key) || [];
+          if (!expense.group_id) continue;
+          const list = grouped.get(expense.group_id) || [];
           list.push(expense);
-          grouped.set(key, list);
+          grouped.set(expense.group_id, list);
         }
 
         groupBreakdown = await Promise.all(
-          commonGroupIds
-            .map((groupId) => groupsById.get(groupId))
-            .filter(Boolean)
-            .map(async (group: any) => {
-              const expenses = grouped.get(String(group.id)) || [];
-              let groupBalance = 0;
-              let lastActivity: string | null = null;
+          commonGroupIds.map(async (groupId) => {
+            const group = await getGroupById(groupId);
+            if (!group) return null;
 
-              // Use transfer-based algorithm for group balance breakdown (Bug 3 fix)
-              for (const expense of expenses) {
-                const participants = participantsByExpense.get(String(expense.id)) || [];
-                const transfers = buildTransfersForExpense(participants);
-                for (const transfer of transfers) {
-                  if (transfer.from === userId || transfer.to === userId) {
-                    const otherUserId = transfer.from === userId ? transfer.to : transfer.from;
-                    if (otherUserId !== friendId) continue;
-                    const delta = transfer.to === userId ? transfer.amount : -transfer.amount;
-                    groupBalance = round2(groupBalance + delta);
-                  }
-                }
+            const expenses = grouped.get(groupId) || [];
+            let groupBalance = 0;
+            let lastActivity: string | null = null;
 
-                const createdBy = String(expense.created_by || "");
-                if (createdBy === userId || createdBy === friendId) {
-                  if (!lastActivity || new Date(expense.updated_at) > new Date(lastActivity)) {
-                    lastActivity = expense.updated_at;
-                  }
+            for (const expense of expenses) {
+              const participants = await listExpenseParticipants(expense.id);
+              const transfers = buildTransfersForExpense(participants);
+              for (const transfer of transfers) {
+                if (transfer.from === userId || transfer.to === userId) {
+                  const otherUserId = transfer.from === userId ? transfer.to : transfer.from;
+                  if (otherUserId !== friendId) continue;
+                  const delta = transfer.to === userId ? transfer.amount : -transfer.amount;
+                  groupBalance = round2(groupBalance + delta);
                 }
               }
 
-              // Bug 5 fix: include group settlements in group breakdown
-              const [outGroupSnap, inGroupSnap] = await Promise.all([
-                db.collection("settlements").where("from_user_id", "==", userId).where("to_user_id", "==", friendId).where("group_id", "==", String(group.id)).get(),
-                db.collection("settlements").where("from_user_id", "==", friendId).where("to_user_id", "==", userId).where("group_id", "==", String(group.id)).get(),
-              ]);
-              const groupSettlements: any[] = [
-                ...outGroupSnap.docs.map((doc) => ({ id: doc.id, ...((doc.data() as any) || {}) })),
-                ...inGroupSnap.docs.map((doc) => ({ id: doc.id, ...((doc.data() as any) || {}) })),
-              ];
-              for (const settlement of groupSettlements) {
-                const amount = toNum(settlement.amount);
-                if (String(settlement.from_user_id) === userId) {
-                  groupBalance = round2(groupBalance + amount);
-                } else {
-                  groupBalance = round2(groupBalance - amount);
+              const createdBy = expense.created_by;
+              if (createdBy === userId || createdBy === friendId) {
+                if (!lastActivity || new Date(expense.updated_at) > new Date(lastActivity)) {
+                  lastActivity = expense.updated_at;
                 }
               }
+            }
 
-              return {
-                groupId: String(group.id),
-                groupName: String(group.name),
-                balance: round2(groupBalance),
-                lastActivity,
-              };
-            })
+            const { items: groupSettlements } = await queryGroupSettlements(groupId, 5000);
+            const pairGroupSettlements = groupSettlements.filter(
+              (s) =>
+                !s.is_deleted &&
+                ((s.from_user_id === userId && s.to_user_id === friendId) ||
+                  (s.from_user_id === friendId && s.to_user_id === userId))
+            );
+            for (const settlement of pairGroupSettlements) {
+              const amt = Number(settlement.amount || 0);
+              if (settlement.from_user_id === userId) {
+                groupBalance = round2(groupBalance + amt);
+              } else {
+                groupBalance = round2(groupBalance - amt);
+              }
+            }
+
+            return {
+              groupId,
+              groupName: group.name,
+              balance: round2(groupBalance),
+              lastActivity,
+            };
+          })
         );
+        groupBreakdown = groupBreakdown.filter(Boolean);
       }
 
       return {
         friend: {
-          _id: friend.id,
-          name: friend.name,
-          email: friend.email,
-          profilePicture: friend.profile_picture || null,
+          _id: friendUser.id,
+          name: friendUser.name,
+          email: friendUser.email,
+          profilePicture: friendUser.photo_url || null,
           balance: round2(balance),
-          friendsSince: String(friendship?.data.created_at || ""),
+          friendsSince: friendship?.data.created_at || "",
         },
         groupBreakdown,
       };
@@ -400,16 +285,12 @@ export async function PUT(
       let requesterName = "Someone";
 
       try {
-        const db = getAdminDb();
-        const [userDoc, requesterDoc] = await Promise.all([
-          db.collection("users").doc(currentUserId).get(),
-          db.collection("users").doc(requesterId).get(),
+        const [u, r] = await Promise.all([
+          getUserById(currentUserId),
+          getUserById(requesterId),
         ]);
-
-        currentUserName =
-          String(userDoc.data()?.name || "").trim() || currentUserName;
-        requesterName =
-          String(requesterDoc.data()?.name || "").trim() || requesterName;
+        currentUserName = u?.name || currentUserName;
+        requesterName = r?.name || requesterName;
 
         await notifyFriendAccepted(
           {
@@ -503,15 +384,15 @@ export async function DELETE(
     const friendId =
       sourceUserId === currentUserId ? sourceFriendId : sourceUserId;
 
-    const db = getAdminDb();
-    const [currentUserDoc, friendDoc] = await Promise.all([
-      db.collection("users").doc(currentUserId).get(),
-      db.collection("users").doc(friendId).get(),
-    ]);
+    let currentUserName = auth.user.name || "Someone";
+    let friendName = "Someone";
 
-    const currentUserName =
-      String(currentUserDoc.data()?.name || "").trim() || auth.user.name || "Someone";
-    const friendName = String(friendDoc.data()?.name || "").trim() || "Someone";
+    const [u, f] = await Promise.all([
+      getUserById(currentUserId),
+      getUserById(friendId),
+    ]);
+    currentUserName = u?.name || currentUserName;
+    friendName = f?.name || friendName;
 
     await deleteBidirectionalFriendship(currentUserId, friendId);
 
@@ -549,4 +430,3 @@ export async function DELETE(
     );
   }
 }
-

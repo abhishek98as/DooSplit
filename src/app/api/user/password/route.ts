@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth/require-user";
-import { getAdminAuth, getAdminDb } from "@/lib/firestore/admin";
+import { getAdminAuth } from "@/lib/firestore/admin";
+import { getUserById } from "@/lib/dynamodb/entities/users";
 
 export const dynamic = "force-dynamic";
 
@@ -81,9 +82,8 @@ export async function PUT(request: NextRequest) {
 
     let email = firebaseUser.email || auth.user.email || "";
     if (!email) {
-      const db = getAdminDb();
-      const userDoc = await db.collection("users").doc(auth.user.id).get();
-      email = String(userDoc.data()?.email || "");
+      const user = await getUserById(auth.user.id);
+      email = user?.email || "";
     }
 
     if (!email) {

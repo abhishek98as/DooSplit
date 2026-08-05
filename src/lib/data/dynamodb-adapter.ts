@@ -118,7 +118,7 @@ function buildTransfersForExpense(participants: Array<{ user_id: string; amount_
   return transfers;
 }
 
-async function computePairwiseBalancesForUserDynamo(
+export async function computePairwiseBalancesForUserDynamo(
   userId: string,
   friendIds: string[]
 ): Promise<Map<string, number>> {
@@ -277,26 +277,52 @@ async function getGroups(input: GroupsReadInput): Promise<GroupsPayload> {
     membersByGroupId.set(row.group_id, list);
   }
 
-  const groups = groupIds
-    .map((gid) => {
+  const groups = await Promise.all(
+    groupIds.map(async (gid) => {
       const row = groupsById.get(gid);
       if (!row || row.is_active === false) return null;
 
-      // Apply search filter (extract 'search' param from URL query string)
       if (input.requestSearch) {
         const searchParams = new URLSearchParams(input.requestSearch);
         const searchTerm = searchParams.get("search") || "";
-        if (searchTerm && !row.name.toLowerCase().includes(searchTerm.toLowerCase())) return null;
+        if (searchTerm && !row.name.toLowerCase().includes(searchTerm.toLowerCase())) {
+          return null;
+        }
       }
 
       const members = membersByGroupId.get(gid) || [];
       const creator = mapUser(usersById.get(row.created_by));
+
+      let balances: Array<{ userId: string; userName: string; balance: number }> = [];
+      let myBalance = 0;
+      let balancesError = false;
+      try {
+        const { computeGroupMemberNetBalances } = await import("./balance-service");
+        const balanceMap = await computeGroupMemberNetBalances(gid);
+        balances = members.map((m) => {
+          const uid = String(m.userId?._id || m._id || "");
+          const bal = round2(balanceMap.get(uid) || 0);
+          if (uid === input.userId) myBalance = bal;
+          return {
+            userId: uid,
+            userName: String(m.userId?.name || "Unknown"),
+            balance: bal,
+          };
+        });
+      } catch (err) {
+        console.error(`Failed to compute balances for group ${gid}:`, err);
+        // Do not invent ₹0 "settled" balances — surface the failure
+        balancesError = true;
+        balances = [];
+        myBalance = NaN;
+      }
+
       return {
         _id: row.id,
         name: row.name,
         description: row.description || "",
-        image: null,
-        type: "other",
+        image: row.image || null,
+        type: row.type || "other",
         currency: row.currency || "INR",
         createdBy: creator,
         isActive: Boolean(row.is_active),
@@ -305,12 +331,19 @@ async function getGroups(input: GroupsReadInput): Promise<GroupsPayload> {
         members,
         memberCount: members.length,
         userRole: roleByGroupId.get(gid) || "member",
+        balances,
+        myBalance: balancesError ? null : myBalance,
+        balancesError,
+        notes: row.notes || null,
+        settleUpDate: row.settle_up_date || null,
+        simplifyDebts: Boolean(row.simplify_debts),
       };
     })
-    .filter(Boolean) as any[];
+  );
 
-  groups.sort((a: any, b: any) => toDateMs(b.createdAt) - toDateMs(a.createdAt));
-  return { groups };
+  const filtered = groups.filter(Boolean) as any[];
+  filtered.sort((a: any, b: any) => toDateMs(b.createdAt) - toDateMs(a.createdAt));
+  return { groups: filtered };
 }
 
 async function getExpenses(input: ExpensesReadInput): Promise<ExpensesPayload> {
@@ -421,7 +454,8 @@ async function getExpenses(input: ExpensesReadInput): Promise<ExpensesPayload> {
       images: [],
       notes: "",
       isDeleted: Boolean(feedItem.is_deleted),
-      paymentStatus: feedItem.is_settled ? "settled" : "unpaid",
+      paymentStatus: feedItem.payment_status
+        || (feedItem.is_settled ? "paid" : "unpaid"),
       participants,
       createdAt: toIso(feedItem.created_at),
       updatedAt: toIso(feedItem.updated_at),

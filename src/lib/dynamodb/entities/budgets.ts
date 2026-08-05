@@ -1,46 +1,43 @@
+/**
+ * User budgets stored under USER#{userId} / BUDGETS
+ */
 import { GetCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
 import { getDynamoDB } from "../client";
 import { TABLE } from "../tables";
+import { PK } from "../keys";
 
-export interface UserBudgetEntry {
-  monthly: number;
-  currency: string;
-}
+export type BudgetEntry = { monthly: number; currency: string };
+export type UserBudgets = Record<string, BudgetEntry>;
 
-export interface UserBudgetsRecord {
-  userId: string;
-  budgets: Record<string, UserBudgetEntry>;
-  updatedAt: string;
-}
+const BUDGETS_SK = "BUDGETS";
 
-function budgetKey(userId: string) {
-  return { PK: `USER#${userId}`, SK: "BUDGET" };
-}
-
-export async function getUserBudgets(userId: string): Promise<UserBudgetsRecord | null> {
+export async function getUserBudgets(userId: string): Promise<UserBudgets> {
   const res = await getDynamoDB().send(
-    new GetCommand({ TableName: TABLE, Key: budgetKey(userId) })
+    new GetCommand({
+      TableName: TABLE,
+      Key: { PK: PK.user(userId), SK: BUDGETS_SK },
+    })
   );
-  if (!res.Item) return null;
-  const item = res.Item as any;
-  return {
-    userId: item.userId || userId,
-    budgets: item.budgets || {},
-    updatedAt: item.updatedAt || "",
-  };
+  const item = res.Item as { budgets?: UserBudgets } | undefined;
+  return item?.budgets || {};
 }
 
-export async function putUserBudgets(record: UserBudgetsRecord): Promise<void> {
+export async function putUserBudgets(
+  userId: string,
+  budgets: UserBudgets
+): Promise<void> {
   const now = new Date().toISOString();
   await getDynamoDB().send(
     new PutCommand({
       TableName: TABLE,
       Item: {
-        ...budgetKey(record.userId),
-        entityType: "user_budget",
-        userId: record.userId,
-        budgets: record.budgets,
-        updatedAt: record.updatedAt || now,
+        PK: PK.user(userId),
+        SK: BUDGETS_SK,
+        entityType: "user_budgets",
+        user_id: userId,
+        budgets,
+        updated_at: now,
+        created_at: now,
       },
     })
   );

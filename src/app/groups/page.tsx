@@ -26,7 +26,9 @@ interface Group {
   userRole: string;
   members: any[];
   createdAt?: string;
-  balances?: any[];
+  balances?: Array<{ userId: string; userName: string; balance: number }>;
+  myBalance?: number | null;
+  balancesError?: boolean;
 }
 
 interface Friend {
@@ -207,7 +209,106 @@ export default function GroupsPage() {
   useEffect(() => {
     let active = true;
 
+    const applyServerBalances = () => {
+      if (status !== "authenticated" || !session?.user?.id) {
+        if (active) {
+          setGroupBalances({});
+          setGroupMemberBalances({});
+          setNonGroupBalance(0);
+        }
+        return false;
+      }
+
+      // Prefer server balances (expenses − settlements) when API provides them
+      const hasServerBalances = groups.some(
+        (g) =>
+          (typeof g.myBalance === "number" && !Number.isNaN(g.myBalance)) ||
+          (g.balances && g.balances.length > 0)
+      );
+      if (!hasServerBalances) return false;
+
+      const computed: Record<string, number> = {};
+      const computedMemberBalances: Record<
+        string,
+        Array<{ userId: string; userName: string; balance: number }>
+      > = {};
+
+      for (const group of groups) {
+        if (group.balancesError) {
+          // Skip inventing ₹0 — leave unset so UI can fall back / show loading
+          continue;
+        }
+        if (typeof group.myBalance === "number" && !Number.isNaN(group.myBalance)) {
+          computed[group._id] = group.myBalance;
+        } else if (group.balances) {
+          const mine = group.balances.find(
+            (b) => b.userId === String(session.user.id)
+          );
+          computed[group._id] = mine?.balance ?? 0;
+        } else {
+          computed[group._id] = 0;
+        }
+        computedMemberBalances[group._id] = group.balances || [];
+      }
+
+      if (active) {
+        setGroupBalances(computed);
+        setGroupMemberBalances(computedMemberBalances);
+        setBalanceLoading(false);
+      }
+      return true;
+    };
+
     const computeBalances = async () => {
+      if (applyServerBalances()) {
+        // Still compute non-group expenses client-side
+        if (status !== "authenticated" || !session?.user?.id) return;
+        try {
+          const offlineStore = getOfflineStore();
+          let computedNonGroup = 0;
+          let nonGroupPage = 1;
+          while (nonGroupPage <= 20) {
+            const allExpenses = (await offlineStore.getExpenses({
+              page: nonGroupPage,
+              limit: 100,
+            })) as any[];
+            if (!Array.isArray(allExpenses) || allExpenses.length === 0) break;
+            const nonGroupList = allExpenses.filter((e) => !e.groupId && !e.group_id);
+            for (const expense of nonGroupList) {
+              const myParticipant = (expense.participants || []).find(
+                (participant: any) =>
+                  extractUserId(participant.userId) === String(session.user.id)
+              );
+              if (myParticipant) {
+                computedNonGroup +=
+                  toNumber(myParticipant.paidAmount) - toNumber(myParticipant.owedAmount);
+              }
+            }
+            if (allExpenses.length < 100) break;
+            nonGroupPage += 1;
+          }
+          // Apply settlements for non-group (friend) debts when available
+          try {
+            const settlements = await offlineStore.getSettlements();
+            for (const s of settlements || []) {
+              const groupId = (s as any).groupId?._id || (s as any).groupId || (s as any).group_id;
+              if (groupId) continue;
+              const fromId = extractUserId((s as any).fromUserId || (s as any).from_user_id);
+              const toId = extractUserId((s as any).toUserId || (s as any).to_user_id);
+              const amount = toNumber((s as any).amount);
+              if (fromId === String(session.user.id)) computedNonGroup += amount;
+              else if (toId === String(session.user.id)) computedNonGroup -= amount;
+            }
+          } catch {
+            // settlements optional
+          }
+          if (active) setNonGroupBalance(computedNonGroup);
+        } catch (error) {
+          console.error("Failed to compute non-group balance:", error);
+        }
+        return;
+      }
+
       if (status !== "authenticated" || !session?.user?.id || groups.length === 0) {
         if (active) {
           setGroupBalances({});
@@ -270,6 +371,29 @@ export default function GroupsPage() {
                 break;
               }
               page += 1;
+            }
+
+            // Apply group settlements
+            try {
+              const settlements = await offlineStore.getSettlements();
+              for (const s of settlements || []) {
+                const sGroupId =
+                  (s as any).groupId?._id || (s as any).groupId || (s as any).group_id;
+                if (String(sGroupId || "") !== String(group._id)) continue;
+                const fromId = extractUserId((s as any).fromUserId || (s as any).from_user_id);
+                const toId = extractUserId((s as any).toUserId || (s as any).to_user_id);
+                const amount = toNumber((s as any).amount);
+                if (fromId && memberBalancesMap[fromId] !== undefined) {
+                  memberBalancesMap[fromId] += amount;
+                }
+                if (toId && memberBalancesMap[toId] !== undefined) {
+                  memberBalancesMap[toId] -= amount;
+                }
+                if (fromId === String(session.user.id)) totalForGroup += amount;
+                else if (toId === String(session.user.id)) totalForGroup -= amount;
+              }
+            } catch {
+              // settlements optional in offline path
             }
 
             computed[group._id] = totalForGroup;
@@ -336,7 +460,7 @@ export default function GroupsPage() {
     return () => {
       active = false;
     };
-  }, [groups, session?.user?.id, status]);
+  }, [groups, session?.user?.id, status, friends]);
 
   const createGroup = async () => {
     if (!formData.name) return;

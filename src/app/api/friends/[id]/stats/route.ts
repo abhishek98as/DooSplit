@@ -5,23 +5,18 @@ import {
   getOrSetCacheJson,
 } from "@/lib/cache";
 import { requireUser } from "@/lib/auth/require-user";
-import { getAdminDb } from "@/lib/firestore/admin";
-import { fetchDocsByIds, toIso, toNum } from "@/lib/firestore/route-helpers";
 import { getFriendshipStatus } from "@/lib/social/friendship-store";
+import {
+  listExpenseIdsByParticipant,
+  getExpensesByIds,
+  listExpenseParticipants,
+} from "@/lib/dynamodb/entities/expenses";
+import { queryUserSettlementFeed } from "@/lib/dynamodb/entities/settlements";
 
 export const dynamic = "force-dynamic";
 
 function round2(value: number): number {
   return Number(value.toFixed(2));
-}
-
-function toDateMs(value: any): number {
-  const iso = toIso(value);
-  if (!iso) {
-    return 0;
-  }
-  const ms = new Date(iso).getTime();
-  return Number.isFinite(ms) ? ms : 0;
 }
 
 export async function GET(
@@ -50,89 +45,51 @@ export async function GET(
     );
 
     const payload = await getOrSetCacheJson(cacheKey, CACHE_TTL.friends, async () => {
-      const db = getAdminDb();
-      const [userParticipantsSnap, friendParticipantsSnap] = await Promise.all([
-        db.collection("expense_participants").where("user_id", "==", userId).get(),
-        db.collection("expense_participants").where("user_id", "==", friendId).get(),
-      ]);
+      const myExpenseRefs = await listExpenseIdsByParticipant(userId);
+      const friendExpenseRefs = await listExpenseIdsByParticipant(friendId);
+      const friendExpenseIds = new Set(friendExpenseRefs.map((r) => r.expense_id));
+      const pairExpenseIds = myExpenseRefs
+        .map((r) => r.expense_id)
+        .filter((eid) => friendExpenseIds.has(eid));
 
-      const pairParticipants = [
-        ...userParticipantsSnap.docs.map((doc) => ({ id: doc.id, ...((doc.data() as any) || {}) })),
-        ...friendParticipantsSnap.docs.map((doc) => ({ id: doc.id, ...((doc.data() as any) || {}) })),
-      ];
-
-      const participantsByExpense = new Map<string, any[]>();
-      for (const participant of pairParticipants || []) {
-        const expenseId = String(participant.expense_id || "");
-        const list = participantsByExpense.get(expenseId) || [];
-        list.push(participant);
-        participantsByExpense.set(expenseId, list);
-      }
-
-      const pairExpenseIds = Array.from(participantsByExpense.entries())
-        .filter(([, participants]) => {
-          const users = new Set(participants.map((p) => String(p.user_id || "")));
-          return users.has(userId) && users.has(friendId);
-        })
-        .map(([expenseId]) => expenseId);
-
-      const expensesById = await fetchDocsByIds("expenses", pairExpenseIds);
-      const expenses = Array.from(expensesById.values())
-        .filter((row: any) => !row.is_deleted)
-        .sort((a: any, b: any) => toDateMs(a.date) - toDateMs(b.date));
-
+      let expenses: any[] = [];
       const categoryStats: Record<string, number> = {};
       const monthlyStats: Record<string, number> = {};
       let totalExpenses = 0;
 
-      for (const expense of expenses) {
-        const participants = participantsByExpense.get(String(expense.id || "")) || [];
-        const userParticipant = participants.find(
-          (participant: any) => String(participant.user_id || "") === userId
-        );
-        const friendParticipant = participants.find(
-          (participant: any) => String(participant.user_id || "") === friendId
-        );
+      if (pairExpenseIds.length > 0) {
+        expenses = await getExpensesByIds(pairExpenseIds);
+        expenses = expenses.filter((e) => e && !e.is_deleted);
 
-        if (!userParticipant || !friendParticipant) {
-          continue;
+        for (const expense of expenses) {
+          const participants = await listExpenseParticipants(expense.id);
+          const userParticipant = participants.find((p) => p.user_id === userId);
+          if (!userParticipant) continue;
+
+          const userShare = Number(userParticipant.amount_owed || 0);
+          const category = String(expense.category || "other");
+          categoryStats[category] = (categoryStats[category] || 0) + userShare;
+          totalExpenses += userShare;
+
+          const dateStr = expense.date || expense.created_at;
+          const monthKey = new Date(dateStr).toISOString().substring(0, 7);
+          monthlyStats[monthKey] = (monthlyStats[monthKey] || 0) + userShare;
         }
-
-        const userShare = toNum(userParticipant.owed_amount);
-        const category = String(expense.category || "other");
-        categoryStats[category] = (categoryStats[category] || 0) + userShare;
-        totalExpenses += userShare;
-
-        const monthKey = new Date(toIso(expense.date || expense.created_at || expense._created_at))
-          .toISOString()
-          .substring(0, 7);
-        monthlyStats[monthKey] = (monthlyStats[monthKey] || 0) + userShare;
       }
 
-      const [outgoingSettlementsSnap, incomingSettlementsSnap] = await Promise.all([
-        db
-          .collection("settlements")
-          .where("from_user_id", "==", userId)
-          .where("to_user_id", "==", friendId)
-          .get(),
-        db
-          .collection("settlements")
-          .where("from_user_id", "==", friendId)
-          .where("to_user_id", "==", userId)
-          .get(),
-      ]);
-
-      const settlements = [
-        ...outgoingSettlementsSnap.docs.map((doc) => ({ id: doc.id, ...((doc.data() as any) || {}) })),
-        ...incomingSettlementsSnap.docs.map((doc) => ({ id: doc.id, ...((doc.data() as any) || {}) })),
-      ];
+      const { items: allSettlements } = await queryUserSettlementFeed(userId, 2000);
+      const settlements = allSettlements.filter(
+        (s) =>
+          !s.is_deleted &&
+          ((s.from_user_id === userId && s.to_user_id === friendId) ||
+            (s.from_user_id === friendId && s.to_user_id === userId))
+      );
 
       let totalSettlements = 0;
-      for (const settlement of settlements || []) {
-        const isFromUser = String(settlement.from_user_id || "") === userId;
-        totalSettlements += isFromUser
-          ? toNum(settlement.amount)
-          : -toNum(settlement.amount);
+      for (const settlement of settlements) {
+        const isFromUser = settlement.from_user_id === userId;
+        const amt = Number(settlement.amount || 0);
+        totalSettlements += isFromUser ? amt : -amt;
       }
 
       const categoryBreakdown = Object.entries(categoryStats).map(([category, amount]) => ({
@@ -176,4 +133,3 @@ export async function GET(
     );
   }
 }
-

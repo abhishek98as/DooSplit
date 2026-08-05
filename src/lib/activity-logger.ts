@@ -17,7 +17,7 @@
  *   createdAt  — server timestamp
  */
 
-import { ActivityLog } from "@/lib/mongodb/models";
+
 
 export type ActivityType =
   | "expense_added"
@@ -71,13 +71,6 @@ export async function logActivity(input: LogActivityInput): Promise<void> {
       createdAt: now,
       createdAtIso: nowIso,
     }));
-
-    // Try MongoDB
-    try {
-      await ActivityLog.insertMany(docs, { ordered: false });
-    } catch (mongoErr: any) {
-      console.warn("[activity-logger] Mongo write skipped or failed:", mongoErr?.message || mongoErr);
-    }
 
     // Try DynamoDB
     try {

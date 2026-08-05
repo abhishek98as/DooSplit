@@ -406,7 +406,17 @@ export default function ExpensesPage() {
 
       setExpenses(expenses.filter((e) => e._id !== expenseToDelete._id));
       setShowDeleteModal(false);
+      const deletedId = expenseToDelete._id;
       setExpenseToDelete(null);
+
+      // Invalidate local IndexedDB cache
+      try {
+        const offlineStore = getOfflineStore();
+        await offlineStore.indexedDB.delete('expenses', deletedId);
+        await offlineStore.invalidateEntityCaches("expense");
+      } catch (err) {
+        console.warn("Failed to delete from offline store:", err);
+      }
 
       // Notify dashboard, activity, and other pages that expenses changed.
       window.dispatchEvent(
@@ -489,6 +499,21 @@ export default function ExpensesPage() {
         body: JSON.stringify({ paymentStatus: nextStatus }),
       });
 
+      if (response.status === 404) {
+        // The expense was already deleted on the server, but still present in client cache.
+        // Let's clean it up.
+        try {
+          const offlineStore = getOfflineStore();
+          await offlineStore.indexedDB.delete('expenses', expenseId);
+          await offlineStore.invalidateEntityCaches("expense");
+        } catch (dbErr) {
+          console.warn("Failed to clean up deleted expense from offline store:", dbErr);
+        }
+        setExpenses((prev) => prev.filter((e) => e._id !== expenseId));
+        alert("This expense has already been deleted on another device or server.");
+        return;
+      }
+
       if (!response.ok) {
         throw new Error("Failed to update payment status");
       }
@@ -503,6 +528,23 @@ export default function ExpensesPage() {
               : expense
           )
         );
+
+        // Update IndexedDB cache
+        try {
+          const offlineStore = getOfflineStore();
+          const existing = await offlineStore.indexedDB.get<any>('expenses', expenseId);
+          if (existing) {
+            const updated = {
+              ...existing,
+              paymentStatus: updatedExpense.paymentStatus || nextStatus,
+              is_settled: (updatedExpense.paymentStatus || nextStatus) === "paid"
+            };
+            await offlineStore.indexedDB.putExpense(updated);
+            await offlineStore.invalidateEntityCaches("expense");
+          }
+        } catch (err) {
+          console.warn("Failed to update offline store:", err);
+        }
       }
 
       window.dispatchEvent(

@@ -61,6 +61,30 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Cannot upload profile image for another user" }, { status: 403 });
     }
 
+    if (type === ImageType.EXPENSE) {
+      const { getExpenseById, getExpenseParticipant } = await import(
+        "@/lib/dynamodb/entities/expenses"
+      );
+      const { getGroupMember } = await import("@/lib/dynamodb/entities/groups");
+      const expense = await getExpenseById(entityId);
+      if (!expense || expense.is_deleted) {
+        return NextResponse.json({ error: "Expense not found" }, { status: 404 });
+      }
+      const isCreator = String(expense.created_by || "") === auth.user.id;
+      const participant = isCreator
+        ? true
+        : Boolean(await getExpenseParticipant(entityId, auth.user.id));
+      let isGroupMember = false;
+      if (!isCreator && !participant && expense.group_id) {
+        isGroupMember = Boolean(
+          await getGroupMember(String(expense.group_id), auth.user.id)
+        );
+      }
+      if (!isCreator && !participant && !isGroupMember) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+    }
+
     // Upload image
     const imageRef = await uploadManagedImage(buffer, file.name, uploadOptions);
 

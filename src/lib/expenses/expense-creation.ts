@@ -73,13 +73,23 @@ export interface CreatedExpenseResult {
 }
 
 export function validateExpensePayload(payload: any): string | null {
-  const { amount, description, paidBy, participants, images } = payload || {};
+  const { amount, description, paidBy, payers, participants, images } = payload || {};
 
-  if (!amount || !description || !paidBy || !participants || participants.length === 0) {
+  const hasPayers = Array.isArray(payers) && payers.length > 0;
+  if (!amount || !description || (!paidBy && !hasPayers) || !participants || participants.length === 0) {
     return "Missing required fields";
   }
   if (Number(amount) <= 0) {
     return "Amount must be greater than 0";
+  }
+  if (hasPayers) {
+    const totalPaid = payers.reduce(
+      (sum: number, p: any) => sum + Number(p?.amount || 0),
+      0
+    );
+    if (Math.abs(totalPaid - Number(amount)) > 0.01) {
+      return `Payer amounts (${totalPaid}) must equal expense amount (${amount})`;
+    }
   }
   if (images && Array.isArray(images)) {
     if (images.length > 10) {
@@ -95,16 +105,31 @@ export function validateExpensePayload(payload: any): string | null {
   return null;
 }
 
-export function buildSplitParticipants(payload: any, actorId: string): any[] {
-  const { amount, paidBy, participants, splitMethod } = payload || {};
-  const normalizedPaidBy = extractUserId(paidBy) || actorId;
-  const participantIds = uniqueIds(
-    (participants || []).map((p: any) => extractUserId(p?.userId ?? p))
-  );
-
-  if (!participantIds.includes(normalizedPaidBy)) {
-    participantIds.unshift(normalizedPaidBy);
+function resolvePaidByInput(payload: any, actorId: string) {
+  const { paidBy, payers, amount } = payload || {};
+  if (Array.isArray(payers) && payers.length > 0) {
+    return payers
+      .map((p: any) => ({
+        userId: extractUserId(p?.userId ?? p?.id ?? p),
+        amount: Number(p?.amount || 0),
+      }))
+      .filter((p: any) => Boolean(p.userId));
   }
+  return extractUserId(paidBy) || actorId;
+}
+
+export function buildSplitParticipants(payload: any, actorId: string): any[] {
+  const { amount, participants, splitMethod } = payload || {};
+  const paidByInput = resolvePaidByInput(payload, actorId);
+  const payerIds = Array.isArray(paidByInput)
+    ? paidByInput.map((p) => String(p.userId))
+    : [String(paidByInput)];
+
+  const participantIds = uniqueIds([
+    ...(participants || []).map((p: any) => extractUserId(p?.userId ?? p)),
+    ...payerIds,
+  ]);
+
   if (participantIds.length === 0) {
     throw new Error("No valid participants provided");
   }
@@ -115,7 +140,7 @@ export function buildSplitParticipants(payload: any, actorId: string): any[] {
       return splitEqually({
         amount: totalAmount,
         participants: participantIds,
-        paidBy: normalizedPaidBy,
+        paidBy: paidByInput,
       });
     case "exact": {
       const exactParticipants = (participants || [])
@@ -124,13 +149,15 @@ export function buildSplitParticipants(payload: any, actorId: string): any[] {
           owedAmount: Number(p?.exactAmount ?? p?.owedAmount ?? 0),
         }))
         .filter((p: any) => Boolean(p.userId));
-      if (!exactParticipants.some((p: any) => p.userId === normalizedPaidBy)) {
-        exactParticipants.push({ userId: normalizedPaidBy, owedAmount: 0 });
+      for (const payerId of payerIds) {
+        if (!exactParticipants.some((p: any) => p.userId === payerId)) {
+          exactParticipants.push({ userId: payerId, owedAmount: 0 });
+        }
       }
       return splitByExactAmounts({
         amount: totalAmount,
         participants: exactParticipants,
-        paidBy: normalizedPaidBy,
+        paidBy: paidByInput,
       });
     }
     case "percentage": {
@@ -140,13 +167,15 @@ export function buildSplitParticipants(payload: any, actorId: string): any[] {
           percentage: Number(p?.percentage || 0),
         }))
         .filter((p: any) => Boolean(p.userId));
-      if (!percentageParticipants.some((p: any) => p.userId === normalizedPaidBy)) {
-        percentageParticipants.push({ userId: normalizedPaidBy, percentage: 0 });
+      for (const payerId of payerIds) {
+        if (!percentageParticipants.some((p: any) => p.userId === payerId)) {
+          percentageParticipants.push({ userId: payerId, percentage: 0 });
+        }
       }
       return splitByPercentages({
         amount: totalAmount,
         participants: percentageParticipants,
-        paidBy: normalizedPaidBy,
+        paidBy: paidByInput,
       });
     }
     case "shares": {
@@ -156,13 +185,15 @@ export function buildSplitParticipants(payload: any, actorId: string): any[] {
           shares: Number(p?.shares || 1),
         }))
         .filter((p: any) => Boolean(p.userId));
-      if (!shareParticipants.some((p: any) => p.userId === normalizedPaidBy)) {
-        shareParticipants.push({ userId: normalizedPaidBy, shares: 0 });
+      for (const payerId of payerIds) {
+        if (!shareParticipants.some((p: any) => p.userId === payerId)) {
+          shareParticipants.push({ userId: payerId, shares: 0 });
+        }
       }
       return splitByShares({
         amount: totalAmount,
         participants: shareParticipants,
-        paidBy: normalizedPaidBy,
+        paidBy: paidByInput,
       });
     }
     default:
@@ -236,30 +267,24 @@ export async function createExpenseFromPayload({
   void (async () => {
     try {
       const { getUserBudgets } = await import("@/lib/dynamodb/entities/budgets");
-      const budgetRecord = await getUserBudgets(actor.id);
-      const cat = expenseData.category || "other";
-      const categoryBudget = budgetRecord?.budgets?.[cat]?.monthly;
+      const budgets = await getUserBudgets(actor.id);
+      const cat = String(expenseData.category || "other");
+      const categoryBudget = budgets[cat]?.monthly;
 
       if (categoryBudget && categoryBudget > 0) {
-        // Fetch all expenses created by this user in the current calendar month
-        const { getAdminDb } = await import("@/lib/firestore/admin");
-        const db = getAdminDb();
+        const { listExpensesByCreator } = await import("@/lib/dynamodb/entities/expenses");
         const nowDate = new Date();
-        const startOfMonth = new Date(nowDate.getFullYear(), nowDate.getMonth(), 1).getTime();
+        const startOfMonth = new Date(nowDate.getFullYear(), nowDate.getMonth(), 1).toISOString();
 
-        const expSnap = await db
-          .collection("expenses")
-          .where("created_by", "==", actor.id)
-          .get();
+        const monthlyExpenses = await listExpensesByCreator(actor.id, {
+          category: cat,
+          startDate: startOfMonth,
+        });
 
         let monthlySpend = 0;
-        for (const doc of expSnap.docs) {
-          const exp: any = { id: doc.id, ...(doc.data() || {}) };
-          if (exp.is_deleted || exp.category !== cat) continue;
-          const expDateVal = exp.date?.toDate ? exp.date.toDate() : new Date(exp.date || 0);
-          if (expDateVal.getTime() >= startOfMonth) {
-            monthlySpend += Number(exp.amount || 0);
-          }
+        for (const exp of monthlyExpenses) {
+          if (exp.is_deleted) continue;
+          monthlySpend += Number(exp.amount || 0);
         }
 
         if (monthlySpend > categoryBudget) {

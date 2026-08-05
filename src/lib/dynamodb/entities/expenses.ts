@@ -46,6 +46,43 @@ export async function getExpensesByIds(ids: string[]): Promise<DdbExpense[]> {
   return (await batchGetItems(ids.map((id) => ({ PK: PK.expense(id), SK: SK.meta })))) as unknown as DdbExpense[];
 }
 
+/** Expenses created by a user — via GSI1 (EOWNER#userId) */
+export async function listExpensesByCreator(
+  userId: string,
+  filters?: { category?: string; startDate?: string; endDate?: string }
+): Promise<DdbExpense[]> {
+  let filterExpr = "entityType = :et AND (attribute_not_exists(is_deleted) OR is_deleted = :del)";
+  const vals: Record<string, unknown> = {
+    ":pk": GSI1PK.expOwner(userId),
+    ":et": "expense",
+    ":del": false,
+  };
+
+  if (filters?.category) {
+    filterExpr += " AND category = :cat";
+    vals[":cat"] = filters.category;
+  }
+  if (filters?.startDate) {
+    filterExpr += " AND #date >= :start";
+    vals[":start"] = filters.startDate;
+  }
+  if (filters?.endDate) {
+    filterExpr += " AND #date <= :end";
+    vals[":end"] = filters.endDate;
+  }
+
+  return queryAll<DdbExpense>({
+    TableName: TABLE,
+    IndexName: GSI1,
+    KeyConditionExpression: "GSI1PK = :pk",
+    FilterExpression: filterExpr,
+    ExpressionAttributeValues: vals,
+    ...(filters?.startDate || filters?.endDate
+      ? { ExpressionAttributeNames: { "#date": "date" } }
+      : {}),
+  });
+}
+
 export async function updateExpense(
   expenseId: string,
   fields: Partial<
@@ -210,7 +247,7 @@ export async function queryUserExpenseFeed(
     search?: string;
   }
 ): Promise<PagedResult<DdbExpenseFeed>> {
-  let filterExpr = "entityType = :et AND is_deleted = :del";
+  let filterExpr = "entityType = :et AND (attribute_not_exists(is_deleted) OR is_deleted = :del)";
   const vals: Record<string, unknown> = {
     ":pk": PK.user(userId),
     ":prefix": "EXPENSE#",
@@ -293,7 +330,7 @@ export async function queryGroupExpenseFeed(
     {
       TableName: TABLE,
       KeyConditionExpression: "PK = :pk AND begins_with(SK, :prefix)",
-      FilterExpression: "entityType = :et AND is_deleted = :del",
+      FilterExpression: "entityType = :et AND (attribute_not_exists(is_deleted) OR is_deleted = :del)",
       ExpressionAttributeValues: {
         ":pk": PK.group(groupId),
         ":prefix": "EXPENSE#",

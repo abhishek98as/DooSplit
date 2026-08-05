@@ -86,6 +86,8 @@ export const GSI2PK = {
   reminderFrom: (userId: string)   => `RPFROM2#${userId}`,
   inviteEmail:  (email: string)    => `INVEMAIL2#${email.toLowerCase()}`,
   due:          (dateStr: string)  => `DUE2#${dateStr}`,
+  /** Dummy friends created by a user */
+  dummyOf:      (userId: string)   => `DUMMYOF#${userId}`,
 } as const;
 
 export const GSI2SK = {
@@ -93,6 +95,25 @@ export const GSI2SK = {
   reminder:   (status: string, ts: string, id: string) => `${status}#${ts}#${id}`,
   invite:     (status: string, ts: string, id: string) => `${status}#${ts}#${id}`,
   recurring:  (id: string) => `RECURRING#${id}`,
+  dummy:      (nameNormalized: string, userId: string) => `${nameNormalized}#${userId}`,
+} as const;
+
+// ── GSI3 Partition / Sort Key builders (sparse, multi-entity) ─────────────────
+
+export const GSI3PK = {
+  /** All users — query with begins_with(GSI3SK, namePrefix) */
+  name: () => "NAME",
+  /** Payment reminders by status — e.g. REMSTATUS#sent */
+  reminderStatus: (status: string) => `REMSTATUS#${status}`,
+  /** Friendship lookup by friendship id */
+  friendshipId: (id: string) => `FID#${id}`,
+} as const;
+
+export const GSI3SK = {
+  userName: (nameNormalized: string, userId: string) =>
+    `${nameNormalized}#${userId}`,
+  reminder: (ts: string, id: string) => `${ts}#${id}`,
+  friendship: (userId: string) => `USER#${userId}`,
 } as const;
 
 // ── Helper ────────────────────────────────────────────────────────────────────

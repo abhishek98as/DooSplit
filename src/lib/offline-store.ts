@@ -49,7 +49,7 @@ export interface DashboardData {
 }
 
 class OfflineStore {
-  private indexedDB = getIndexedDB();
+  public indexedDB = getIndexedDB();
   private onlineStatus: boolean = typeof window !== 'undefined' ? navigator.onLine : true;
   private syncInProgress: boolean = false;
   private inFlightRequests = new Map<string, Promise<any>>();
@@ -220,7 +220,7 @@ class OfflineStore {
     }
   }
 
-  private async invalidateEntityCaches(
+  public async invalidateEntityCaches(
     entityType: "expense" | "settlement" | "friend" | "group"
   ): Promise<void> {
     switch (entityType) {
@@ -496,7 +496,7 @@ class OfflineStore {
 
     if (this.isOnline()) {
       try {
-        const response = await fetch(`/api/expenses/${expenseId}`, {
+        const response = await authFetch(`/api/expenses/${expenseId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(updates),
@@ -537,7 +537,7 @@ class OfflineStore {
   async deleteExpense(expenseId: string): Promise<void> {
     if (this.isOnline()) {
       try {
-        const response = await fetch(`/api/expenses/${expenseId}`, {
+        const response = await authFetch(`/api/expenses/${expenseId}`, {
           method: 'DELETE',
         });
 
@@ -616,7 +616,7 @@ class OfflineStore {
 
     if (this.isOnline()) {
       try {
-        const response = await fetch('/api/settlements', {
+        const response = await authFetch('/api/settlements', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(settlementData),
@@ -883,19 +883,19 @@ class OfflineStore {
     switch (entityType) {
       case 'expense':
         if (type === 'create') {
-          await fetch('/api/expenses', {
+          await authFetch('/api/expenses', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data),
           });
         } else if (type === 'update') {
-          await fetch(`/api/expenses/${entityId}`, {
+          await authFetch(`/api/expenses/${entityId}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data),
           });
         } else if (type === 'delete') {
-          await fetch(`/api/expenses/${entityId}`, {
+          await authFetch(`/api/expenses/${entityId}`, {
             method: 'DELETE',
           });
         }
@@ -903,7 +903,7 @@ class OfflineStore {
 
       case 'settlement':
         if (type === 'create') {
-          await fetch('/api/settlements', {
+          await authFetch('/api/settlements', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data),
@@ -913,7 +913,7 @@ class OfflineStore {
 
       case 'group':
         if (type === 'create') {
-          await fetch('/api/groups', {
+          await authFetch('/api/groups', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data),

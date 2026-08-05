@@ -3,22 +3,42 @@ import {
   PutCommand,
   UpdateCommand,
   DeleteCommand,
+  QueryCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { getDynamoDB } from "../client";
-import { TABLE } from "../tables";
-import { PK, SK, GSI1PK, GSI1SK } from "../keys";
+import { TABLE, GSI1, GSI2, GSI3 } from "../tables";
+import { PK, SK, GSI1PK, GSI1SK, GSI2PK, GSI2SK, GSI3PK, GSI3SK } from "../keys";
 import type { DdbUser } from "../types";
 import { batchGetItems, queryAll } from "../helpers";
 
+function userGsi3(nameNormalized: string, userId: string) {
+  return {
+    GSI3PK: GSI3PK.name(),
+    GSI3SK: GSI3SK.userName(nameNormalized || "", userId),
+  };
+}
+
+function userDummyGsi2(user: { is_dummy?: boolean; created_by?: string; name_normalized?: string; id: string }) {
+  if (!user.is_dummy || !user.created_by) return {};
+  return {
+    GSI2PK: GSI2PK.dummyOf(user.created_by),
+    GSI2SK: GSI2SK.dummy(user.name_normalized || "", user.id),
+  };
+}
+
 // ── Put ───────────────────────────────────────────────────────────────────────
 
-export async function putUser(user: Omit<DdbUser, "PK" | "SK" | "entityType" | "GSI1PK" | "GSI1SK">): Promise<void> {
+export async function putUser(
+  user: Omit<DdbUser, "PK" | "SK" | "entityType" | "GSI1PK" | "GSI1SK" | "GSI2PK" | "GSI2SK" | "GSI3PK" | "GSI3SK">
+): Promise<void> {
   const item: DdbUser = {
     PK: PK.user(user.id),
     SK: SK.profile,
     entityType: "user",
     GSI1PK: GSI1PK.email(user.email_normalized),
     GSI1SK: GSI1SK.user(user.id),
+    ...userGsi3(user.name_normalized, user.id),
+    ...userDummyGsi2(user),
     ...user,
   };
   await getDynamoDB().send(new PutCommand({ TableName: TABLE, Item: item }));
@@ -36,8 +56,6 @@ export async function getUserById(userId: string): Promise<DdbUser | null> {
 // ── Get by email ──────────────────────────────────────────────────────────────
 
 export async function getUserByEmail(email: string): Promise<DdbUser | null> {
-  const { QueryCommand } = await import("@aws-sdk/lib-dynamodb");
-  const { GSI1 } = await import("../tables");
   const res = await getDynamoDB().send(
     new QueryCommand({
       TableName: TABLE,
@@ -58,24 +76,69 @@ export async function getUsersByIds(userIds: string[]): Promise<DdbUser[]> {
   return (await batchGetItems(keys)) as unknown as DdbUser[];
 }
 
-// ── Search by name (prefix scan — only for small result sets) ─────────────────
+/**
+ * Prefix search on name_normalized via GSI3 (no table Scan).
+ */
+export async function searchUsersByNamePrefix(
+  namePrefix: string,
+  limit = 20
+): Promise<DdbUser[]> {
+  const prefix = namePrefix.toLowerCase().trim();
+  if (!prefix) return [];
 
-export async function searchUsersByName(nameLower: string): Promise<DdbUser[]> {
+  const res = await getDynamoDB().send(
+    new QueryCommand({
+      TableName: TABLE,
+      IndexName: GSI3,
+      KeyConditionExpression: "GSI3PK = :pk AND begins_with(GSI3SK, :prefix)",
+      ExpressionAttributeValues: {
+        ":pk": GSI3PK.name(),
+        ":prefix": prefix,
+      },
+      Limit: Math.min(Math.max(limit, 1), 50),
+    })
+  );
+  return (res.Items || []) as DdbUser[];
+}
+
+/** Dummy friends created by a user — via GSI2 DUMMYOF#{userId} */
+export async function listDummiesCreatedByUser(userId: string): Promise<DdbUser[]> {
   return queryAll<DdbUser>({
     TableName: TABLE,
-    FilterExpression: "contains(name_normalized, :q) AND entityType = :et",
-    ExpressionAttributeValues: {
-      ":q": nameLower.toLowerCase(),
-      ":et": "user",
-    },
+    IndexName: GSI2,
+    KeyConditionExpression: "GSI2PK = :pk",
+    ExpressionAttributeValues: { ":pk": GSI2PK.dummyOf(userId) },
   });
+}
+
+/** @deprecated Use searchUsersByNamePrefix — kept for rare admin tooling */
+export async function searchUsersByName(nameLower: string): Promise<DdbUser[]> {
+  return searchUsersByNamePrefix(nameLower, 50);
 }
 
 // ── Update ────────────────────────────────────────────────────────────────────
 
 export async function updateUser(
   userId: string,
-  fields: Partial<Pick<DdbUser, "name" | "name_normalized" | "display_name" | "photo_url" | "phone_number" | "default_currency" | "preferences" | "is_active" | "updated_at">>
+  fields: Partial<
+    Pick<
+      DdbUser,
+      | "name"
+      | "name_normalized"
+      | "display_name"
+      | "photo_url"
+      | "phone_number"
+      | "default_currency"
+      | "preferences"
+      | "is_active"
+      | "updated_at"
+      | "email"
+      | "email_normalized"
+      | "push_notifications_enabled"
+      | "email_notifications_enabled"
+    >
+  > &
+    Record<string, unknown>
 ): Promise<void> {
   const sets: string[] = [];
   const names: Record<string, string> = {};
@@ -87,6 +150,18 @@ export async function updateUser(
     names[`#${k}`] = k;
     vals[`:${k}`] = v;
   }
+
+  if (fields.name_normalized !== undefined) {
+    sets.push("GSI3PK = :gsi3pk", "GSI3SK = :gsi3sk");
+    vals[":gsi3pk"] = GSI3PK.name();
+    vals[":gsi3sk"] = GSI3SK.userName(fields.name_normalized, userId);
+  }
+
+  if (fields.email_normalized !== undefined) {
+    sets.push("GSI1PK = :gsi1pk");
+    vals[":gsi1pk"] = GSI1PK.email(fields.email_normalized);
+  }
+
   if (sets.length === 0) return;
 
   await getDynamoDB().send(
@@ -94,7 +169,7 @@ export async function updateUser(
       TableName: TABLE,
       Key: { PK: PK.user(userId), SK: SK.profile },
       UpdateExpression: `SET ${sets.join(", ")}`,
-      ExpressionAttributeNames: names,
+      ExpressionAttributeNames: Object.keys(names).length ? names : undefined,
       ExpressionAttributeValues: vals,
     })
   );

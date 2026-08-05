@@ -10,7 +10,6 @@ import { getActiveRepository } from "@/lib/data";
 import { getServerFirebaseUser } from "@/lib/auth/firebase-session";
 import { createSettlementInFirestore } from "@/lib/firestore/write-operations";
 import { notifySettlement } from "@/lib/notificationService";
-import { getAdminDb } from "@/lib/firestore/admin";
 import { logSettlementAdded } from "@/lib/activity-logger";
 import { allocateSettlementToExpenses } from "@/lib/settlements/allocation";
 
@@ -142,20 +141,18 @@ export async function POST(request: NextRequest) {
     let groupName: string | null = null;
 
     try {
-      const db = getAdminDb();
-      const [fromUserDoc, toUserDoc, groupDoc] = await Promise.all([
-        db.collection("users").doc(String(fromUserId)).get(),
-        db.collection("users").doc(String(toUserId)).get(),
-        groupId
-          ? db.collection("groups").doc(String(groupId)).get()
-          : Promise.resolve(null),
+      const { getUserById } = await import("@/lib/dynamodb/entities/users");
+      const { getGroupById } = await import("@/lib/dynamodb/entities/groups");
+
+      const [fromUser, toUser, group] = await Promise.all([
+        getUserById(String(fromUserId)),
+        getUserById(String(toUserId)),
+        groupId ? getGroupById(String(groupId)) : Promise.resolve(null),
       ]);
 
-      fromUserName = String(fromUserDoc.data()?.name || "").trim() || fromUserName;
-      toUserName = String(toUserDoc.data()?.name || "").trim() || toUserName;
-      groupName = groupDoc
-        ? String(groupDoc.data()?.name || "").trim() || null
-        : null;
+      fromUserName = fromUser?.name || fromUserName;
+      toUserName = toUser?.name || toUserName;
+      groupName = group?.name || null;
 
       await notifySettlement(
         settlementId,

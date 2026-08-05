@@ -40,7 +40,22 @@ export async function getGroupsByIds(groupIds: string[]): Promise<DdbGroup[]> {
 
 export async function updateGroup(
   groupId: string,
-  fields: Partial<Pick<DdbGroup, "name" | "description" | "currency" | "is_active" | "member_count" | "updated_at">>
+  fields: Partial<
+    Pick<
+      DdbGroup,
+      | "name"
+      | "description"
+      | "image"
+      | "type"
+      | "notes"
+      | "settle_up_date"
+      | "simplify_debts"
+      | "currency"
+      | "is_active"
+      | "member_count"
+      | "updated_at"
+    >
+  >
 ): Promise<void> {
   const sets: string[] = [];
   const names: Record<string, string> = {};

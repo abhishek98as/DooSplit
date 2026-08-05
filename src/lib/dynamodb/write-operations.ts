@@ -235,6 +235,99 @@ export async function createSettlementInDynamo(input: CreateSettlementInput): Pr
   await getDynamoDB().send(new TransactWriteCommand({ TransactItems: transactItems }));
 }
 
+export async function deleteSettlementInDynamo(
+  settlementId: string,
+  date: string,
+  fromUserId: string,
+  toUserId: string
+): Promise<void> {
+  const { UpdateCommand, DeleteCommand, QueryCommand } = await import("@aws-sdk/lib-dynamodb");
+  const ts = toSortableTs(date);
+  const client = getDynamoDB();
+
+  // Mark settlement meta as deleted
+  await client.send(
+    new UpdateCommand({
+      TableName: TABLE,
+      Key: { PK: PK.settlement(settlementId), SK: SK.meta },
+      UpdateExpression: "SET is_deleted = :deleted, updated_at = :now",
+      ExpressionAttributeValues: { ":deleted": true, ":now": new Date().toISOString() },
+    })
+  );
+
+  // Mark feed records as deleted
+  await Promise.all([
+    client.send(
+      new UpdateCommand({
+        TableName: TABLE,
+        Key: { PK: PK.user(fromUserId), SK: SK.settlement(ts, settlementId) },
+        UpdateExpression: "SET is_deleted = :deleted, updated_at = :now",
+        ExpressionAttributeValues: { ":deleted": true, ":now": new Date().toISOString() },
+      })
+    ),
+    client.send(
+      new UpdateCommand({
+        TableName: TABLE,
+        Key: { PK: PK.user(toUserId), SK: SK.settlement(ts, settlementId) },
+        UpdateExpression: "SET is_deleted = :deleted, updated_at = :now",
+        ExpressionAttributeValues: { ":deleted": true, ":now": new Date().toISOString() },
+      })
+    ),
+  ]);
+
+  const { listSettlementAllocations } = await import("./entities/settlements");
+  const allocations = await listSettlementAllocations(settlementId);
+
+  for (const alloc of allocations) {
+    // Delete the allocation record
+    await client.send(
+      new DeleteCommand({
+        TableName: TABLE,
+        Key: { PK: PK.settlement(settlementId), SK: SK.alloc(alloc.expense_id) },
+      })
+    );
+
+    // Delete the reverse allocation record on the expense partition as well
+    await client.send(
+      new DeleteCommand({
+        TableName: TABLE,
+        Key: {
+          PK: PK.expense(alloc.expense_id),
+          SK: `ALLOC#${settlementId}#${fromUserId}#${toUserId}`,
+        },
+      })
+    );
+
+    // Re-check and update expense payment status based on remaining allocations
+    const { getExpenseById } = await import("./entities/expenses");
+    const { updateExpensePaymentStatusInDynamo } = await import("./write-operations");
+    const expense = await getExpenseById(alloc.expense_id);
+    if (expense) {
+      const res = await client.send(
+        new QueryCommand({
+          TableName: TABLE,
+          KeyConditionExpression: "PK = :pk AND begins_with(SK, :prefix)",
+          ExpressionAttributeValues: {
+            ":pk": PK.expense(alloc.expense_id),
+            ":prefix": "ALLOC#",
+          },
+        })
+      );
+      const remainingAllocations = res.Items || [];
+      const totalPaidAllocations = remainingAllocations.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+
+      let nextStatus = "unpaid";
+      if (totalPaidAllocations >= expense.amount) {
+        nextStatus = "paid";
+      } else if (totalPaidAllocations > 0) {
+        nextStatus = "partially_paid";
+      }
+
+      await updateExpensePaymentStatusInDynamo(alloc.expense_id, nextStatus, fromUserId, new Date().toISOString());
+    }
+  }
+}
+
 // ── Friendship ────────────────────────────────────────────────────────────────
 
 export interface CreateFriendshipInput {
@@ -429,7 +522,7 @@ export async function updateExpensePaymentStatusInDynamo(
 
   const participants = await listExpenseParticipants(expenseId);
   const ts = toSortableTs(expense.date);
-  const isSettled = paymentStatus === "settled";
+  const isSettled = paymentStatus === "paid";
 
   const transactItems: NonNullable<TransactWriteCommandInput["TransactItems"]> = [
     {

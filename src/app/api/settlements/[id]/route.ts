@@ -6,59 +6,73 @@ import {
   invalidateUsersCache,
 } from "@/lib/cache";
 import { requireUser } from "@/lib/auth/require-user";
-import { getAdminDb } from "@/lib/firestore/admin";
-import { mapGroup, mapUser, toIso, toNum } from "@/lib/firestore/route-helpers";
+import { toIso, toNum } from "@/lib/firestore/route-helpers";
 import { SETTLEMENT_MUTATION_CACHE_SCOPES } from "@/lib/cache-scopes";
+import { getSettlementById } from "@/lib/dynamodb/entities/settlements";
+import { getUserById } from "@/lib/dynamodb/entities/users";
+import { getGroupById } from "@/lib/dynamodb/entities/groups";
+import { deleteSettlementInDynamo } from "@/lib/dynamodb/write-operations";
+import type { DdbSettlement } from "@/lib/dynamodb/types";
 
 export const dynamic = "force-dynamic";
 
+type SettlementDetails = DdbSettlement & {
+  method?: string;
+  note?: string;
+  screenshot?: string | null;
+  version?: number;
+  modified_by?: string;
+};
+
 async function loadSettlementPayload(settlementId: string, userId: string) {
-  const db = getAdminDb();
-  const settlementDoc = await db.collection("settlements").doc(settlementId).get();
-  if (!settlementDoc.exists) {
+  const row = (await getSettlementById(settlementId)) as SettlementDetails | null;
+  if (!row || row.is_deleted) {
     throw new Error("Settlement not found");
   }
 
-  const row: any = { id: settlementDoc.id, ...((settlementDoc.data() as any) || {}) };
   const fromUserId = String(row.from_user_id || "");
   const toUserId = String(row.to_user_id || "");
   if (fromUserId !== userId && toUserId !== userId) {
     throw new Error("Forbidden");
   }
 
-  const [fromUserDoc, toUserDoc, groupDoc] = await Promise.all([
-    db.collection("users").doc(fromUserId).get(),
-    db.collection("users").doc(toUserId).get(),
-    row.group_id ? db.collection("groups").doc(String(row.group_id)).get() : Promise.resolve(null),
+  const [fromUser, toUser, group] = await Promise.all([
+    getUserById(fromUserId),
+    getUserById(toUserId),
+    row.group_id ? getGroupById(row.group_id) : Promise.resolve(null),
   ]);
-
-  const fromUser = fromUserDoc.exists
-    ? mapUser({ id: fromUserDoc.id, ...((fromUserDoc.data() as any) || {}) })
-    : null;
-  const toUser = toUserDoc.exists
-    ? mapUser({ id: toUserDoc.id, ...((toUserDoc.data() as any) || {}) })
-    : null;
-  const group = groupDoc && groupDoc.exists
-    ? mapGroup({ id: groupDoc.id, ...((groupDoc.data() as any) || {}) })
-    : null;
 
   return {
     settlement: {
-      _id: String(row.id || ""),
-      fromUserId: fromUser,
-      toUserId: toUser,
+      _id: row.id,
+      fromUserId: fromUser ? {
+        _id: fromUser.id,
+        name: fromUser.name,
+        email: fromUser.email,
+        profilePicture: fromUser.photo_url || null,
+      } : null,
+      toUserId: toUser ? {
+        _id: toUser.id,
+        name: toUser.name,
+        email: toUser.email,
+        profilePicture: toUser.photo_url || null,
+      } : null,
       amount: toNum(row.amount),
       currency: String(row.currency || "INR"),
       method: String(row.method || "Cash"),
-      note: String(row.note || row.notes || ""),
+      note: String(row.notes || row.note || ""),
       screenshot: row.screenshot || null,
-      date: toIso(row.date || row.created_at || row._created_at),
-      groupId: group,
+      date: toIso(row.date || row.created_at),
+      groupId: group ? {
+        _id: group.id,
+        name: group.name,
+        currency: group.currency,
+      } : null,
       version: toNum(row.version || 1),
-      lastModified: toIso(row.last_modified || row.updated_at || row._updated_at),
+      lastModified: toIso(row.updated_at),
       modifiedBy: String(row.modified_by || ""),
-      createdAt: toIso(row.created_at || row._created_at),
-      updatedAt: toIso(row.updated_at || row._updated_at),
+      createdAt: toIso(row.created_at),
+      updatedAt: toIso(row.updated_at),
     },
   };
 }
@@ -115,17 +129,11 @@ export async function DELETE(
       return auth.response as NextResponse;
     }
     const userId = auth.user.id;
-    const db = getAdminDb();
 
-    const ref = db.collection("settlements").doc(id);
-    const existingDoc = await ref.get();
-    if (!existingDoc.exists) {
-      return NextResponse.json(
-        { error: "Settlement not found" },
-        { status: 404 }
-      );
+    const existing = await getSettlementById(id);
+    if (!existing || existing.is_deleted) {
+      return NextResponse.json({ error: "Settlement not found" }, { status: 404 });
     }
-    const existing: any = { id: existingDoc.id, ...((existingDoc.data() as any) || {}) };
 
     if (String(existing.from_user_id || "") !== userId) {
       return NextResponse.json(
@@ -134,7 +142,7 @@ export async function DELETE(
       );
     }
 
-    await ref.delete();
+    await deleteSettlementInDynamo(id, existing.date, existing.from_user_id, existing.to_user_id);
 
     await invalidateUsersCache(
       [String(existing.from_user_id || ""), String(existing.to_user_id || "")],

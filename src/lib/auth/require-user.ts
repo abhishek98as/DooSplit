@@ -19,28 +19,34 @@ export async function requireUser(request: NextRequest): Promise<RequireUserResu
     };
   }
 
-  // Try Firebase auth first
   const firebaseUser = await getServerFirebaseUser(request);
   if (firebaseUser?.id) {
     return { user: firebaseUser };
   }
 
-  // Fallback to legacy session (for backward compatibility during migration)
-  try {
-    const { getServerAppUser } = await import("./server-session");
-    const legacyUser = await getServerAppUser(request);
-    if (legacyUser?.id) {
-      return {
-        user: {
-          id: legacyUser.id,
-          email: legacyUser.email || undefined,
-          name: legacyUser.name || undefined,
-          profilePicture: legacyUser.profilePicture || undefined,
-        }
-      };
+  // Legacy session only when explicitly enabled (migration escape hatch)
+  const allowLegacy =
+    process.env.ALLOW_LEGACY_SESSION === "true" ||
+    (process.env.NODE_ENV !== "production" &&
+      process.env.ALLOW_LEGACY_SESSION !== "false");
+
+  if (allowLegacy) {
+    try {
+      const { getServerAppUser } = await import("./server-session");
+      const legacyUser = await getServerAppUser(request);
+      if (legacyUser?.id) {
+        return {
+          user: {
+            id: legacyUser.id,
+            email: legacyUser.email || undefined,
+            name: legacyUser.name || undefined,
+            profilePicture: legacyUser.profilePicture || undefined,
+          },
+        };
+      }
+    } catch (error) {
+      console.warn("Legacy auth fallback failed:", error);
     }
-  } catch (error) {
-    console.warn("Legacy auth fallback failed:", error);
   }
 
   return {

@@ -7,8 +7,8 @@ import {
   TransactWriteCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { getDynamoDB } from "../client";
-import { TABLE } from "../tables";
-import { PK, SK, GSI1PK, GSI1SK } from "../keys";
+import { TABLE, GSI1, GSI3 } from "../tables";
+import { PK, SK, GSI1PK, GSI1SK, GSI3PK, GSI3SK } from "../keys";
 import type { DdbFriendship } from "../types";
 import { queryAll } from "../helpers";
 
@@ -35,6 +35,8 @@ export async function putFriendshipBidirectional(
     SK: SK.friend(friendship.friend_id),
     GSI1PK: GSI1PK.friendOf(friendship.friend_id),
     GSI1SK: GSI1SK.user(friendship.user_id),
+    GSI3PK: GSI3PK.friendshipId(friendship.id),
+    GSI3SK: GSI3SK.friendship(friendship.user_id),
     user_id: friendship.user_id,
     friend_id: friendship.friend_id,
     ...base,
@@ -45,6 +47,7 @@ export async function putFriendshipBidirectional(
     SK: SK.friend(friendship.user_id),
     GSI1PK: GSI1PK.friendOf(friendship.user_id),
     GSI1SK: GSI1SK.user(friendship.friend_id),
+    // Only forward edge owns FID# lookup to avoid duplicate GSI3 keys
     user_id: friendship.friend_id,
     friend_id: friendship.user_id,
     ...base,
@@ -73,6 +76,23 @@ export async function getFriendship(
     })
   );
   return (res.Item as DdbFriendship) ?? null;
+}
+
+/** Lookup a friendship edge by its friendship id via GSI3 (no Scan). */
+export async function getFriendshipById(
+  friendshipId: string
+): Promise<DdbFriendship | null> {
+  const { QueryCommand } = await import("@aws-sdk/lib-dynamodb");
+  const res = await getDynamoDB().send(
+    new QueryCommand({
+      TableName: TABLE,
+      IndexName: GSI3,
+      KeyConditionExpression: "GSI3PK = :pk",
+      ExpressionAttributeValues: { ":pk": GSI3PK.friendshipId(friendshipId) },
+      Limit: 1,
+    })
+  );
+  return (res.Items?.[0] as DdbFriendship) ?? null;
 }
 
 // ── List for user ─────────────────────────────────────────────────────────────

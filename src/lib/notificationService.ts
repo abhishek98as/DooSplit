@@ -1,5 +1,10 @@
 import crypto from "crypto";
-import { Notification } from "@/lib/mongodb/models";
+import { BatchWriteCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
+import { getDynamoDB } from "@/lib/dynamodb/client";
+import { TABLE } from "@/lib/dynamodb/tables";
+import { PK, SK, toSortableTs } from "@/lib/dynamodb/keys";
+import { ttlDaysFromNow } from "@/lib/dynamodb/helpers";
+import type { DdbNotification } from "@/lib/dynamodb/types";
 
 type IdLike = string | { toString(): string };
 
@@ -23,17 +28,25 @@ function toId(value: IdLike): string {
  */
 export async function createNotification(params: CreateNotificationParams) {
   try {
-    const doc = await Notification.create({
-      _id: newId(),
+    const id = newId();
+    const now = new Date();
+    const notif: DdbNotification = {
+      PK: PK.user(toId(params.userId)),
+      SK: SK.notification(toSortableTs(now), id),
+      entityType: "notification",
+      ttl: ttlDaysFromNow(30),
+      id,
       user_id: toId(params.userId),
       type: params.type,
       title: params.type,
       body: params.message,
       data: params.data || {},
       is_read: false,
-      created_at: new Date(),
-    });
-    return doc;
+      created_at: now.toISOString(),
+      updated_at: now.toISOString(),
+    };
+    await getDynamoDB().send(new PutCommand({ TableName: TABLE, Item: notif }));
+    return notif;
   } catch (error) {
     console.error("Error creating notification:", error);
     throw error;
@@ -47,24 +60,50 @@ export async function createNotifications(notifications: CreateNotificationParam
   try {
     if (notifications.length === 0) return [];
 
-    const rows = notifications.map((n) => ({
-      _id: newId(),
-      user_id: toId(n.userId),
-      type: n.type,
-      title: n.type,
-      body: n.message,
-      data: n.data || {},
-      is_read: false,
-      created_at: new Date(),
-    }));
+    const now = new Date();
+    const items = notifications.map((n) => {
+      const id = newId();
+      return {
+        PK: PK.user(toId(n.userId)),
+        SK: SK.notification(toSortableTs(now), id),
+        entityType: "notification",
+        ttl: ttlDaysFromNow(30),
+        id,
+        user_id: toId(n.userId),
+        type: n.type,
+        title: n.type,
+        body: n.message,
+        data: n.data || {},
+        is_read: false,
+        created_at: now.toISOString(),
+        updated_at: now.toISOString(),
+      } satisfies DdbNotification;
+    });
 
-    const docs = await Notification.insertMany(rows, { ordered: false });
-    return docs;
+    const client = getDynamoDB();
+    const chunks = [];
+    for (let i = 0; i < items.length; i += 25) {
+      chunks.push(items.slice(i, i + 25));
+    }
+
+    for (const chunk of chunks) {
+      await client.send(
+        new BatchWriteCommand({
+          RequestItems: {
+            [TABLE]: chunk.map((item) => ({
+              PutRequest: { Item: item },
+            })),
+          },
+        })
+      );
+    }
+    return items;
   } catch (error) {
     console.error("Error creating notifications:", error);
     throw error;
   }
 }
+
 
 /**
  * Notify participants about a new expense

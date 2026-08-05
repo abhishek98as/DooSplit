@@ -1,8 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth/require-user";
-import { getAdminDb, FieldValue } from "@/lib/firestore/admin";
+import { getUserById, updateUser } from "@/lib/dynamodb/entities/users";
+import type { DdbUser } from "@/lib/dynamodb/types";
 
 export const dynamic = "force-dynamic";
+
+type UserPushRecord = DdbUser & {
+  fcm_tokens?: string[];
+  push_subscription?: unknown;
+};
 
 export async function POST(request: NextRequest) {
   try {
@@ -24,22 +30,17 @@ export async function POST(request: NextRequest) {
     }
 
     const nowIso = new Date().toISOString();
-    const db = getAdminDb();
-    const updatePayload: Record<string, any> = {
+    const existing = (await getUserById(auth.user.id)) as UserPushRecord | null;
+    const tokens: string[] = Array.isArray(existing?.fcm_tokens) ? existing.fcm_tokens : [];
+    if (fcmToken && !tokens.includes(fcmToken)) {
+      tokens.push(fcmToken);
+    }
+    await updateUser(auth.user.id, {
       push_notifications_enabled: true,
+      fcm_tokens: tokens,
+      push_subscription: subscription || existing?.push_subscription || undefined,
       updated_at: nowIso,
-      _updated_at: FieldValue.serverTimestamp(),
-    };
-
-    if (fcmToken) {
-      updatePayload.fcm_tokens = FieldValue.arrayUnion(fcmToken);
-    }
-
-    if (subscription?.endpoint) {
-      updatePayload.push_subscription = subscription;
-    }
-
-    await db.collection("users").doc(auth.user.id).set(updatePayload, { merge: true });
+    });
 
     return NextResponse.json({
       message: "Successfully subscribed to push notifications",
@@ -70,22 +71,23 @@ export async function DELETE(request: NextRequest) {
     const body = await request.json().catch(() => ({}));
     const fcmToken = String(body?.fcmToken || "").trim();
 
-    const db = getAdminDb();
     const nowIso = new Date().toISOString();
-    const firestorePayload: Record<string, any> = {
-      updated_at: nowIso,
-      _updated_at: FieldValue.serverTimestamp(),
-    };
-
     if (fcmToken) {
-      firestorePayload.fcm_tokens = FieldValue.arrayRemove(fcmToken);
+      const existing = (await getUserById(auth.user.id)) as UserPushRecord | null;
+      const tokens: string[] = Array.isArray(existing?.fcm_tokens) ? existing.fcm_tokens : [];
+      const filtered = tokens.filter((t) => t !== fcmToken);
+      await updateUser(auth.user.id, {
+        fcm_tokens: filtered,
+        updated_at: nowIso,
+      });
     } else {
-      firestorePayload.fcm_tokens = [];
-      firestorePayload.push_subscription = null;
-      firestorePayload.push_notifications_enabled = false;
+      await updateUser(auth.user.id, {
+        fcm_tokens: [],
+        push_subscription: null,
+        push_notifications_enabled: false,
+        updated_at: nowIso,
+      });
     }
-
-    await db.collection("users").doc(auth.user.id).set(firestorePayload, { merge: true });
 
     return NextResponse.json({
       message: "Successfully unsubscribed from push notifications",

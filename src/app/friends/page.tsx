@@ -801,12 +801,12 @@ export default function FriendsPage() {
                     <div className="flex items-center gap-3 min-w-0">
                       <div className="h-10 w-10 rounded-full bg-primary/20 flex items-center justify-center shrink-0">
                         <span className="text-primary font-semibold">
-                          {request.from.name.charAt(0).toUpperCase()}
+                          {request.from.name?.charAt(0)?.toUpperCase() || "?"}
                         </span>
                       </div>
                       <div className="min-w-0">
                         <p className="font-medium text-neutral-900 dark:text-dark-text truncate">
-                          {request.from.name}
+                          {request.from.name || request.from.email || "Unknown"}
                         </p>
                         <p className="text-sm text-neutral-500 truncate">{request.from.email}</p>
                       </div>

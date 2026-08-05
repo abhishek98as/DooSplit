@@ -8,6 +8,8 @@ export interface DdbBase {
   GSI1SK?: string;
   GSI2PK?: string;
   GSI2SK?: string;
+  GSI3PK?: string;
+  GSI3SK?: string;
   ttl?: number; // Unix epoch seconds — DynamoDB TTL attribute
 }
 
@@ -26,9 +28,12 @@ export interface DdbUser extends DdbBase {
   default_currency?: string;
   is_active: boolean;
   is_dummy?: boolean;
+  created_by?: string;
   merged_into?: string;
   firebase_uid?: string;
   preferences?: Record<string, unknown>;
+  push_notifications_enabled?: boolean;
+  email_notifications_enabled?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -53,6 +58,11 @@ export interface DdbGroup extends DdbBase {
   id: string;
   name: string;
   description?: string;
+  image?: string | null;
+  type?: "trip" | "home" | "couple" | "other" | string;
+  notes?: string | null;
+  settle_up_date?: string | null;
+  simplify_debts?: boolean;
   created_by: string;
   currency: string;
   is_active: boolean;
@@ -147,6 +157,7 @@ export interface DdbExpenseFeed extends DdbBase {
   date: string;
   split_type: string;
   is_deleted: boolean;
+  payment_status?: string;
   created_at: string;
   updated_at: string;
 }
@@ -257,7 +268,11 @@ export interface DdbReminder extends DdbBase {
   currency: string;
   expense_id?: string;
   notes?: string;
+  message?: string | null;
   status: string;
+  sent_at?: string;
+  read_at?: string;
+  paid_at?: string;
   last_push_at?: string;
   created_at: string;
   updated_at: string;

@@ -1,11 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  splitEqually,
-  splitByExactAmounts,
-  splitByPercentages,
-  splitByShares,
-  validateSplit,
-} from "@/lib/splitCalculator";
+import { resolvePaidAmounts, validateSplit } from "@/lib/splitCalculator";
+import { buildSplitParticipants } from "@/lib/expenses/expense-creation";
 import { notifyExpenseDeleted, notifyExpenseUpdated } from "@/lib/notificationService";
 import {
   CACHE_TTL,
@@ -270,6 +265,7 @@ export async function PUT(
       notes,
       splitMethod,
       paidBy,
+      payers,
       participants,
       paymentStatus,
     } = body || {};
@@ -414,58 +410,67 @@ export async function PUT(
     const finalAmount = amount !== undefined ? Number(amount) : toNum(expense.amount);
     let splitParticipants: any[] = [];
 
+    const paidByInput =
+      Array.isArray(payers) && payers.length > 0
+        ? payers
+            .map((p: any) => ({
+              userId: toStringId(p?.userId ?? p?.id ?? p),
+              amount: Number(p?.amount || 0),
+            }))
+            .filter((p: any) => Boolean(p.userId))
+        : toStringId(paidBy) || currentUserId;
+
+    if (Array.isArray(paidByInput)) {
+      const payerTotal = paidByInput.reduce(
+        (sum: number, p: { amount: number }) => sum + Number(p.amount || 0),
+        0
+      );
+      if (Math.abs(payerTotal - finalAmount) > 0.01) {
+        return NextResponse.json(
+          { error: `Payer amounts (${payerTotal}) must equal expense amount (${finalAmount})` },
+          { status: 400 }
+        );
+      }
+    }
+
     if (splitMethod && participants) {
-      switch (splitMethod) {
-        case "equally":
-          splitParticipants = splitEqually({
+      try {
+        splitParticipants = buildSplitParticipants(
+          {
             amount: finalAmount,
-            participants: participants.map((p: any) => toStringId(p.userId || p)),
-            paidBy: toStringId(paidBy),
-          });
-          break;
-        case "exact":
-          splitParticipants = splitByExactAmounts({
-            amount: finalAmount,
-            participants: participants.map((p: any) => ({
-              userId: toStringId(p.userId),
-              owedAmount: Number(p.exactAmount || p.owedAmount || 0),
-            })),
-            paidBy: toStringId(paidBy),
-          });
-          break;
-        case "percentage":
-          splitParticipants = splitByPercentages({
-            amount: finalAmount,
-            participants: participants.map((p: any) => ({
-              userId: toStringId(p.userId),
-              percentage: Number(p.percentage || 0),
-            })),
-            paidBy: toStringId(paidBy),
-          });
-          break;
-        case "shares":
-          splitParticipants = splitByShares({
-            amount: finalAmount,
-            participants: participants.map((p: any) => ({
-              userId: toStringId(p.userId),
-              shares: Number(p.shares || 1),
-            })),
-            paidBy: toStringId(paidBy),
-          });
-          break;
-        default:
-          return NextResponse.json({ error: "Invalid split method" }, { status: 400 });
+            participants,
+            splitMethod,
+            paidBy: Array.isArray(paidByInput) ? undefined : paidByInput,
+            payers: Array.isArray(paidByInput) ? paidByInput : undefined,
+          },
+          currentUserId
+        );
+      } catch (splitErr: any) {
+        return NextResponse.json(
+          { error: splitErr?.message || "Invalid split method" },
+          { status: 400 }
+        );
       }
 
       if (!validateSplit(splitParticipants, finalAmount)) {
         return NextResponse.json({ error: "Invalid split calculation" }, { status: 400 });
       }
     } else {
-      // Keep existing splits but update amounts/paidBy if they changed
-      splitParticipants = previousParticipants.map((p) => ({
+      // Keep existing owed shares; update paid amounts from payers / paidBy
+      const paidMap = resolvePaidAmounts(finalAmount, paidByInput);
+      const owedRows = previousParticipants.map((p) => ({
         userId: p.user_id,
-        owedAmount: p.amount_owed,
-        paidAmount: toStringId(paidBy) === p.user_id ? finalAmount : 0,
+        owedAmount: Number(p.amount_owed || 0),
+      }));
+      for (const payerId of paidMap.keys()) {
+        if (!owedRows.some((r) => r.userId === payerId)) {
+          owedRows.push({ userId: payerId, owedAmount: 0 });
+        }
+      }
+      splitParticipants = owedRows.map((row) => ({
+        userId: row.userId,
+        owedAmount: row.owedAmount,
+        paidAmount: paidMap.get(row.userId) || 0,
       }));
     }
 

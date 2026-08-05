@@ -77,6 +77,7 @@ interface NudgeItem {
   message: string;
   actionLabel?: string;
   actionHref?: string;
+  metadata?: Record<string, any>;
   state?: {
     dismissedAt?: string;
     snoozedUntil?: string;
@@ -835,7 +836,7 @@ export default function DashboardPage() {
                         <div className="flex items-center gap-3">
                           <div className="h-10 w-10 rounded-full bg-primary/20 flex items-center justify-center">
                             <span className="text-primary font-semibold">
-                              {friend.name.charAt(0).toUpperCase()}
+                              {friend.name?.charAt(0)?.toUpperCase() || "?"}
                             </span>
                           </div>
                           <div>
@@ -899,7 +900,7 @@ export default function DashboardPage() {
                       <div className="flex items-center gap-3">
                         <div className="h-10 w-10 rounded-full bg-primary/20 flex items-center justify-center">
                           <span className="text-primary font-semibold">
-                            {group.name.charAt(0).toUpperCase()}
+                            {group.name?.charAt(0)?.toUpperCase() || "?"}
                           </span>
                         </div>
                         <div>

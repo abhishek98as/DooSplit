@@ -5,8 +5,8 @@ import {
   getOrSetCacheJson,
 } from "@/lib/cache";
 import { requireUser } from "@/lib/auth/require-user";
-import { GroupMember, Expense, ExpenseParticipant, Settlement, User } from "@/lib/mongodb/models";
-import { round2, toNum, uniqueStrings, fetchDocsByIds } from "@/lib/mongodb/route-helpers";
+import { computeGroupMemberNetBalances } from "@/lib/data/balance-service";
+import { uniqueStrings } from "@/lib/mongodb/route-helpers";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +19,10 @@ interface SimplifiedTx {
   from: string;
   to: string;
   amount: number;
+}
+
+function round2(num: number): number {
+  return Math.round((num + Number.EPSILON) * 100) / 100;
 }
 
 function simplifyFromNet(netMap: Map<string, number>) {
@@ -78,10 +82,10 @@ export async function GET(
     }
     const userId = auth.user.id;
 
-    const membership = await GroupMember.findOne({
-      group_id: id,
-      user_id: userId,
-    }).lean();
+    const { getGroupMember, listGroupMembers } = await import(
+      "@/lib/dynamodb/entities/groups"
+    );
+    const membership = await getGroupMember(id, userId);
     if (!membership) {
       return NextResponse.json(
         { error: "You are not a member of this group" },
@@ -91,9 +95,9 @@ export async function GET(
 
     const cacheKey = buildUserScopedCacheKey("groups", userId, `debts:${id}`);
     const payload = await getOrSetCacheJson(cacheKey, CACHE_TTL.friends, async () => {
-      const groupMembers = await GroupMember.find({ group_id: id }).lean();
+      const groupMembers = await listGroupMembers(id);
       const memberIds = uniqueStrings(
-        groupMembers.map((doc: any) => String(doc.user_id || ""))
+        groupMembers.map((doc) => String(doc.user_id || ""))
       );
       if (memberIds.length === 0) {
         return {
@@ -105,44 +109,21 @@ export async function GET(
         };
       }
 
-      const netMap = new Map<string, number>(
-        memberIds.map((memberId) => [String(memberId), 0] as [string, number])
-      );
-
-      const expenses = await Expense.find({
-        group_id: id,
-        is_deleted: { $ne: true },
-      }).lean();
-      const expenseIds = expenses.map((e: any) => String(e._id));
-
-      if (expenseIds.length > 0) {
-        const participants = await ExpenseParticipant.find({
-          expense_id: { $in: expenseIds },
-        }).lean();
-
-        for (const participant of participants) {
-          const participantUserId = String(participant.user_id || "");
-          if (!netMap.has(participantUserId)) continue;
-          const delta = toNum(participant.amount_paid) - toNum(participant.amount_owed);
-          netMap.set(participantUserId, round2((netMap.get(participantUserId) || 0) + delta));
-        }
-      }
-
-      const settlements = await Settlement.find({ group_id: id }).lean();
-      for (const settlement of settlements) {
-        const from = String(settlement.from_user_id || "");
-        const to = String(settlement.to_user_id || "");
-        const amount = toNum(settlement.amount);
-        if (netMap.has(from)) {
-          netMap.set(from, round2((netMap.get(from) || 0) + amount));
-        }
-        if (netMap.has(to)) {
-          netMap.set(to, round2((netMap.get(to) || 0) - amount));
-        }
-      }
-
+      const netMap = await computeGroupMemberNetBalances(id);
       const simplified = simplifyFromNet(netMap);
-      const usersMap = await fetchDocsByIds(User, memberIds);
+
+      const { getUsersByIds } = await import("@/lib/dynamodb/entities/users");
+      const users = await getUsersByIds(memberIds);
+      const usersMap = new Map(
+        users.map((u) => [
+          u.id,
+          {
+            name: u.name || "Unknown",
+            email: u.email || "",
+            profilePicture: u.photo_url || null,
+          },
+        ])
+      );
 
       const transactions = simplified.transactions.map((tx) => {
         const fromUser = usersMap.get(tx.from);
@@ -152,13 +133,13 @@ export async function GET(
             id: tx.from,
             name: fromUser?.name || "Unknown",
             email: fromUser?.email || "",
-            profilePicture: fromUser?.profile_picture || null,
+            profilePicture: fromUser?.profilePicture || null,
           },
           to: {
             id: tx.to,
             name: toUser?.name || "Unknown",
             email: toUser?.email || "",
-            profilePicture: toUser?.profile_picture || null,
+            profilePicture: toUser?.profilePicture || null,
           },
           amount: tx.amount,
         };
@@ -182,7 +163,7 @@ export async function GET(
         "X-Doosplit-Route-Ms": String(Date.now() - routeStart),
       },
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Get simplified debts error:", error);
     return NextResponse.json(
       { error: "Failed to calculate simplified debts" },

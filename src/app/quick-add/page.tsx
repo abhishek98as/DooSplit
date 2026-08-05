@@ -272,7 +272,7 @@ export default function QuickAddPage() {
                         : "bg-neutral-200 dark:bg-dark-bg-tertiary text-neutral-600 dark:text-dark-text-secondary"
                     }`}
                   >
-                    {friend.friend.name.charAt(0).toUpperCase()}
+                    {friend.friend.name?.charAt(0)?.toUpperCase() || "?"}
                   </div>
                   <span
                     className={`text-[9px] font-medium truncate w-full text-center leading-tight ${
@@ -281,7 +281,7 @@ export default function QuickAddPage() {
                         : "text-neutral-500 dark:text-dark-text-secondary"
                     }`}
                   >
-                    {friend.friend.name.split(" ")[0]}
+                    {(friend.friend.name || friend.friend.email || "Unknown").split(" ")[0]}
                   </span>
                 </button>
               );
