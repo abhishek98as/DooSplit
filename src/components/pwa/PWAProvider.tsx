@@ -6,6 +6,7 @@ import getSyncService, { SyncResult } from '@/lib/sync-service';
 import { useSession } from "@/lib/auth/react-session";
 import {
   bindForegroundMessagingListener,
+  requestPushPermissionAndSync,
   syncFcmTokenWithServer,
 } from "@/lib/firebase-messaging";
 
@@ -150,12 +151,27 @@ export function PWAProvider({ children }: PWAProviderProps) {
       const notification = payload?.notification || {};
       const title = String(notification.title || payload?.data?.title || "DooSplit");
       const body = String(notification.body || payload?.data?.body || "");
+      const url = String(payload?.data?.url || "/dashboard");
 
-      if (Notification.permission === "granted" && document.visibilityState !== "visible") {
-        new Notification(title, {
-          body,
-          icon: "/api/pwa/icon?size=192",
-        });
+      window.dispatchEvent(new Event("doosplit:notifications-refresh"));
+
+      if (Notification.permission === "granted" && body) {
+        try {
+          const n = new Notification(title, {
+            body,
+            icon: "/api/pwa/icon?size=192",
+            data: { url },
+          });
+          n.onclick = () => {
+            window.focus();
+            if (url.startsWith("/")) {
+              window.location.href = url;
+            }
+            n.close();
+          };
+        } catch {
+          // Ignore Notification constructor failures in unsupported contexts
+        }
       }
     });
   }, []);
@@ -165,9 +181,37 @@ export function PWAProvider({ children }: PWAProviderProps) {
       return;
     }
 
-    if (Notification.permission === "granted") {
-      void syncFcmTokenWithServer(session.user.id);
+    if (typeof window === "undefined" || !("Notification" in window)) {
+      return;
     }
+
+    const userId = session.user.id;
+    const promptKey = `doosplit_push_prompted_${userId}`;
+
+    const ensurePush = async () => {
+      // Already granted → keep token fresh
+      if (Notification.permission === "granted") {
+        await syncFcmTokenWithServer(userId);
+        return;
+      }
+
+      // Denied → cannot force; user must re-enable in browser settings
+      if (Notification.permission === "denied") {
+        return;
+      }
+
+      // Default → force permission prompt once per user (browser may still block repeats)
+      if (localStorage.getItem(promptKey) === "1") {
+        return;
+      }
+
+      // Wait briefly so the page is interactive (better prompt acceptance)
+      await new Promise((r) => setTimeout(r, 1500));
+      localStorage.setItem(promptKey, "1");
+      await requestPushPermissionAndSync(userId);
+    };
+
+    void ensurePush();
   }, [status, session?.user?.id]);
 
   const syncInstallEnvironment = () => {

@@ -108,3 +108,20 @@ export async function deleteNotification(
     })
   );
 }
+
+/** Delete all notifications for a user (seen / clear all). */
+export async function deleteAllNotificationsForUser(userId: string): Promise<number> {
+  const { items } = await queryNotificationsForUser(userId, 200);
+  const client = getDynamoDB();
+  await Promise.all(
+    items.map((n) =>
+      client.send(
+        new DeleteCommand({
+          TableName: TABLE,
+          Key: { PK: PK.user(userId), SK: n.SK },
+        })
+      )
+    )
+  );
+  return items.length;
+}

@@ -27,7 +27,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: AI_NOT_CONFIGURED }, { status: 503 });
     }
 
-    const usage = await assertAiWeeklyAllowance(auth.user.id);
+    const usage = await assertAiWeeklyAllowance(auth.user.id, auth.user.email);
     if (usage.exhausted) {
       return NextResponse.json(weeklyLimitResponse(usage), { status: 429 });
     }
@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
       user: `Description: ${String(description).slice(0, 500)}`,
       maxTokens: 32,
     });
-    await recordAiTokenUsage(auth.user.id, totalTokens);
+    await recordAiTokenUsage(auth.user.id, totalTokens, auth.user.email);
 
     const allowed = new Set([
       "food",

@@ -5,9 +5,17 @@ import { TABLE } from "@/lib/dynamodb/tables";
 import { PK } from "@/lib/dynamodb/keys";
 
 /** Weekly AI token budget per user. */
-export const AI_WEEKLY_TOKEN_LIMIT = 10_000;
+export const AI_WEEKLY_TOKEN_LIMIT = 100_000;
 
 export const AI_WEEKLY_LIMIT_CODE = "AI_WEEKLY_LIMIT";
+
+/** Hardcoded emails with unlimited AI tokens (no weekly cap). */
+const AI_UNLIMITED_EMAILS = new Set(["abhishek98as@gmail.com"]);
+
+export function isAiUnlimitedEmail(email?: string | null): boolean {
+  if (!email) return false;
+  return AI_UNLIMITED_EMAILS.has(String(email).trim().toLowerCase());
+}
 
 function mondayUtc(d = new Date()): Date {
   const date = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
@@ -35,13 +43,48 @@ function weekEndIso(weekStart: Date): string {
 export interface AiUsageSnapshot {
   weekKey: string;
   tokensUsed: number;
-  limit: number;
-  remaining: number;
+  /** null when unlimited */
+  limit: number | null;
+  /** null when unlimited */
+  remaining: number | null;
   exhausted: boolean;
+  unlimited: boolean;
   resetsAt: string;
 }
 
-export async function getAiWeeklyUsage(userId: string): Promise<AiUsageSnapshot> {
+function snapshotFromUsed(
+  tokensUsed: number,
+  weekKey: string,
+  weekStart: Date,
+  email?: string | null
+): AiUsageSnapshot {
+  const unlimited = isAiUnlimitedEmail(email);
+  if (unlimited) {
+    return {
+      weekKey,
+      tokensUsed,
+      limit: null,
+      remaining: null,
+      exhausted: false,
+      unlimited: true,
+      resetsAt: weekEndIso(weekStart),
+    };
+  }
+  return {
+    weekKey,
+    tokensUsed,
+    limit: AI_WEEKLY_TOKEN_LIMIT,
+    remaining: Math.max(0, AI_WEEKLY_TOKEN_LIMIT - tokensUsed),
+    exhausted: tokensUsed >= AI_WEEKLY_TOKEN_LIMIT,
+    unlimited: false,
+    resetsAt: weekEndIso(weekStart),
+  };
+}
+
+export async function getAiWeeklyUsage(
+  userId: string,
+  email?: string | null
+): Promise<AiUsageSnapshot> {
   const weekKey = getAiWeekKey();
   const weekStart = mondayUtc();
   const sk = `AI_USAGE#${weekKey}`;
@@ -52,26 +95,22 @@ export async function getAiWeeklyUsage(userId: string): Promise<AiUsageSnapshot>
     })
   );
   const tokensUsed = Number((res.Item as any)?.tokens_used || 0);
-  return {
-    weekKey,
-    tokensUsed,
-    limit: AI_WEEKLY_TOKEN_LIMIT,
-    remaining: Math.max(0, AI_WEEKLY_TOKEN_LIMIT - tokensUsed),
-    exhausted: tokensUsed >= AI_WEEKLY_TOKEN_LIMIT,
-    resetsAt: weekEndIso(weekStart),
-  };
+  return snapshotFromUsed(tokensUsed, weekKey, weekStart, email);
 }
 
-/** Returns false if the user is already over the weekly limit. */
-export async function assertAiWeeklyAllowance(userId: string): Promise<AiUsageSnapshot> {
-  const usage = await getAiWeeklyUsage(userId);
-  return usage;
+/** Returns usage snapshot (check `.exhausted` before calling AI). */
+export async function assertAiWeeklyAllowance(
+  userId: string,
+  email?: string | null
+): Promise<AiUsageSnapshot> {
+  return getAiWeeklyUsage(userId, email);
 }
 
 /** Atomically add tokens consumed by an AI call. */
 export async function recordAiTokenUsage(
   userId: string,
-  tokens: number
+  tokens: number,
+  email?: string | null
 ): Promise<AiUsageSnapshot> {
   const add = Math.max(0, Math.floor(Number(tokens) || 0));
   const weekKey = getAiWeekKey();
@@ -80,7 +119,7 @@ export async function recordAiTokenUsage(
   const now = new Date().toISOString();
 
   if (add === 0) {
-    return getAiWeeklyUsage(userId);
+    return getAiWeeklyUsage(userId, email);
   }
 
   try {
@@ -101,43 +140,37 @@ export async function recordAiTokenUsage(
       })
     );
     const tokensUsed = Number((res.Attributes as any)?.tokens_used || add);
-    return {
-      weekKey,
-      tokensUsed,
-      limit: AI_WEEKLY_TOKEN_LIMIT,
-      remaining: Math.max(0, AI_WEEKLY_TOKEN_LIMIT - tokensUsed),
-      exhausted: tokensUsed >= AI_WEEKLY_TOKEN_LIMIT,
-      resetsAt: weekEndIso(weekStart),
-    };
+    return snapshotFromUsed(tokensUsed, weekKey, weekStart, email);
   } catch (err) {
-    // Item may need a Put first on some edge paths — fallback put then update
     console.warn("[ai/usage] update failed, putting:", err);
-    await getDynamoDB().send(
-      new PutCommand({
-        TableName: TABLE,
-        Item: {
-          PK: PK.user(userId),
-          SK: sk,
-          entityType: "ai_usage",
-          week_key: weekKey,
-          week_start: weekStart.toISOString(),
-          tokens_used: add,
-          created_at: now,
-          updated_at: now,
-        },
-        ConditionExpression: "attribute_not_exists(PK)",
-      })
-    ).catch(async () => {
-      await getDynamoDB().send(
-        new UpdateCommand({
+    await getDynamoDB()
+      .send(
+        new PutCommand({
           TableName: TABLE,
-          Key: { PK: PK.user(userId), SK: sk },
-          UpdateExpression: "ADD tokens_used :add SET updated_at = :now",
-          ExpressionAttributeValues: { ":add": add, ":now": now },
+          Item: {
+            PK: PK.user(userId),
+            SK: sk,
+            entityType: "ai_usage",
+            week_key: weekKey,
+            week_start: weekStart.toISOString(),
+            tokens_used: add,
+            created_at: now,
+            updated_at: now,
+          },
+          ConditionExpression: "attribute_not_exists(PK)",
         })
-      );
-    });
-    return getAiWeeklyUsage(userId);
+      )
+      .catch(async () => {
+        await getDynamoDB().send(
+          new UpdateCommand({
+            TableName: TABLE,
+            Key: { PK: PK.user(userId), SK: sk },
+            UpdateExpression: "ADD tokens_used :add SET updated_at = :now",
+            ExpressionAttributeValues: { ":add": add, ":now": now },
+          })
+        );
+      });
+    return getAiWeeklyUsage(userId, email);
   }
 }
 
@@ -145,7 +178,8 @@ export function weeklyLimitResponse(usage: AiUsageSnapshot) {
   return {
     error: "Weekly AI limit exhausted",
     code: AI_WEEKLY_LIMIT_CODE,
-    message: "You've used your 10,000 AI tokens for this week. Your limit resets next Monday.",
+    message:
+      "You've used your 100,000 AI tokens for this week. Your limit resets next Monday.",
     usage,
   };
 }

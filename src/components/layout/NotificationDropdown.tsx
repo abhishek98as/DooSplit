@@ -1,11 +1,10 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { useSession } from "@/lib/auth/react-session";
 import { Bell, X, Check, DollarSign, Users, Receipt, StickyNote, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { subscribeToUserRealtime } from "@/lib/realtime/client";
 
 interface Notification {
   _id: string;
@@ -18,6 +17,40 @@ interface Notification {
   createdAt: string;
 }
 
+function hrefForNotification(notification: Notification): string | null {
+  const data = notification.data || {};
+  switch (notification.type) {
+    case "expense_added":
+    case "expense_updated":
+    case "group_expense":
+    case "expense_comment_added":
+    case "expense_mentioned": {
+      const expenseId = String(data.expenseId || notification.relatedId || "");
+      return expenseId ? `/expenses?id=${encodeURIComponent(expenseId)}` : "/expenses";
+    }
+    case "expense_deleted":
+      return "/expenses";
+    case "settlement_recorded":
+    case "settlement_added":
+    case "payment_received":
+      return "/settlements";
+    case "friend_request":
+    case "friend_accepted":
+    case "friend_removed":
+      return "/friends";
+    case "group_invitation": {
+      const groupId = String(data.groupId || notification.relatedId || "");
+      return groupId ? `/groups/${encodeURIComponent(groupId)}` : "/groups";
+    }
+    case "note_share_invite":
+      return null; // handled via modal
+    case "note_share_accepted":
+      return "/notes";
+    default:
+      return "/dashboard";
+  }
+}
+
 export default function NotificationDropdown() {
   const { data: session, status } = useSession();
   const router = useRouter();
@@ -28,7 +61,22 @@ export default function NotificationDropdown() {
   const [inviteModal, setInviteModal] = useState<Notification | null>(null);
   const [responding, setResponding] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const fetchNotifications = useCallback(async (silent = false) => {
+    try {
+      if (!silent) setLoading(true);
+      const res = await fetch("/api/notifications", { credentials: "include" });
+      if (res.ok) {
+        const data = await res.json();
+        setNotifications(data.notifications || []);
+        setUnreadCount(data.unreadCount || 0);
+      }
+    } catch (error) {
+      console.error("Failed to fetch notifications:", error);
+    } finally {
+      if (!silent) setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (status !== "authenticated" || !session?.user?.id) {
@@ -37,40 +85,34 @@ export default function NotificationDropdown() {
 
     void fetchNotifications();
 
-    let isMounted = true;
-    let unsubscribe: (() => void) | null = null;
+    // Dynamo-backed notifications: poll since Firestore realtime does not receive them
+    const poll = window.setInterval(() => {
+      void fetchNotifications(true);
+    }, 20_000);
 
-    const scheduleRefresh = () => {
-      if (refreshTimerRef.current) {
-        clearTimeout(refreshTimerRef.current);
+    const onFocus = () => {
+      void fetchNotifications(true);
+    };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        void fetchNotifications(true);
       }
-      refreshTimerRef.current = setTimeout(() => {
-        if (isMounted) {
-          void fetchNotifications();
-        }
-      }, 350);
+    };
+    const onPushRefresh = () => {
+      void fetchNotifications(true);
     };
 
-    void subscribeToUserRealtime(session.user.id, () => {
-      scheduleRefresh();
-    }).then((cleanup) => {
-      if (!isMounted) {
-        cleanup();
-        return;
-      }
-      unsubscribe = cleanup;
-    });
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("doosplit:notifications-refresh", onPushRefresh);
 
     return () => {
-      isMounted = false;
-      if (refreshTimerRef.current) {
-        clearTimeout(refreshTimerRef.current);
-      }
-      if (unsubscribe) {
-        unsubscribe();
-      }
+      window.clearInterval(poll);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("doosplit:notifications-refresh", onPushRefresh);
     };
-  }, [session?.user?.id, status]);
+  }, [session?.user?.id, status, fetchNotifications]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -81,88 +123,63 @@ export default function NotificationDropdown() {
 
     if (isOpen) {
       document.addEventListener("mousedown", handleClickOutside);
+      void fetchNotifications(true);
     }
 
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
     };
-  }, [isOpen]);
+  }, [isOpen, fetchNotifications]);
 
-  const fetchNotifications = async () => {
-    try {
-      setLoading(true);
-      const res = await fetch("/api/notifications");
-      if (res.ok) {
-        const data = await res.json();
-        setNotifications(data.notifications);
-        setUnreadCount(data.unreadCount);
-      }
-    } catch (error) {
-      console.error("Failed to fetch notifications:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const markAsRead = async (id: string) => {
-    try {
-      const res = await fetch(`/api/notifications/${id}`, {
-        method: "PUT",
-      });
-      if (res.ok) {
-        setNotifications((prev) =>
-          prev.map((n) => (n._id === id ? { ...n, isRead: true } : n))
-        );
-        setUnreadCount((prev) => Math.max(0, prev - 1));
-      }
-    } catch (error) {
-      console.error("Failed to mark notification as read:", error);
-    }
-  };
-
-  const markAllAsRead = async () => {
-    try {
-      const res = await fetch("/api/notifications", {
-        method: "PUT",
-      });
-      if (res.ok) {
-        setNotifications((prev) =>
-          prev.map((n) => ({ ...n, isRead: true }))
-        );
-        setUnreadCount(0);
-      }
-    } catch (error) {
-      console.error("Failed to mark all as read:", error);
-    }
-  };
-
-  const deleteNotification = async (id: string) => {
+  /** Seen / click → delete from server and local list. */
+  const dismissNotification = async (id: string) => {
     try {
       const res = await fetch(`/api/notifications/${id}`, {
         method: "DELETE",
+        credentials: "include",
       });
       if (res.ok) {
-        setNotifications((prev) => prev.filter((n) => n._id !== id));
-        const notification = notifications.find((n) => n._id === id);
-        if (notification && !notification.isRead) {
-          setUnreadCount((prev) => Math.max(0, prev - 1));
-        }
+        setNotifications((prev) => {
+          const target = prev.find((n) => n._id === id);
+          if (target && !target.isRead) {
+            setUnreadCount((c) => Math.max(0, c - 1));
+          }
+          return prev.filter((n) => n._id !== id);
+        });
       }
     } catch (error) {
-      console.error("Failed to delete notification:", error);
+      console.error("Failed to dismiss notification:", error);
+    }
+  };
+
+  const clearAllNotifications = async () => {
+    try {
+      const res = await fetch("/api/notifications", {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (res.ok) {
+        setNotifications([]);
+        setUnreadCount(0);
+      }
+    } catch (error) {
+      console.error("Failed to clear notifications:", error);
     }
   };
 
   const handleNotificationClick = (notification: Notification) => {
-    if (!notification.isRead) void markAsRead(notification._id);
     if (notification.type === "note_share_invite") {
       setInviteModal(notification);
       setIsOpen(false);
       return;
     }
-    if (notification.type === "friend_request") {
-      setIsOpen(false);
-      router.push("/friends");
+
+    void dismissNotification(notification._id);
+    setIsOpen(false);
+
+    const href = hrefForNotification(notification);
+    if (href) {
+      router.push(href);
     }
   };
 
@@ -181,7 +198,7 @@ export default function NotificationDropdown() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || "Failed");
-      await deleteNotification(inviteModal._id);
+      await dismissNotification(inviteModal._id);
       setInviteModal(null);
       if (action === "accept") {
         router.push("/notes");
@@ -198,15 +215,20 @@ export default function NotificationDropdown() {
     switch (type) {
       case "expense_added":
       case "expense_updated":
+      case "expense_deleted":
+      case "group_expense":
       case "expense_mentioned":
       case "expense_comment_added":
       case "recurring_expense_created":
         return <Receipt className="h-4 w-4 text-primary" />;
       case "payment_received":
       case "settlement_added":
+      case "settlement_recorded":
         return <DollarSign className="h-4 w-4 text-success" />;
       case "friend_request":
       case "friend_accepted":
+      case "friend_removed":
+      case "group_invitation":
         return <Users className="h-4 w-4 text-info" />;
       case "note_share_invite":
       case "note_share_accepted":
@@ -245,6 +267,7 @@ export default function NotificationDropdown() {
         <button
           onClick={() => setIsOpen(!isOpen)}
           className="touch-target p-3 rounded-xl hover:bg-neutral-100 dark:hover:bg-dark-bg-tertiary transition-colors relative"
+          aria-label="Notifications"
         >
           <Bell className="h-5 w-5 text-neutral-700 dark:text-dark-text-secondary" />
           {unreadCount > 0 && (
@@ -260,18 +283,18 @@ export default function NotificationDropdown() {
               <h3 className="font-semibold text-neutral-900 dark:text-dark-text">
                 Notifications
               </h3>
-              {unreadCount > 0 && (
+              {notifications.length > 0 && (
                 <button
-                  onClick={markAllAsRead}
+                  onClick={() => void clearAllNotifications()}
                   className="text-xs text-primary hover:underline"
                 >
-                  Mark all read
+                  Clear all
                 </button>
               )}
             </div>
 
             <div className="overflow-y-auto flex-1">
-              {loading ? (
+              {loading && notifications.length === 0 ? (
                 <div className="flex items-center justify-center py-8">
                   <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-primary"></div>
                 </div>
@@ -287,20 +310,17 @@ export default function NotificationDropdown() {
                   {notifications.map((notification) => (
                     <div
                       key={notification._id}
-                      role={
-                        notification.type === "note_share_invite" ||
-                        notification.type === "friend_request"
-                          ? "button"
-                          : undefined
-                      }
+                      role="button"
+                      tabIndex={0}
                       onClick={() => handleNotificationClick(notification)}
-                      className={`p-4 border-b border-neutral-200 dark:border-dark-border hover:bg-neutral-50 dark:hover:bg-dark-bg-tertiary transition-colors ${
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          handleNotificationClick(notification);
+                        }
+                      }}
+                      className={`p-4 border-b border-neutral-200 dark:border-dark-border hover:bg-neutral-50 dark:hover:bg-dark-bg-tertiary transition-colors cursor-pointer ${
                         !notification.isRead ? "bg-primary/5 dark:bg-primary/10" : ""
-                      } ${
-                        notification.type === "note_share_invite" ||
-                        notification.type === "friend_request"
-                          ? "cursor-pointer"
-                          : ""
                       }`}
                     >
                       <div className="flex items-start gap-3">
@@ -316,17 +336,15 @@ export default function NotificationDropdown() {
                           </p>
                         </div>
                         <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                          {!notification.isRead && (
-                            <button
-                              onClick={() => markAsRead(notification._id)}
-                              className="p-1 hover:bg-neutral-200 dark:hover:bg-dark-bg rounded"
-                              title="Mark as read"
-                            >
-                              <Check className="h-3 w-3 text-neutral-600 dark:text-dark-text-secondary" />
-                            </button>
-                          )}
                           <button
-                            onClick={() => deleteNotification(notification._id)}
+                            onClick={() => void dismissNotification(notification._id)}
+                            className="p-1 hover:bg-neutral-200 dark:hover:bg-dark-bg rounded"
+                            title="Dismiss"
+                          >
+                            <Check className="h-3 w-3 text-neutral-600 dark:text-dark-text-secondary" />
+                          </button>
+                          <button
+                            onClick={() => void dismissNotification(notification._id)}
                             className="p-1 hover:bg-neutral-200 dark:hover:bg-dark-bg rounded"
                             title="Delete"
                           >
@@ -398,9 +416,12 @@ export default function NotificationDropdown() {
             <button
               type="button"
               className="mt-3 w-full text-xs text-neutral-500 hover:underline"
-              onClick={() => setInviteModal(null)}
+              onClick={() => {
+                void dismissNotification(inviteModal._id);
+                setInviteModal(null);
+              }}
             >
-              Close
+              Dismiss
             </button>
           </div>
         </div>

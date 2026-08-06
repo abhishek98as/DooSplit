@@ -13,6 +13,8 @@ export interface CreateNotificationParams {
   type: string;
   message: string;
   data?: Record<string, any>;
+  /** Skip FCM push (e.g. when caller already sent one). */
+  skipPush?: boolean;
 }
 
 function newId(): string {
@@ -23,8 +25,91 @@ function toId(value: IdLike): string {
   return typeof value === "string" ? value : value.toString();
 }
 
+function pushTitleForType(type: string): string {
+  switch (type) {
+    case "expense_added":
+    case "group_expense":
+      return "New expense";
+    case "expense_updated":
+      return "Expense updated";
+    case "expense_deleted":
+      return "Expense deleted";
+    case "settlement_recorded":
+    case "settlement_added":
+    case "payment_received":
+      return "Settlement";
+    case "friend_request":
+      return "Friend request";
+    case "friend_accepted":
+      return "Friend added";
+    case "friend_removed":
+      return "Friend removed";
+    case "group_invitation":
+      return "Group invitation";
+    case "note_share_invite":
+      return "Note invitation";
+    case "note_share_accepted":
+      return "Note share accepted";
+    default:
+      return "DooSplit";
+  }
+}
+
+function pushUrlForType(type: string, data: Record<string, any> = {}): string {
+  switch (type) {
+    case "expense_added":
+    case "expense_updated":
+    case "group_expense":
+    case "expense_comment_added":
+    case "expense_mentioned":
+      return data.expenseId ? `/expenses?id=${encodeURIComponent(String(data.expenseId))}` : "/expenses";
+    case "expense_deleted":
+      return "/expenses";
+    case "settlement_recorded":
+    case "settlement_added":
+    case "payment_received":
+      return "/settlements";
+    case "friend_request":
+    case "friend_accepted":
+    case "friend_removed":
+      return "/friends";
+    case "group_invitation":
+      return data.groupId ? `/groups/${encodeURIComponent(String(data.groupId))}` : "/groups";
+    case "note_share_invite":
+    case "note_share_accepted":
+      return "/notes";
+    default:
+      return "/dashboard";
+  }
+}
+
+async function sendPushForNotification(params: CreateNotificationParams): Promise<void> {
+  if (params.skipPush) return;
+  try {
+    const { sendPushNotificationToUsers } = await import(
+      "@/lib/firebase-messaging-admin"
+    );
+    const data = params.data || {};
+    const url = pushUrlForType(params.type, data);
+    await sendPushNotificationToUsers([toId(params.userId)], {
+      title: pushTitleForType(params.type),
+      body: params.message,
+      url,
+      data: {
+        type: params.type,
+        url,
+        ...Object.fromEntries(
+          Object.entries(data).map(([k, v]) => [k, v == null ? "" : String(v)])
+        ),
+      },
+    });
+  } catch (error) {
+    console.error("Failed to send push for notification:", error);
+  }
+}
+
 /**
- * Create a single notification for a user
+ * Create a single notification for a user (DynamoDB + FCM push).
  */
 export async function createNotification(params: CreateNotificationParams) {
   try {
@@ -46,6 +131,7 @@ export async function createNotification(params: CreateNotificationParams) {
       updated_at: now.toISOString(),
     };
     await getDynamoDB().send(new PutCommand({ TableName: TABLE, Item: notif }));
+    await sendPushForNotification(params);
     return notif;
   } catch (error) {
     console.error("Error creating notification:", error);
@@ -54,7 +140,7 @@ export async function createNotification(params: CreateNotificationParams) {
 }
 
 /**
- * Create notifications for multiple users
+ * Create notifications for multiple users (DynamoDB + FCM push each).
  */
 export async function createNotifications(notifications: CreateNotificationParams[]) {
   try {
@@ -97,13 +183,17 @@ export async function createNotifications(notifications: CreateNotificationParam
         })
       );
     }
+
+    await Promise.allSettled(
+      notifications.map((n) => sendPushForNotification(n))
+    );
+
     return items;
   } catch (error) {
     console.error("Error creating notifications:", error);
     throw error;
   }
 }
-
 
 /**
  * Notify participants about a new expense
@@ -203,7 +293,6 @@ export async function notifySettlement(
   currency: string,
   currentUserId: IdLike
 ) {
-  // Notify the other party (not the current user)
   const recipientId =
     currentUserId.toString() === fromUser.id.toString()
       ? toUser.id
@@ -266,7 +355,25 @@ export async function notifyFriendAccepted(
 }
 
 /**
- * Notify about a group invitation
+ * Notify the other user that friendship was removed
+ */
+export async function notifyFriendRemoved(
+  removedBy: { id: IdLike; name: string },
+  otherUserId: IdLike
+) {
+  await createNotification({
+    userId: otherUserId,
+    type: "friend_removed",
+    message: `${removedBy.name} removed you as a friend`,
+    data: {
+      friendId: toId(removedBy.id),
+      friendName: removedBy.name,
+    },
+  });
+}
+
+/**
+ * Notify about a group invitation / being added to a group
  */
 export async function notifyGroupInvitation(
   groupId: IdLike,
@@ -277,7 +384,7 @@ export async function notifyGroupInvitation(
   await createNotification({
     userId: invitedUserId,
     type: "group_invitation",
-    message: `${invitedBy.name} invited you to join "${groupName}"`,
+    message: `${invitedBy.name} added you to "${groupName}"`,
     data: {
       groupId: toId(groupId),
       groupName,

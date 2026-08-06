@@ -1,58 +1,115 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { WifiOff, AlertTriangle, X } from 'lucide-react';
+import { WifiOff, AlertTriangle, X, RefreshCw } from 'lucide-react';
 import { usePWA } from './PWAProvider';
 
 interface OfflineIndicatorProps {
-  position?: 'top' | 'bottom'; // Position of the indicator
-  autoHide?: boolean; // Auto-hide after some time when coming online
-  showControls?: boolean; // Show sync controls
+  position?: 'top' | 'bottom';
+  autoHide?: boolean;
+  showControls?: boolean;
 }
 
 export default function OfflineIndicator({
   position = 'top',
   autoHide = true,
-  showControls = false
+  showControls = true
 }: OfflineIndicatorProps) {
   const { isOffline, isOnline, pendingSyncItems, syncNow, isSyncing } = usePWA();
   const [isVisible, setIsVisible] = useState(false);
   const [wasOffline, setWasOffline] = useState(false);
+  const [conflictMessage, setConflictMessage] = useState<string | null>(null);
+  const [infoMessage, setInfoMessage] = useState<string | null>(null);
 
-  // Handle visibility based on online/offline state
+  useEffect(() => {
+    try {
+      const notice = sessionStorage.getItem("doosplit:last-save-notice");
+      if (notice) {
+        setInfoMessage(notice);
+        setIsVisible(true);
+        sessionStorage.removeItem("doosplit:last-save-notice");
+        if (autoHide) {
+          const timer = setTimeout(() => {
+            setIsVisible(false);
+            setInfoMessage(null);
+          }, 6000);
+          return () => clearTimeout(timer);
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }, [autoHide]);
+
   useEffect(() => {
     if (isOffline) {
       setIsVisible(true);
       setWasOffline(true);
     } else if (wasOffline && isOnline) {
-      // Just came back online
       setIsVisible(true);
-
-      // Auto-hide after 5 seconds if autoHide is enabled
-      if (autoHide) {
-        const timer = setTimeout(() => {
-          setIsVisible(false);
-        }, 5000);
-
+      if (autoHide && pendingSyncItems === 0) {
+        const timer = setTimeout(() => setIsVisible(false), 5000);
         return () => clearTimeout(timer);
       }
     }
-  }, [isOffline, isOnline, wasOffline, autoHide]);
+  }, [isOffline, isOnline, wasOffline, autoHide, pendingSyncItems]);
+
+  useEffect(() => {
+    if (pendingSyncItems > 0) {
+      setIsVisible(true);
+    }
+  }, [pendingSyncItems]);
+
+  useEffect(() => {
+    const onConflict = (event: Event) => {
+      const detail = (event as CustomEvent).detail || {};
+      setConflictMessage(
+        String(detail.message || "Sync issue — some changes need attention")
+      );
+      setInfoMessage(null);
+      setIsVisible(true);
+    };
+    window.addEventListener("doosplit:sync-conflict", onConflict as EventListener);
+    return () => {
+      window.removeEventListener("doosplit:sync-conflict", onConflict as EventListener);
+    };
+  }, []);
 
   const handleDismiss = () => {
     setIsVisible(false);
+    setConflictMessage(null);
+    setInfoMessage(null);
   };
 
   const handleSync = async () => {
     try {
-      await syncNow();
+      const result = await syncNow();
+      if (result.conflicts > 0 || result.failedItems > 0) {
+        setConflictMessage(
+          result.failedItems > 0
+            ? `${result.failedItems} item(s) failed to sync. Tap Sync to retry.`
+            : `${result.conflicts} conflict(s) detected. Open Conflicts to review.`
+        );
+        setIsVisible(true);
+      } else {
+        setConflictMessage(null);
+      }
     } catch (error) {
       console.error('Manual sync failed:', error);
+      setConflictMessage("Sync failed. Check your connection and try again.");
+      setIsVisible(true);
     }
   };
 
-  // Don't render if not visible or if online and no pending items
-  if (!isVisible || (!isOffline && !wasOffline)) {
+  const showPending = pendingSyncItems > 0;
+  const showBanner =
+    isVisible ||
+    isOffline ||
+    showPending ||
+    Boolean(conflictMessage) ||
+    Boolean(infoMessage);
+
+  if (!showBanner) {
     return null;
   }
 
@@ -60,57 +117,72 @@ export default function OfflineIndicator({
     ? 'top-0 left-0 right-0'
     : 'bottom-0 left-0 right-0';
 
-  const bgColor = isOffline
+  const isError = isOffline || Boolean(conflictMessage);
+  const bgColor = isError
     ? 'bg-error/10 border-error/20'
-    : 'bg-success/10 border-success/20';
+    : infoMessage
+      ? 'bg-primary/10 border-primary/20'
+      : showPending
+      ? 'bg-amber-50 border-amber-200 dark:bg-amber-950/30 dark:border-amber-800'
+      : 'bg-success/10 border-success/20';
 
-  const textColor = isOffline
+  const textColor = isError
     ? 'text-error'
-    : 'text-success';
-
-  const icon = isOffline ? (
-    <WifiOff className="h-5 w-5" />
-  ) : (
-    <AlertTriangle className="h-5 w-5" />
-  );
+    : infoMessage
+      ? 'text-primary'
+      : showPending
+      ? 'text-amber-800 dark:text-amber-200'
+      : 'text-success';
 
   return (
     <div className={`fixed ${positionClasses} z-50 border-b ${bgColor} backdrop-blur-sm`}>
       <div className="max-w-7xl mx-auto px-4 py-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className={`${textColor} flex items-center gap-2`}>
-              {icon}
-              <div className="flex flex-col sm:flex-row sm:items-center sm:gap-2">
-                <span className="font-medium">
-                  {isOffline ? 'You are offline' : 'Back online'}
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className={`${textColor} flex items-center gap-2 min-w-0`}>
+              {isOffline ? (
+                <WifiOff className="h-5 w-5 shrink-0" />
+              ) : (
+                <AlertTriangle className="h-5 w-5 shrink-0" />
+              )}
+              <div className="flex flex-col sm:flex-row sm:items-center sm:gap-2 min-w-0">
+                <span className="font-medium truncate">
+                  {conflictMessage
+                    ? "Sync issue"
+                    : infoMessage
+                      ? "Saved"
+                      : isOffline
+                      ? "You are offline"
+                      : showPending
+                        ? "Pending sync"
+                        : "Back online"}
                 </span>
-                {isOffline && (
-                  <span className="text-sm opacity-80">
-                    Changes will sync when reconnected
-                  </span>
-                )}
-                {!isOffline && pendingSyncItems > 0 && (
-                  <span className="text-sm opacity-80">
-                    {pendingSyncItems} item{pendingSyncItems !== 1 ? 's' : ''} syncing...
-                  </span>
-                )}
+                <span className="text-sm opacity-80 truncate">
+                  {conflictMessage ||
+                    infoMessage ||
+                    (isOffline
+                      ? "Changes will sync when reconnected"
+                      : showPending
+                        ? `${pendingSyncItems} item${pendingSyncItems !== 1 ? "s" : ""} waiting to sync`
+                        : "All caught up")}
+                </span>
               </div>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            {showControls && !isOffline && pendingSyncItems > 0 && (
+          <div className="flex items-center gap-2 shrink-0">
+            {showControls && (showPending || conflictMessage) && !isOffline && (
               <button
                 onClick={handleSync}
                 disabled={isSyncing}
-                className={`px-3 py-1 text-sm rounded-md transition-colors ${
+                className={`px-3 py-1 text-sm rounded-md transition-colors inline-flex items-center gap-1 ${
                   isSyncing
                     ? 'bg-neutral-200 text-neutral-500 cursor-not-allowed'
                     : 'bg-primary text-white hover:bg-primary/80'
                 }`}
               >
-                {isSyncing ? 'Syncing...' : 'Sync Now'}
+                <RefreshCw className={`h-3.5 w-3.5 ${isSyncing ? "animate-spin" : ""}`} />
+                {isSyncing ? 'Syncing…' : 'Sync'}
               </button>
             )}
 
@@ -124,58 +196,6 @@ export default function OfflineIndicator({
           </div>
         </div>
       </div>
-    </div>
-  );
-}
-
-// Toast-style indicator (alternative smaller version)
-export function OfflineToast() {
-  const { isOffline, isOnline } = usePWA();
-  const [show, setShow] = useState(false);
-
-  useEffect(() => {
-    if (isOffline) {
-      setShow(true);
-    } else if (isOnline) {
-      setShow(true);
-      // Hide after 3 seconds when coming back online
-      const timer = setTimeout(() => setShow(false), 3000);
-      return () => clearTimeout(timer);
-    }
-  }, [isOffline, isOnline]);
-
-  if (!show) return null;
-
-  return (
-    <div className="fixed top-4 right-4 z-50 animate-in slide-in-from-right-2">
-      <div className={`flex items-center gap-2 px-4 py-2 rounded-lg shadow-lg ${
-        isOffline
-          ? 'bg-error/10 border border-error/20 text-error'
-          : 'bg-success/10 border border-success/20 text-success'
-      }`}>
-        {isOffline ? (
-          <WifiOff className="h-4 w-4" />
-        ) : (
-          <div className="h-4 w-4 rounded-full bg-current animate-pulse" />
-        )}
-        <span className="text-sm font-medium">
-          {isOffline ? 'Offline' : 'Back online'}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-// Mini indicator for status bars
-export function MiniOfflineIndicator() {
-  const { isOffline } = usePWA();
-
-  if (!isOffline) return null;
-
-  return (
-    <div className="flex items-center gap-1 text-error text-xs">
-      <WifiOff className="h-3 w-3" />
-      <span>Offline</span>
     </div>
   );
 }

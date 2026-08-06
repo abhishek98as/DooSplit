@@ -160,7 +160,23 @@ export const AI_TOOL_DEFINITIONS: OpenAI.Chat.ChatCompletionTool[] = [
           currency: { type: "string" },
           groupId: { type: "string" },
           participantIds: { type: "array", items: { type: "string" } },
-          paidByUserId: { type: "string" },
+          paidByUserId: {
+            type: "string",
+            description: "Single payer user id (use payers for multi-payer)",
+          },
+          payers: {
+            type: "array",
+            description:
+              "Optional multi-payer shares. When set, amounts must sum to expense amount.",
+            items: {
+              type: "object",
+              properties: {
+                userId: { type: "string" },
+                amount: { type: "number" },
+              },
+              required: ["userId", "amount"],
+            },
+          },
           date: { type: "string", description: "ISO or YYYY-MM-DD" },
         },
         required: ["amount", "description", "participantIds"],
@@ -543,6 +559,14 @@ async function executeMutation(actor: AiActor, pending: PendingMutation) {
         : [userId];
       const uniqueParticipants = [...new Set([userId, ...participantIds])];
       const amount = Number(payload.amount);
+      const payersRaw = Array.isArray(payload.payers) ? payload.payers : null;
+      const payers =
+        payersRaw && payersRaw.length > 0
+          ? payersRaw.map((p: any) => ({
+              userId: String(p.userId || p.user_id || ""),
+              amount: Number(p.amount),
+            })).filter((p: { userId: string; amount: number }) => p.userId && Number.isFinite(p.amount) && p.amount > 0)
+          : null;
       const paidBy = String(payload.paidByUserId || userId);
       const result = await createExpenseFromPayload({
         actor,
@@ -553,7 +577,9 @@ async function executeMutation(actor: AiActor, pending: PendingMutation) {
           currency: String(payload.currency || "INR"),
           date: payload.date || new Date().toISOString(),
           groupId: payload.groupId || null,
-          paidBy,
+          ...(payers && payers.length > 0
+            ? { payers }
+            : { paidBy }),
           participants: uniqueParticipants,
           splitMethod: "equally",
         },

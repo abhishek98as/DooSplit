@@ -114,11 +114,6 @@ export default function SettingsPage() {
   const [showFriendsModal, setShowFriendsModal] = useState(false);
   const [removingFriendId, setRemovingFriendId] = useState<string | null>(null);
 
-  // Budget settings state
-  const [budgets, setBudgets] = useState<Record<string, { monthly: number; currency: string }>>({});
-  const [savingBudgets, setSavingBudgets] = useState(false);
-  const [budgetMsg, setBudgetMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
-
   const currencies = [
     { code: "INR", symbol: "₹", label: "Indian Rupee" },
     { code: "USD", symbol: "$", label: "US Dollar" },
@@ -132,20 +127,7 @@ export default function SettingsPage() {
   useEffect(() => {
     fetchProfile();
     fetchFriendsList();
-    fetchBudgets();
   }, []);
-
-  const fetchBudgets = async () => {
-    try {
-      const res = await fetch("/api/budgets");
-      if (res.ok) {
-        const data = await res.json();
-        setBudgets(data.budgets || {});
-      }
-    } catch (error) {
-      console.error("Failed to fetch budgets:", error);
-    }
-  };
 
   const fetchProfile = async () => {
     try {
@@ -352,28 +334,6 @@ export default function SettingsPage() {
     }
   };
 
-  const handleBudgetSave = async () => {
-    setSavingBudgets(true);
-    setBudgetMsg(null);
-    try {
-      const res = await fetch("/api/budgets", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ budgets }),
-      });
-      if (res.ok) {
-        setBudgetMsg({ type: "success", text: "Budgets saved successfully!" });
-      } else {
-        const data = await res.json();
-        setBudgetMsg({ type: "error", text: data.error || "Failed to save budgets" });
-      }
-    } catch (e) {
-      setBudgetMsg({ type: "error", text: "Something went wrong" });
-    } finally {
-      setSavingBudgets(false);
-    }
-  };
-
   return (
     <AppShell>
       <div className="p-4 md:p-8 space-y-6 max-w-2xl mx-auto">
@@ -548,80 +508,6 @@ export default function SettingsPage() {
             </div>
           </CardContent>
         </Card>
-
-        {/* Monthly Budgets */}
-        <div id="budgets">
-          <Card>
-            <CardHeader>
-              <CardTitle>Monthly Budgets (INR)</CardTitle>
-            </CardHeader>
-          <CardContent className="space-y-4">
-            <p className="text-xs text-neutral-400 dark:text-dark-text-secondary">
-              Set spending limits per category. Enter 0 to disable tracking for a category.
-            </p>
-            <div className="grid grid-cols-2 gap-3">
-              {[
-                { key: "food",          label: "Food 🍔" },
-                { key: "transport",     label: "Transport 🚗" },
-                { key: "shopping",      label: "Shopping 🛍️" },
-                { key: "entertainment", label: "Entertainment 🎬" },
-                { key: "utilities",     label: "Utilities 💡" },
-                { key: "healthcare",    label: "Healthcare 🏥" },
-                { key: "rent",          label: "Rent 🏠" },
-                { key: "travel",        label: "Travel ✈️" },
-                { key: "other",         label: "Other 📦" },
-              ].map(({ key, label }) => (
-                <div key={key} className="space-y-1">
-                  <label className="text-xs font-semibold text-neutral-600 dark:text-dark-text-secondary">
-                    {label}
-                  </label>
-                  <Input
-                    type="number"
-                    min="0"
-                    placeholder="No limit"
-                    value={budgets[key]?.monthly || ""}
-                    onChange={(e) => {
-                      const val = Math.max(0, Number(e.target.value));
-                      setBudgets((prev) => ({
-                        ...prev,
-                        [key]: { monthly: val, currency: "INR" },
-                      }));
-                    }}
-                  />
-                </div>
-              ))}
-            </div>
-            {budgetMsg && (
-              <div
-                className={`p-3 rounded-lg text-xs ${
-                  budgetMsg.type === "success"
-                    ? "bg-success/15 text-success"
-                    : "bg-error/15 text-error"
-                }`}
-              >
-                {budgetMsg.text}
-              </div>
-            )}
-            <Button
-              className="w-full flex items-center justify-center gap-2 mt-2"
-              onClick={handleBudgetSave}
-              disabled={savingBudgets}
-            >
-              {savingBudgets ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Saving...
-                </>
-              ) : (
-                <>
-                  <Save className="h-4 w-4" />
-                  Save Budgets
-                </>
-              )}
-            </Button>
-          </CardContent>
-        </Card>
-        </div>
 
         {/* Friends */}
         <Card>

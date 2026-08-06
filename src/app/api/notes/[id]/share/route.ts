@@ -132,24 +132,6 @@ export async function POST(
         invitedUserId: friendId,
       });
 
-      try {
-        const { sendPushNotificationToUsers } = await import(
-          "@/lib/firebase-messaging-admin"
-        );
-        await sendPushNotificationToUsers([friendId], {
-          title: "Note invitation",
-          body: `${inviterName} shared a note with you`,
-          url: "/notes",
-          data: {
-            type: "note_share_invite",
-            noteId,
-            invitedByName: inviterName,
-          },
-        });
-      } catch (pushErr) {
-        console.warn("Note share push failed:", pushErr);
-      }
-
       invited.push(friendId);
     }
 

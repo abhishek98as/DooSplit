@@ -174,9 +174,14 @@ export default function DashboardPage() {
     youOwe: 0,
     youAreOwed: 0,
   });
+  /** Distinguish true ₹0 from failed balance load — never treat errors as settled. */
+  const [balanceStatus, setBalanceStatus] = useState<"loading" | "ready" | "error">(
+    "loading"
+  );
   const [friends, setFriends] = useState<FriendDisplay[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
   const [groupBalances, setGroupBalances] = useState<GroupBalance[]>([]);
+  const [groupBalanceErrors, setGroupBalanceErrors] = useState<string[]>([]);
   const [monthlySpending, setMonthlySpending] = useState(0);
   const [activities, setActivities] = useState<ActivityItem[]>([]);
   const [nudges, setNudges] = useState<NudgeItem[]>([]);
@@ -224,6 +229,7 @@ export default function DashboardPage() {
 
       setSectionLoading("groupBalances", true);
       const offlineStore = getOfflineStore();
+      const failedGroupIds: string[] = [];
 
       try {
         const computed = await runWithConcurrency(
@@ -250,7 +256,7 @@ export default function DashboardPage() {
                 }
               }
 
-              if (groupBalance === 0) {
+              if (Math.abs(groupBalance) < 0.01) {
                 return null;
               }
 
@@ -262,6 +268,7 @@ export default function DashboardPage() {
               };
             } catch (groupError) {
               console.warn(`Failed to calculate balance for group ${group._id}:`, groupError);
+              failedGroupIds.push(group._id);
               return null;
             }
           }
@@ -273,6 +280,7 @@ export default function DashboardPage() {
           .slice(0, 3);
 
         setGroupBalances(topBalances);
+        setGroupBalanceErrors(failedGroupIds);
       } finally {
         setSectionLoading("groupBalances", false);
       }
@@ -282,8 +290,10 @@ export default function DashboardPage() {
 
   const fetchDashboardData = useCallback(async () => {
     setError(null);
+    setBalanceStatus("loading");
     setLoadingSections(INITIAL_SECTION_LOADING);
     setGroupBalances([]);
+    setGroupBalanceErrors([]);
 
     const offlineStore = getOfflineStore();
     const sectionErrors: string[] = [];
@@ -297,7 +307,7 @@ export default function DashboardPage() {
           name: item.friend?.name || item.name || "Unknown",
           email: item.friend?.email || item.email || "",
           profilePicture: item.friend?.profilePicture || item.profilePicture,
-          balance: item.balance || 0,
+          balance: Number(item.balance) || 0,
         }));
 
         setFriends(mappedFriends);
@@ -314,9 +324,12 @@ export default function DashboardPage() {
           youOwe,
           youAreOwed,
         });
+        setBalanceStatus("ready");
       } catch (taskError) {
         console.error("Failed to fetch friends for dashboard:", taskError);
         sectionErrors.push("friends");
+        // Do not leave the initial ₹0 state looking like "settled"
+        setBalanceStatus("error");
       } finally {
         setSectionLoading("friends", false);
       }
@@ -597,31 +610,58 @@ export default function DashboardPage() {
               aria-hidden
             />
             <p className="relative text-sm text-white/60 mb-1">Total Balance</p>
-            <p
-              className={`relative text-4xl font-bold font-mono tabular-nums ${
-                balance.total > 0
-                  ? "text-primary"
-                  : balance.total < 0
-                    ? "text-coral"
-                    : "text-white"
-              }`}
-            >
-              {formatCurrency(balance.total)}
-            </p>
-            <div className="relative grid grid-cols-2 gap-4 mt-6">
-              <div className="bg-white/10 rounded-xl p-4 backdrop-blur-sm">
-                <p className="text-xs text-white/60 mb-1">You Owe</p>
-                <p className="text-xl font-semibold font-mono text-coral tabular-nums">
-                  {formatCurrency(balance.youOwe)}
+            {balanceStatus === "error" ? (
+              <div className="relative mt-2 space-y-3">
+                <p className="text-xl font-semibold text-coral flex items-center gap-2">
+                  <AlertCircle className="h-5 w-5 shrink-0" />
+                  Balance unavailable
                 </p>
-              </div>
-              <div className="bg-white/10 rounded-xl p-4 backdrop-blur-sm">
-                <p className="text-xs text-white/60 mb-1">You&apos;re Owed</p>
-                <p className="text-xl font-semibold font-mono text-primary tabular-nums">
-                  {formatCurrency(balance.youAreOwed)}
+                <p className="text-sm text-white/60">
+                  Could not load balances. This is not a settled ₹0.
                 </p>
+                <Button
+                  variant="secondary"
+                  className="bg-white/10 text-white border-white/20 hover:bg-white/20"
+                  onClick={() => void fetchDashboardData()}
+                >
+                  Retry
+                </Button>
               </div>
-            </div>
+            ) : (
+              <>
+                <p
+                  className={`relative text-4xl font-bold font-mono tabular-nums ${
+                    balance.total > 0
+                      ? "text-primary"
+                      : balance.total < 0
+                        ? "text-coral"
+                        : "text-white"
+                  }`}
+                >
+                  {formatCurrency(balance.total)}
+                </p>
+                <div className="relative grid grid-cols-2 gap-4 mt-6">
+                  <div className="bg-white/10 rounded-xl p-4 backdrop-blur-sm">
+                    <p className="text-xs text-white/60 mb-1">You Owe</p>
+                    <p className="text-xl font-semibold font-mono text-coral tabular-nums">
+                      {formatCurrency(balance.youOwe)}
+                    </p>
+                  </div>
+                  <div className="bg-white/10 rounded-xl p-4 backdrop-blur-sm">
+                    <p className="text-xs text-white/60 mb-1">You&apos;re Owed</p>
+                    <p className="text-xl font-semibold font-mono text-primary tabular-nums">
+                      {formatCurrency(balance.youAreOwed)}
+                    </p>
+                  </div>
+                </div>
+              </>
+            )}
+            {groupBalanceErrors.length > 0 && balanceStatus === "ready" && (
+              <p className="relative mt-3 text-xs text-white/55">
+                {groupBalanceErrors.length} group balance
+                {groupBalanceErrors.length === 1 ? "" : "s"} could not be loaded.
+              </p>
+            )}
           </div>
         )}
 

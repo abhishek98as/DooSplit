@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef, Suspense } from "react";
 import { useSession } from "@/lib/auth/react-session";
 import { authFetch } from "@/lib/auth/client-session";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import AppShell from "@/components/layout/AppShell";
 import Card from "@/components/ui/Card";
 import Input from "@/components/ui/Input";
@@ -23,7 +23,8 @@ import {
   Check,
   Plus,
   Sparkles,
-  Loader2
+  Loader2,
+  UserRoundPlus
 } from "lucide-react";
 import { ImageType } from "@/lib/storage/image-types";
 import getOfflineStore from "@/lib/offline-store";
@@ -76,11 +77,13 @@ interface ItemizedItem {
 
 type SplitMethod = "equally" | "exact" | "percentage" | "shares" | "itemized";
 
-export default function AddExpensePage() {
+function AddExpensePageInner() {
   const { data: session } = useSession();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { trackEvent } = useAnalytics();
   const { trigger: triggerHaptic } = useHapticFeedback();
+  const groupPrefillDone = useRef(false);
 
   const [scanLoading, setScanLoading] = useState(false);
 
@@ -165,6 +168,8 @@ export default function AddExpensePage() {
   const [showSplitModal, setShowSplitModal] = useState(false);
   const [showGroupModal, setShowGroupModal] = useState(false);
   const [showCreateGroupModal, setShowCreateGroupModal] = useState(false);
+  const [guestName, setGuestName] = useState("");
+  const [addingGuest, setAddingGuest] = useState(false);
 
   // Data
   const [friends, setFriends] = useState<Friend[]>([]);
@@ -192,14 +197,6 @@ export default function AddExpensePage() {
     { value: "rent", label: "Rent", icon: "🏠" },
     { value: "other", label: "Other", icon: "📦" }
   ];
-
-  useEffect(() => {
-    if (session?.user?.id) {
-      setPaidBy(session.user.id);
-      fetchFriends();
-      fetchGroups();
-    }
-  }, [session]);
 
   useEffect(() => {
     if (amount) {
@@ -239,27 +236,164 @@ export default function AddExpensePage() {
     });
   }, [amount, selectedFriends, session?.user?.id]);
 
-  const fetchFriends = async () => {
+  const fetchFriends = async (): Promise<Friend[]> => {
     try {
       const res = await authFetch("/api/friends");
       if (res.ok) {
         const data = await res.json();
-        setFriends(data.friends || []);
+        const list = (data.friends || []) as Friend[];
+        setFriends(list);
+        return list;
       }
     } catch (error) {
       console.error("Failed to fetch friends:", error);
     }
+    return [];
   };
 
-  const fetchGroups = async () => {
+  const fetchGroups = async (): Promise<Group[]> => {
     try {
       const res = await authFetch("/api/groups");
       if (res.ok) {
         const data = await res.json();
-        setGroups(data.groups || []);
+        const list = (data.groups || []) as Group[];
+        setGroups(list);
+        return list;
       }
     } catch (error) {
       console.error("Failed to fetch groups:", error);
+    }
+    return [];
+  };
+
+  /** Select a group and auto-include its members (incl. guests) in the split. */
+  const applyGroupSelection = useCallback(
+    async (group: Group | null, friendList?: Friend[]) => {
+      setSelectedGroup(group);
+      if (!group || !session?.user?.id) {
+        return;
+      }
+
+      try {
+        const res = await authFetch(`/api/groups/${group._id}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const members: any[] = data.group?.members || [];
+        const available = friendList || friends;
+
+        const nextSelected: Friend[] = [];
+        for (const member of members) {
+          const memberId = String(member.userId?._id || member.userId?.id || "");
+          if (!memberId || memberId === session.user.id) continue;
+
+          const existing =
+            available.find((f) => String(f.friend?.id) === memberId) ||
+            available.find((f) => String(f.id) === memberId);
+
+          if (existing) {
+            nextSelected.push(existing);
+          } else {
+            // Group member not in friends list (edge) — synthesize a selectable row
+            nextSelected.push({
+              id: `group_member_${memberId}`,
+              friend: {
+                id: memberId,
+                name: member.userId?.name || "Member",
+                email: member.userId?.email || "",
+                profilePicture: member.userId?.profilePicture,
+                isDummy: Boolean(member.userId?.isDummy),
+              },
+              balance: 0,
+              friendshipDate: new Date().toISOString(),
+            });
+          }
+        }
+        setSelectedFriends(nextSelected);
+      } catch (error) {
+        console.error("Failed to load group members for expense:", error);
+      }
+    },
+    [friends, session?.user?.id]
+  );
+
+  useEffect(() => {
+    if (!session?.user?.id) return;
+
+    setPaidBy(session.user.id);
+    void (async () => {
+      const [friendList, groupList] = await Promise.all([
+        fetchFriends(),
+        fetchGroups(),
+      ]);
+
+      const groupIdParam = searchParams.get("groupId");
+      if (groupIdParam && !groupPrefillDone.current) {
+        groupPrefillDone.current = true;
+        const match =
+          groupList.find((g) => g._id === groupIdParam) ||
+          ({ _id: groupIdParam, name: "Group", memberCount: 0 } as Group);
+        await applyGroupSelection(match, friendList);
+      }
+    })();
+  }, [session?.user?.id, searchParams, applyGroupSelection]);
+
+  const addGuestFriend = async () => {
+    const name = guestName.trim();
+    if (!name) return;
+    setAddingGuest(true);
+    try {
+      const res = await authFetch("/api/friends", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dummyName: name }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to add guest");
+      }
+
+      const refreshed = await fetchFriends();
+      const createdId = String(
+        data.friendship?.friend?.id ||
+          data.friend?.id ||
+          data.friendId ||
+          data.user?.id ||
+          ""
+      );
+      const match =
+        refreshed.find((f) => String(f.friend?.id) === createdId) ||
+        refreshed.find(
+          (f) =>
+            f.friend?.isDummy &&
+            String(f.friend?.name || "").toLowerCase() === name.toLowerCase()
+        );
+
+      if (match) {
+        setSelectedFriends((prev) =>
+          prev.some((f) => f.friend.id === match.friend.id)
+            ? prev
+            : [...prev, match]
+        );
+      }
+
+      // If a group is selected, also add the guest to that group
+      if (selectedGroup?._id && match?.friend?.id) {
+        try {
+          await authFetch(`/api/groups/${selectedGroup._id}/members`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ userId: match.friend.id }),
+          });
+        } catch {
+          // Non-fatal — guest is still on the expense
+        }
+      }
+
+      setGuestName("");
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Failed to add guest");
+    } finally {
+      setAddingGuest(false);
     }
   };
 
@@ -555,8 +689,10 @@ export default function AddExpensePage() {
         splitMethod: splitMethod === "itemized" ? "exact" : splitMethod,
       };
 
-      // Try to create expense using offline store (will queue if offline)
-      const expense = await offlineStore.createExpense(expenseData);
+      // Optimistic create — returns immediately; syncs in background
+      const expense = await offlineStore.createExpense(expenseData, {
+        waitForServer: false,
+      });
 
       // Expense creation is considered successful if we get an expense object
       if (expense && expense._id) {
@@ -569,12 +705,27 @@ export default function AddExpensePage() {
           participant_count: participants.length,
           has_images: images.length > 0,
           has_group: !!selectedGroup,
-          category
+          category,
+          optimistic: Boolean((expense as any)._optimistic),
         });
 
-        // Step 2: Upload images if any (only if online). If upload fails, continue saving expense.
+        const isTemp = String(expense._id).startsWith("temp_");
+        if (isTemp || (expense as any)._pendingSync) {
+          try {
+            sessionStorage.setItem(
+              "doosplit:last-save-notice",
+              navigator.onLine
+                ? "Expense saved — syncing in background"
+                : "Saved offline — will sync when you reconnect"
+            );
+          } catch {
+            // ignore
+          }
+        }
+
+        // Step 2: Upload images only once we have a real server id
         let finalImageRefs: string[] = [];
-        if (images.length > 0 && navigator.onLine) {
+        if (images.length > 0 && navigator.onLine && !isTemp) {
           try {
             finalImageRefs = await uploadExpenseImages(expense._id, images);
             if (finalImageRefs.length > 0) {
@@ -589,6 +740,15 @@ export default function AddExpensePage() {
               error: uploadError instanceof Error ? uploadError.message : String(uploadError),
               context: 'expense_creation'
             });
+          }
+        } else if (images.length > 0 && isTemp) {
+          try {
+            sessionStorage.setItem(
+              "doosplit:last-save-notice",
+              "Expense saved. Re-open it after sync to attach the receipt photo."
+            );
+          } catch {
+            // ignore
           }
         }
 
@@ -632,24 +792,17 @@ export default function AddExpensePage() {
           // sessionStorage may be unavailable in some browsers
         }
 
-        // Bust the service worker's API cache for critical routes so the
-        // dashboard doesn't get a stale response on the next network fetch.
-        try {
-          const criticalRoutes = [
-            "/api/friends",
-            "/api/dashboard/activity",
-          ];
-          await Promise.allSettled(
-            criticalRoutes.map((route) =>
-              fetch(route, { cache: "reload" }).catch(() => {})
-            )
-          );
-        } catch {
-          // Non-critical — ignore
-        }
+        // Navigate quickly — don't wait on cache bust for optimistic feel
+        const dest = selectedGroup?._id
+          ? `/groups/${selectedGroup._id}`
+          : "/expenses";
+        router.push(dest);
 
-        // Navigate to dashboard
-        router.push("/dashboard");
+        // Best-effort cache refresh in background
+        void Promise.allSettled([
+          fetch("/api/friends", { cache: "reload" }).catch(() => {}),
+          fetch("/api/dashboard/activity", { cache: "reload" }).catch(() => {}),
+        ]);
       } else {
         triggerHaptic("error");
         alert("Failed to create expense");
@@ -928,7 +1081,7 @@ export default function AddExpensePage() {
                     const groupId = e.target.value;
                     if (groupId) {
                       const group = groups.find(g => g._id === groupId);
-                      setSelectedGroup(group || null);
+                      void applyGroupSelection(group || null);
                     } else {
                       setSelectedGroup(null);
                     }
@@ -952,14 +1105,16 @@ export default function AddExpensePage() {
                 </Button>
               </div>
               {selectedGroup && (
-                <div className="mt-2 flex items-center gap-2">
+                <div className="mt-2 flex items-center gap-2 flex-wrap">
                   <div className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">
                     <span className="mr-1">👥</span>
-                    Group: {selectedGroup.name}
+                    With you and: All of {selectedGroup.name}
                   </div>
                   <button
                     type="button"
-                    onClick={() => setSelectedGroup(null)}
+                    onClick={() => {
+                      setSelectedGroup(null);
+                    }}
                     className="text-xs text-neutral-500 hover:text-neutral-700"
                   >
                     Clear
@@ -991,6 +1146,11 @@ export default function AddExpensePage() {
                     {selectedFriends.map(friend => (
                       <span key={friend.id} className="inline-flex items-center gap-1 px-3 py-1 bg-primary/10 text-primary rounded-full text-sm">
                         {friend.friend.name}
+                        {friend.friend.isDummy && (
+                          <span className="text-[10px] font-bold uppercase text-amber-700 bg-amber-100 px-1 rounded">
+                            Guest
+                          </span>
+                        )}
                         <button
                           type="button"
                           onClick={() => toggleFriend(friend)}
@@ -1570,16 +1730,40 @@ export default function AddExpensePage() {
         <Modal
           isOpen={showFriendModal}
           onClose={() => setShowFriendModal(false)}
-          title="Select Friends"
+          title="Select people"
         >
-          <div className="space-y-2 max-h-96 overflow-y-auto">
+          <div className="mb-4 rounded-xl border border-neutral-200 dark:border-dark-border p-3 space-y-2">
+            <p className="text-xs font-semibold text-neutral-600 dark:text-dark-text-secondary flex items-center gap-1.5">
+              <UserRoundPlus className="h-3.5 w-3.5" />
+              Add guest (no account needed)
+            </p>
+            <div className="flex gap-2">
+              <Input
+                value={guestName}
+                onChange={(e) => setGuestName(e.target.value)}
+                placeholder="Name"
+                className="flex-1"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                disabled={addingGuest || !guestName.trim()}
+                onClick={() => void addGuestFriend()}
+              >
+                {addingGuest ? <Loader2 className="h-4 w-4 animate-spin" /> : "Add"}
+              </Button>
+            </div>
+          </div>
+
+          <div className="space-y-2 max-h-80 overflow-y-auto">
             {friends.length === 0 ? (
               <p className="text-center py-8 text-neutral-500">
-                No friends yet. Add friends first!
+                No friends yet. Add a guest above or invite friends.
               </p>
             ) : (
               friends.map(friend => {
                 const isSelected = selectedFriends.find(f => f.id === friend.id);
+                const isGuest = Boolean(friend.friend.isDummy);
                 return (
                   <button
                     key={friend.id}
@@ -1597,11 +1781,16 @@ export default function AddExpensePage() {
                         </span>
                       </div>
                       <div className="text-left">
-                        <p className="text-sm font-medium text-neutral-900 dark:text-dark-text">
+                        <p className="text-sm font-medium text-neutral-900 dark:text-dark-text flex items-center gap-2">
                           {friend.friend.name || friend.friend.email || "Unknown"}
+                          {isGuest && (
+                            <span className="text-[10px] font-bold uppercase text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded">
+                              Guest
+                            </span>
+                          )}
                         </p>
                         <p className="text-xs text-neutral-500">
-                          {friend.friend.email}
+                          {isGuest ? "Unregistered contact" : friend.friend.email}
                         </p>
                       </div>
                     </div>
@@ -1614,7 +1803,7 @@ export default function AddExpensePage() {
             )}
           </div>
 
-          <div className="border-t border-neutral-200 dark:border-dark-border pt-4">
+          <div className="border-t border-neutral-200 dark:border-dark-border pt-4 mt-3">
             <Button
               onClick={() => {
                 setShowFriendModal(false);
@@ -1657,7 +1846,7 @@ export default function AddExpensePage() {
                       key={group._id}
                       type="button"
                       onClick={() => {
-                        setSelectedGroup(group);
+                        void applyGroupSelection(group);
                         setShowGroupModal(false);
                       }}
                       className={`w-full flex items-center justify-between p-3 rounded-lg border-2 transition-all ${isSelected
@@ -1842,5 +2031,21 @@ export default function AddExpensePage() {
         </Modal>
       )}
     </AppShell>
+  );
+}
+
+export default function AddExpensePage() {
+  return (
+    <Suspense
+      fallback={
+        <AppShell>
+          <div className="p-6 flex items-center justify-center min-h-[40vh]">
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          </div>
+        </AppShell>
+      }
+    >
+      <AddExpensePageInner />
+    </Suspense>
   );
 }

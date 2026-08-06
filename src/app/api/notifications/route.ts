@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth/require-user";
-import { queryNotificationsForUser, countUnreadNotifications, markAllNotificationsRead } from "@/lib/dynamodb/entities/notifications";
+import {
+  queryNotificationsForUser,
+  countUnreadNotifications,
+  deleteAllNotificationsForUser,
+} from "@/lib/dynamodb/entities/notifications";
 
 export const dynamic = "force-dynamic";
 
@@ -33,19 +37,37 @@ export async function GET(request: NextRequest) {
   }
 }
 
+/** Clear all notifications (seen / dismiss all). */
 export async function PUT(request: NextRequest) {
   try {
     const routeStart = Date.now();
     const auth = await requireUser(request);
     if (auth.response || !auth.user) return auth.response as NextResponse;
 
-    await markAllNotificationsRead(auth.user.id);
+    const deleted = await deleteAllNotificationsForUser(auth.user.id);
     return NextResponse.json(
-      { message: "All notifications marked as read" },
+      { message: "All notifications cleared", deleted },
       { status: 200, headers: { "X-Doosplit-Route-Ms": String(Date.now() - routeStart) } }
     );
   } catch (error: any) {
-    console.error("Mark notifications read error:", error);
-    return NextResponse.json({ error: "Failed to update notifications" }, { status: 500 });
+    console.error("Clear notifications error:", error);
+    return NextResponse.json({ error: "Failed to clear notifications" }, { status: 500 });
+  }
+}
+
+export async function DELETE(request: NextRequest) {
+  try {
+    const routeStart = Date.now();
+    const auth = await requireUser(request);
+    if (auth.response || !auth.user) return auth.response as NextResponse;
+
+    const deleted = await deleteAllNotificationsForUser(auth.user.id);
+    return NextResponse.json(
+      { message: "All notifications cleared", deleted },
+      { status: 200, headers: { "X-Doosplit-Route-Ms": String(Date.now() - routeStart) } }
+    );
+  } catch (error: any) {
+    console.error("Clear notifications error:", error);
+    return NextResponse.json({ error: "Failed to clear notifications" }, { status: 500 });
   }
 }

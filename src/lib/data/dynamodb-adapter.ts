@@ -341,7 +341,7 @@ async function getGroups(input: GroupsReadInput): Promise<GroupsPayload> {
         // Do not invent ₹0 "settled" balances — surface the failure
         balancesError = true;
         balances = [];
-        myBalance = NaN;
+        myBalance = 0;
       }
 
       return {

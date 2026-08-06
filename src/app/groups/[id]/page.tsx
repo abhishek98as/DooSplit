@@ -43,6 +43,8 @@ interface Group {
   currency: string;
   members: GroupMember[];
   balances?: GroupBalance[];
+  myBalance?: number | null;
+  balancesError?: boolean;
   memberCount: number;
   userRole: string;
   notes?: string | null;
@@ -416,13 +418,30 @@ export default function GroupDetailPage() {
 
   const myBalance = useMemo(() => {
     if (!group || !session?.user?.id) {
-      return 0;
+      return null;
+    }
+    if (group.balancesError) {
+      return null;
+    }
+
+    if (typeof group.myBalance === "number" && Number.isFinite(group.myBalance)) {
+      return group.myBalance;
     }
 
     const match = (group.balances || []).find(
       (balance) => String(balance.userId) === String(session.user.id)
     );
-    return toNumber(match?.balance);
+    if (!match) {
+      // Empty balances with no error usually means true zero after successful compute
+      if (Array.isArray(group.balances) && group.balances.length === 0) {
+        return 0;
+      }
+      if (!group.balances) {
+        return null;
+      }
+      return 0;
+    }
+    return toNumber(match.balance);
   }, [group, session?.user?.id]);
 
   const membersList = useMemo(() => {
@@ -783,14 +802,18 @@ export default function GroupDetailPage() {
               <p className="text-xs text-white/65">Overall balance</p>
               <p
                 className={`mt-1 text-2xl font-bold font-mono ${
-                  myBalance < 0
+                  myBalance == null
+                    ? "text-amber-300"
+                    : myBalance < 0
                     ? "text-coral"
                     : myBalance > 0
                     ? "text-primary"
                     : "text-white"
                 }`}
               >
-                {myBalance < -0.01
+                {myBalance == null
+                  ? "Balance unavailable"
+                  : myBalance < -0.01
                   ? `You owe ${formatCurrency(Math.abs(myBalance), group.currency)}`
                   : myBalance > 0.01
                   ? `You are owed ${formatCurrency(myBalance, group.currency)}`
@@ -1051,33 +1074,73 @@ export default function GroupDetailPage() {
         Add expense
       </Link>
 
-      {/* Members Modal */}
+      {/* Members Modal — balances sheet */}
       <Modal
         isOpen={showMembersModal}
         onClose={() => setShowMembersModal(false)}
         title="Group Members"
       >
         <div className="space-y-3">
-          {(group?.members || []).map((member) => (
-            <div key={member._id} className="flex items-center justify-between p-2 rounded-xl hover:bg-neutral-50 dark:hover:bg-dark-bg-tertiary">
-              <div className="flex items-center gap-3">
-                <div className="h-10 w-10 rounded-full bg-primary/10 text-primary font-bold flex items-center justify-center">
-                  {(member.userId?.name || "U").charAt(0).toUpperCase()}
+          {(group?.members || []).map((member) => {
+            const memberId = String(member.userId?._id || "");
+            const bal =
+              (group?.balances || []).find((b) => String(b.userId) === memberId)
+                ?.balance ?? 0;
+            const isYou = memberId === String(session?.user?.id || "");
+            const isGuest = Boolean(member.userId?.isDummy);
+            return (
+              <div
+                key={member._id}
+                className="flex items-center justify-between p-2 rounded-xl hover:bg-neutral-50 dark:hover:bg-dark-bg-tertiary"
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="h-10 w-10 rounded-full bg-primary/10 text-primary font-bold flex items-center justify-center shrink-0">
+                    {(member.userId?.name || "U").charAt(0).toUpperCase()}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-neutral-900 dark:text-dark-text truncate">
+                      {isYou ? "You" : member.userId?.name || "Unregistered"}
+                      {isGuest && (
+                        <span className="ml-2 text-[10px] font-bold uppercase text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded">
+                          Guest
+                        </span>
+                      )}
+                    </p>
+                    <p className="text-xs text-neutral-500 dark:text-dark-text-secondary truncate">
+                      {isGuest
+                        ? "Unregistered contact"
+                        : member.userId?.email || "No email"}
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <p className="text-sm font-semibold text-neutral-900 dark:text-dark-text">
-                    {member.userId?.name || "Unregistered Member"}
-                  </p>
-                  <p className="text-xs text-neutral-500 dark:text-dark-text-secondary">
-                    {member.userId?.email || "No email invite"}
-                  </p>
+                <div className="text-right shrink-0">
+                  {group?.balancesError ? (
+                    <span className="text-xs text-amber-600">Unavailable</span>
+                  ) : Math.abs(bal) <= 0.01 ? (
+                    <span className="text-xs text-neutral-500">settled</span>
+                  ) : bal > 0 ? (
+                    <span className="text-xs font-semibold text-primary">
+                      gets back {formatCurrency(bal, group?.currency || "INR")}
+                    </span>
+                  ) : (
+                    <span className="text-xs font-semibold text-coral">
+                      owes {formatCurrency(Math.abs(bal), group?.currency || "INR")}
+                    </span>
+                  )}
                 </div>
               </div>
-              <span className="text-xs px-2 py-0.5 rounded bg-neutral-100 dark:bg-dark-bg-tertiary text-neutral-600 dark:text-dark-text-secondary font-medium">
-                {member.role}
-              </span>
-            </div>
-          ))}
+            );
+          })}
+          <Button
+            variant="outline"
+            className="w-full mt-2"
+            onClick={() => {
+              setShowMembersModal(false);
+              router.push(`/groups/${groupId}/settings`);
+            }}
+          >
+            Manage members
+          </Button>
         </div>
       </Modal>
 

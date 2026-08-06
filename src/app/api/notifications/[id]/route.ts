@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth/require-user";
-import { queryNotificationsForUser, markNotificationRead, deleteNotification } from "@/lib/dynamodb/entities/notifications";
+import { queryNotificationsForUser, deleteNotification } from "@/lib/dynamodb/entities/notifications";
 
 export const dynamic = "force-dynamic";
 
@@ -9,6 +9,7 @@ async function findNotification(userId: string, id: string) {
   return items.find((n: any) => n.id === id) ?? null;
 }
 
+/** Seen / acknowledge → delete the notification. */
 export async function PUT(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const routeStart = Date.now();
@@ -19,14 +20,14 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     const notif = await findNotification(auth.user.id, id);
     if (!notif) return NextResponse.json({ error: "Notification not found" }, { status: 404 });
 
-    await markNotificationRead(auth.user.id, notif.created_at, id);
+    await deleteNotification(auth.user.id, notif.created_at, id);
     return NextResponse.json(
-      { message: "Notification marked as read", notification: { ...notif, is_read: true } },
+      { message: "Notification dismissed" },
       { status: 200, headers: { "X-Doosplit-Route-Ms": String(Date.now() - routeStart) } }
     );
   } catch (error: any) {
-    console.error("Mark notification read error:", error);
-    return NextResponse.json({ error: "Failed to update notification" }, { status: 500 });
+    console.error("Dismiss notification error:", error);
+    return NextResponse.json({ error: "Failed to dismiss notification" }, { status: 500 });
   }
 }
 

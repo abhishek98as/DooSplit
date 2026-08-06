@@ -27,7 +27,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: AI_NOT_CONFIGURED }, { status: 503 });
     }
 
-    const usage = await assertAiWeeklyAllowance(auth.user.id);
+    const usage = await assertAiWeeklyAllowance(auth.user.id, auth.user.email);
     if (usage.exhausted) {
       return NextResponse.json(weeklyLimitResponse(usage), { status: 429 });
     }
@@ -78,7 +78,7 @@ Return ONLY valid JSON matching:
       jsonMode: true,
       maxTokens: 4096,
     });
-    await recordAiTokenUsage(auth.user.id, totalTokens);
+    await recordAiTokenUsage(auth.user.id, totalTokens, auth.user.email);
 
     const parsedData = JSON.parse(stripJsonFence(responseText));
     return NextResponse.json({ data: parsedData });

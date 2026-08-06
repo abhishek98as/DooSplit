@@ -2,7 +2,6 @@
 
 import React, { useRef, useEffect, useState, useCallback } from "react";
 import {
-  Sparkles,
   Send,
   Loader2,
   ArrowLeft,
@@ -12,6 +11,7 @@ import {
   Check,
   X,
   Gauge,
+  Infinity as InfinityIcon,
 } from "lucide-react";
 import Link from "next/link";
 import AppShell from "@/components/layout/AppShell";
@@ -19,6 +19,37 @@ import { authFetch } from "@/lib/auth/client-session";
 import Modal from "@/components/ui/Modal";
 import Button from "@/components/ui/Button";
 
+type WeeklyUsage = {
+  tokensUsed: number;
+  limit: number | null;
+  remaining: number | null;
+  unlimited?: boolean;
+  resetsAt?: string;
+  exhausted?: boolean;
+};
+
+function formatTokenCount(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return "—";
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 10_000) return `${Math.round(n / 1000)}k`;
+  if (n >= 1_000) return `${(n / 1000).toFixed(1)}k`;
+  return n.toLocaleString();
+}
+
+function formatRenewDate(iso?: string): string {
+  if (!iso) return "Next Monday";
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "Next Monday";
+    return d.toLocaleDateString("en-IN", {
+      weekday: "short",
+      day: "numeric",
+      month: "short",
+    });
+  } catch {
+    return "Next Monday";
+  }
+}
 const STARTER_PROMPTS = [
   "Summarize my recent spending by category.",
   "Who owes me the most right now?",
@@ -110,21 +141,38 @@ export default function AiChatPage() {
     pendingId: string;
   } | null>(null);
   const [weeklyLimitOpen, setWeeklyLimitOpen] = useState(false);
-  const [weeklyUsage, setWeeklyUsage] = useState<{
-    tokensUsed: number;
-    limit: number;
-    resetsAt?: string;
-  } | null>(null);
+  const [weeklyUsage, setWeeklyUsage] = useState<WeeklyUsage | null>(null);
+  const [usageLoading, setUsageLoading] = useState(true);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await authFetch("/api/ai/usage");
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled && data.usage) {
+          setWeeklyUsage(data.usage);
+        }
+      } catch {
+        /* ignore */
+      } finally {
+        if (!cancelled) setUsageLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages, isLoading, isThinking, liveThinking, options, pendingAction]);
-
   const runStream = useCallback(
     async (payload: Record<string, unknown>, assistantId: string) => {
       setIsLoading(true);
@@ -212,6 +260,8 @@ export default function AiChatPage() {
             } else if (event.type === "limit") {
               setWeeklyUsage(event.usage || null);
               setWeeklyLimitOpen(true);
+            } else if (event.type === "usage" && event.usage) {
+              setWeeklyUsage(event.usage);
             } else if (event.type === "done") {
               setIsThinking(false);
             }
@@ -289,27 +339,100 @@ export default function AiChatPage() {
     void sendUserMessage(option);
   };
 
+  const used = weeklyUsage?.tokensUsed ?? 0;
+  const limit = weeklyUsage?.limit;
+  const remaining = weeklyUsage?.remaining;
+  const unlimited = Boolean(weeklyUsage?.unlimited);
+  const limitReached = !unlimited && Boolean(weeklyUsage?.exhausted || (remaining != null && remaining <= 0));
+  const pctUsed =
+    !unlimited && limit && limit > 0
+      ? Math.min(100, Math.round((used / limit) * 100))
+      : 0;
+  const renewLabel = formatRenewDate(weeklyUsage?.resetsAt);
+
   return (
     <AppShell>
       <div className="flex flex-col h-[calc(100vh-120px)] md:h-[calc(100vh-64px)] mb-[-80px] md:mb-[-24px] w-full bg-neutral-50 dark:bg-dark-bg overflow-hidden transition-all">
-        <div className="flex items-center justify-between px-4 py-3 bg-white dark:bg-dark-bg-secondary border-b border-neutral-200 dark:border-dark-border">
-          <div className="flex items-center gap-3">
+        <div className="px-3 sm:px-4 py-3 bg-white dark:bg-dark-bg-secondary border-b border-neutral-200 dark:border-dark-border">
+          <div className="flex items-center gap-2 sm:gap-3">
             <Link
               href="/dashboard"
-              className="p-2 hover:bg-neutral-100 dark:hover:bg-dark-bg-tertiary rounded-xl md:hidden"
+              className="touch-target p-2.5 hover:bg-neutral-100 dark:hover:bg-dark-bg-tertiary rounded-xl md:hidden shrink-0"
+              aria-label="Back"
             >
               <ArrowLeft className="h-5 w-5 text-neutral-600 dark:text-dark-text-secondary" />
             </Link>
-            <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-primary to-coral text-white flex items-center justify-center shadow-md">
-              <Sparkles className="h-5 w-5" />
-            </div>
-            <div>
-              <h1 className="text-sm sm:text-base font-bold font-display text-neutral-900 dark:text-white leading-tight">
-                DooSplit AI Assistant
-              </h1>
-              <p className="text-[10px] sm:text-xs text-neutral-500 dark:text-dark-text-tertiary">
-                Chat with your expenses, groups, trips & notes
-              </p>
+
+            <div className="flex-1 min-w-0 rounded-2xl border border-neutral-200/80 dark:border-dark-border bg-gradient-to-br from-neutral-50 to-white dark:from-dark-bg-tertiary/60 dark:to-dark-bg-secondary px-3 sm:px-4 py-2.5 sm:py-3 shadow-xs">
+              {usageLoading && !weeklyUsage ? (
+                <div className="h-10 flex items-center gap-2 text-sm text-neutral-400">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Loading usage…
+                </div>
+              ) : unlimited ? (
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-primary/10 text-primary shrink-0">
+                      <InfinityIcon className="h-4 w-4" />
+                    </span>
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-neutral-900 dark:text-dark-text truncate">
+                        Unlimited AI access
+                      </p>
+                      <p className="text-caption text-neutral-500 dark:text-dark-text-tertiary">
+                        Used this week · {formatTokenCount(used)} tokens
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="flex items-end justify-between gap-3">
+                    <div className="grid grid-cols-3 gap-2 sm:gap-4 flex-1 min-w-0">
+                      <div className="min-w-0">
+                        <p className="text-[11px] sm:text-caption uppercase tracking-wide text-neutral-400 dark:text-dark-text-tertiary font-semibold">
+                          Remaining
+                        </p>
+                        <p className="text-base sm:text-lg font-bold font-display text-primary tabular-nums leading-tight truncate">
+                          {formatTokenCount(remaining)}
+                        </p>
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-[11px] sm:text-caption uppercase tracking-wide text-neutral-400 dark:text-dark-text-tertiary font-semibold">
+                          Used
+                        </p>
+                        <p className="text-base sm:text-lg font-bold font-display text-neutral-900 dark:text-dark-text tabular-nums leading-tight truncate">
+                          {formatTokenCount(used)}
+                          <span className="text-caption font-medium text-neutral-400">
+                            {" "}
+                            / {formatTokenCount(limit)}
+                          </span>
+                        </p>
+                      </div>
+                      <div className="min-w-0 text-right sm:text-left">
+                        <p className="text-[11px] sm:text-caption uppercase tracking-wide text-neutral-400 dark:text-dark-text-tertiary font-semibold">
+                          Renews
+                        </p>
+                        <p className="text-sm sm:text-base font-semibold text-neutral-800 dark:text-dark-text-secondary leading-tight truncate">
+                          {renewLabel}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="h-1.5 rounded-full bg-neutral-100 dark:bg-dark-bg overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all duration-500 ${
+                        pctUsed >= 90
+                          ? "bg-error"
+                          : pctUsed >= 70
+                            ? "bg-warning"
+                            : "bg-gradient-to-r from-primary to-coral"
+                      }`}
+                      style={{ width: `${pctUsed}%` }}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -471,12 +594,12 @@ export default function AiChatPage() {
               placeholder="Ask about expenses, groups, trips, notes…"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              disabled={isLoading || weeklyLimitOpen}
+              disabled={isLoading || weeklyLimitOpen || limitReached}
               className="flex-1 px-4 py-2.5 bg-neutral-100 dark:bg-dark-bg-tertiary border border-neutral-200 dark:border-dark-border rounded-xl text-xs sm:text-sm focus:outline-none focus:border-primary text-neutral-900 dark:text-white"
             />
             <button
               type="submit"
-              disabled={isLoading || weeklyLimitOpen || !input.trim()}
+              disabled={isLoading || weeklyLimitOpen || limitReached || !input.trim()}
               className="h-10 w-10 sm:h-11 sm:w-11 rounded-xl bg-primary hover:bg-primary-dark text-white flex items-center justify-center shadow-md active:scale-95 transition-all disabled:opacity-50 shrink-0"
             >
               {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
@@ -498,11 +621,11 @@ export default function AiChatPage() {
                 Weekly limit exhausted
               </p>
               <p className="mt-1 text-xs text-neutral-600 dark:text-dark-text-secondary leading-relaxed">
-                You&apos;ve used your 10,000 AI tokens for this week
+                You&apos;ve used your 100,000 AI tokens for this week
                 {weeklyUsage
-                  ? ` (${weeklyUsage.tokensUsed?.toLocaleString?.() || weeklyUsage.tokensUsed} / ${(weeklyUsage.limit || 10000).toLocaleString()})`
+                  ? ` (${weeklyUsage.tokensUsed?.toLocaleString?.() || weeklyUsage.tokensUsed} / ${(weeklyUsage.limit || 100000).toLocaleString()})`
                   : ""}
-                . Your limit resets next Monday.
+                . Your limit resets {formatRenewDate(weeklyUsage?.resetsAt)}.
               </p>
             </div>
           </div>

@@ -112,10 +112,16 @@ export default function GroupsPage() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [groupBalances, setGroupBalances] = useState<Record<string, number>>({});
+  /** Groups whose balance failed to compute — never treat as settled ₹0. */
+  const [groupBalanceErrors, setGroupBalanceErrors] = useState<Record<string, true>>(
+    {}
+  );
   const [groupMemberBalances, setGroupMemberBalances] = useState<Record<string, Array<{ userId: string; userName: string; balance: number }>>>({});
   const [nonGroupBalance, setNonGroupBalance] = useState(0);
+  const [nonGroupBalanceError, setNonGroupBalanceError] = useState(false);
   const [showSettledGroups, setShowSettledGroups] = useState(false);
   const [balanceLoading, setBalanceLoading] = useState(false);
+  const [balancesFailed, setBalancesFailed] = useState(false);
   const [isReady, setIsReady] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState<"name" | "balance" | "recent">("recent");
@@ -233,8 +239,11 @@ export default function GroupsPage() {
       if (status !== "authenticated" || !session?.user?.id) {
         if (active) {
           setGroupBalances({});
+          setGroupBalanceErrors({});
           setGroupMemberBalances({});
           setNonGroupBalance(0);
+          setNonGroupBalanceError(false);
+          setBalancesFailed(false);
         }
         return false;
       }
@@ -242,12 +251,15 @@ export default function GroupsPage() {
       // Prefer server balances (expenses − settlements) when API provides them
       const hasServerBalances = groups.some(
         (g) =>
+          g.balancesError ||
           (typeof g.myBalance === "number" && !Number.isNaN(g.myBalance)) ||
-          (g.balances && g.balances.length > 0)
+          (g.balances && g.balances.length > 0) ||
+          g.myBalance === null
       );
       if (!hasServerBalances) return false;
 
       const computed: Record<string, number> = {};
+      const errors: Record<string, true> = {};
       const computedMemberBalances: Record<
         string,
         Array<{ userId: string; userName: string; balance: number }>
@@ -255,16 +267,25 @@ export default function GroupsPage() {
 
       for (const group of groups) {
         if (group.balancesError) {
-          // Skip inventing ₹0 — leave unset so UI can fall back / show loading
+          errors[group._id] = true;
           continue;
         }
         if (typeof group.myBalance === "number" && !Number.isNaN(group.myBalance)) {
           computed[group._id] = group.myBalance;
-        } else if (group.balances) {
+        } else if (group.balances && group.balances.length > 0) {
           const mine = group.balances.find(
             (b) => b.userId === String(session.user.id)
           );
-          computed[group._id] = mine?.balance ?? 0;
+          if (mine) {
+            computed[group._id] = mine.balance;
+          } else {
+            // Member list present but current user missing — unknown, not settled
+            errors[group._id] = true;
+            continue;
+          }
+        } else if (group.myBalance === null) {
+          errors[group._id] = true;
+          continue;
         } else {
           computed[group._id] = 0;
         }
@@ -273,7 +294,9 @@ export default function GroupsPage() {
 
       if (active) {
         setGroupBalances(computed);
+        setGroupBalanceErrors(errors);
         setGroupMemberBalances(computedMemberBalances);
+        setBalancesFailed(Object.keys(errors).length === groups.length && groups.length > 0);
         setBalanceLoading(false);
       }
       return true;
@@ -325,6 +348,7 @@ export default function GroupsPage() {
           if (active) setNonGroupBalance(computedNonGroup);
         } catch (error) {
           console.error("Failed to compute non-group balance:", error);
+          if (active) setNonGroupBalanceError(true);
         }
         return;
       }
@@ -332,21 +356,26 @@ export default function GroupsPage() {
       if (status !== "authenticated" || !session?.user?.id || groups.length === 0) {
         if (active) {
           setGroupBalances({});
+          setGroupBalanceErrors({});
           setGroupMemberBalances({});
           setNonGroupBalance(0);
+          setNonGroupBalanceError(false);
         }
         return;
       }
 
       setBalanceLoading(true);
+      setBalancesFailed(false);
       const offlineStore = getOfflineStore();
       const computed: Record<string, number> = {};
+      const errors: Record<string, true> = {};
       const computedMemberBalances: Record<string, Array<{ userId: string; userName: string; balance: number }>> = {};
 
       try {
         // 1. Compute balances for each group
         await Promise.all(
           groups.map(async (group) => {
+            try {
             let totalForGroup = 0;
             const memberBalancesMap: Record<string, number> = {};
             
@@ -428,11 +457,17 @@ export default function GroupsPage() {
                 balance,
               };
             });
+            } catch (groupErr) {
+              console.error(`Failed to compute balance for group ${group._id}:`, groupErr);
+              errors[group._id] = true;
+            }
           })
         );
 
         // 2. Compute non-group expenses balance
         let computedNonGroup = 0;
+        let nonGroupFailed = false;
+        try {
         let nonGroupPage = 1;
         while (nonGroupPage <= 20) {
           const allExpenses = (await offlineStore.getExpenses({
@@ -460,14 +495,30 @@ export default function GroupsPage() {
           }
           nonGroupPage += 1;
         }
+        } catch (ngErr) {
+          console.error("Failed to compute non-group balance:", ngErr);
+          nonGroupFailed = true;
+        }
 
         if (active) {
           setGroupBalances(computed);
+          setGroupBalanceErrors(errors);
           setGroupMemberBalances(computedMemberBalances);
-          setNonGroupBalance(computedNonGroup);
+          setNonGroupBalance(nonGroupFailed ? 0 : computedNonGroup);
+          setNonGroupBalanceError(nonGroupFailed);
+          setBalancesFailed(
+            Object.keys(errors).length === groups.length && groups.length > 0
+          );
         }
       } catch (error) {
         console.error("Failed to compute balances:", error);
+        if (active) {
+          setBalancesFailed(true);
+          const allErrors: Record<string, true> = {};
+          for (const g of groups) allErrors[g._id] = true;
+          setGroupBalanceErrors(allErrors);
+          setGroupBalances({});
+        }
       } finally {
         if (active) {
           setBalanceLoading(false);
@@ -571,9 +622,22 @@ export default function GroupsPage() {
   const activeAndSettled = useMemo(() => {
     const active: Group[] = [];
     const settled: Group[] = [];
+    const unknown: Group[] = [];
 
     for (const group of filteredAndSortedGroups) {
-      const balance = groupBalances[group._id] ?? 0;
+      if (groupBalanceErrors[group._id]) {
+        unknown.push(group);
+        continue;
+      }
+      if (!(group._id in groupBalances)) {
+        if (balanceLoading) {
+          active.push(group);
+        } else {
+          unknown.push(group);
+        }
+        continue;
+      }
+      const balance = groupBalances[group._id];
       if (Math.abs(balance) <= 0.01) {
         settled.push(group);
       } else {
@@ -581,12 +645,21 @@ export default function GroupsPage() {
       }
     }
 
-    return { active, settled };
-  }, [groupBalances, filteredAndSortedGroups]);
+    return { active, settled, unknown };
+  }, [groupBalances, groupBalanceErrors, filteredAndSortedGroups, balanceLoading]);
 
   const overallBalance = useMemo(() => {
-    return groups.reduce((sum, group) => sum + (groupBalances[group._id] ?? 0), 0);
-  }, [groupBalances, groups]);
+    return groups.reduce((sum, group) => {
+      if (groupBalanceErrors[group._id]) return sum;
+      if (!(group._id in groupBalances)) return sum;
+      return sum + groupBalances[group._id];
+    }, 0);
+  }, [groupBalances, groupBalanceErrors, groups]);
+
+  const hasAnyBalanceError = useMemo(
+    () => Object.keys(groupBalanceErrors).length > 0 || balancesFailed,
+    [groupBalanceErrors, balancesFailed]
+  );
 
   const nonGroupFriendDebts = useMemo(() => {
     return friends
@@ -596,7 +669,8 @@ export default function GroupsPage() {
   }, [friends]);
 
   const renderGroupCard = (group: Group, index: number, muted = false) => {
-    const balance = groupBalances[group._id] ?? 0;
+    const hasError = Boolean(groupBalanceErrors[group._id]);
+    const balance = hasError ? 0 : (groupBalances[group._id] ?? 0);
     const simplified = groupSimplifiedDebts[group._id] || [];
     const myUserId = String(session?.user?.id || "");
     const userDebts = simplified.filter(
@@ -643,14 +717,18 @@ export default function GroupsPage() {
               </div>
               <p
                 className={`text-sm font-semibold ${
-                  balance < -0.01
+                  hasError
+                    ? "text-amber-600 dark:text-amber-400"
+                    : balance < -0.01
                     ? "text-coral"
                     : balance > 0.01
                     ? "text-primary"
                     : "text-neutral-500 dark:text-dark-text-secondary"
                 }`}
               >
-                {balance < -0.01
+                {hasError
+                  ? "Balance unavailable"
+                  : balance < -0.01
                   ? `you owe ${formatCurrency(Math.abs(balance), group.currency || "INR")}`
                   : balance > 0.01
                   ? `you are owed ${formatCurrency(balance, group.currency || "INR")}`
@@ -660,7 +738,7 @@ export default function GroupsPage() {
             <ChevronRight className="h-4 w-4 shrink-0 text-neutral-400" />
           </div>
 
-          {userDebts.length > 0 && (
+          {userDebts.length > 0 && !hasError && (
             <div className="border-t border-neutral-100 dark:border-dark-border/40 pt-2.5 space-y-1">
               {userDebts.slice(0, 2).map((tx, idx) => {
                 const isOwed = tx.to.id === myUserId;
@@ -677,6 +755,22 @@ export default function GroupsPage() {
                   </p>
                 );
               })}
+            </div>
+          )}
+
+          {!hasError && Math.abs(balance) > 0.01 && (
+            <div className="border-t border-neutral-100 dark:border-dark-border/40 pt-2.5">
+              <button
+                type="button"
+                className="text-xs font-bold px-3 py-1.5 rounded-lg bg-coral text-white hover:bg-coral/90 transition-colors"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  router.push(`/settlements?groupId=${group._id}`);
+                }}
+              >
+                Settle up
+              </button>
             </div>
           )}
         </div>
@@ -724,14 +818,18 @@ export default function GroupsPage() {
           <p className="text-sm text-white/65">Overall balance</p>
           <p
             className={`mt-1 text-2xl md:text-3xl font-bold font-mono ${
-              overallBalance < 0
+              balancesFailed
+                ? "text-coral"
+                : overallBalance < 0
                 ? "text-coral"
                 : overallBalance > 0
                 ? "text-primary"
                 : "text-white"
             }`}
           >
-            {overallBalance < -0.01
+            {balancesFailed
+              ? "Balance unavailable"
+              : overallBalance < -0.01
               ? `Overall, you owe ${formatCurrency(Math.abs(overallBalance))}`
               : overallBalance > 0.01
               ? `Overall, you are owed ${formatCurrency(overallBalance)}`
@@ -739,6 +837,16 @@ export default function GroupsPage() {
           </p>
           {balanceLoading && (
             <p className="mt-2 text-xs text-white/55">Refreshing group balances...</p>
+          )}
+          {!balanceLoading && hasAnyBalanceError && !balancesFailed && (
+            <p className="mt-2 text-xs text-amber-200/90">
+              Some group balances could not be loaded and are excluded from this total.
+            </p>
+          )}
+          {balancesFailed && (
+            <p className="mt-2 text-xs text-white/55">
+              Could not compute balances — this is not a settled ₹0.
+            </p>
           )}
         </div>
 
@@ -785,14 +893,18 @@ export default function GroupsPage() {
                 </p>
                 <p
                   className={`text-sm font-medium ${
-                    nonGroupBalance < 0
+                    nonGroupBalanceError
+                      ? "text-amber-600 dark:text-amber-400"
+                      : nonGroupBalance < 0
                       ? "text-coral"
                       : nonGroupBalance > 0
                       ? "text-primary"
                       : "text-neutral-500 dark:text-dark-text-secondary"
                   }`}
                 >
-                  {nonGroupBalance < -0.01
+                  {nonGroupBalanceError
+                    ? "Balance unavailable"
+                    : nonGroupBalance < -0.01
                     ? `you owe ${formatCurrency(Math.abs(nonGroupBalance))}`
                     : nonGroupBalance > 0.01
                     ? `you are owed ${formatCurrency(nonGroupBalance)}`
@@ -839,6 +951,17 @@ export default function GroupsPage() {
             <>
               {activeAndSettled.active.map((group, index) =>
                 renderGroupCard(group, index, false)
+              )}
+
+              {activeAndSettled.unknown.length > 0 && (
+                <div className="space-y-3 pt-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">
+                    Balance unavailable ({activeAndSettled.unknown.length})
+                  </p>
+                  {activeAndSettled.unknown.map((group, index) =>
+                    renderGroupCard(group, index, false)
+                  )}
+                </div>
               )}
 
               {activeAndSettled.settled.length > 0 && (

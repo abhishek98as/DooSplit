@@ -73,15 +73,23 @@ async function loadGroupPayload(
   );
 
   // Fail loudly — never pretend balances are settled (₹0) on compute errors
-  const balanceMap = await computeGroupMemberNetBalances(groupId);
-  const balances = memberIds.map((memberId) => {
-    const memberUser = usersMap.get(memberId);
-    return {
-      userId: memberId,
-      userName: memberUser?.name || "Unknown",
-      balance: round2(balanceMap.get(memberId) || 0),
-    };
-  });
+  let balances: Array<{ userId: string; userName: string; balance: number }> = [];
+  let balancesError = false;
+  try {
+    const balanceMap = await computeGroupMemberNetBalances(groupId);
+    balances = memberIds.map((memberId) => {
+      const memberUser = usersMap.get(memberId);
+      return {
+        userId: memberId,
+        userName: memberUser?.name || "Unknown",
+        balance: round2(balanceMap.get(memberId) || 0),
+      };
+    });
+  } catch (err) {
+    console.error(`Failed to compute balances for group ${groupId}:`, err);
+    balancesError = true;
+    balances = [];
+  }
 
   const creator = usersMap.get(String(group.created_by || ""));
   return {
@@ -107,6 +115,12 @@ async function loadGroupPayload(
       memberCount: payloadMembers.length,
       userRole: membership.role || "member",
       balances,
+      balancesError,
+      myBalance: balancesError
+        ? null
+        : round2(
+            balances.find((b) => b.userId === userId)?.balance ?? 0
+          ),
       settleUpDate: group.settle_up_date || null,
       notes: group.notes || "",
       simplifyDebts: group.simplify_debts !== false,

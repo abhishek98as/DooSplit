@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { invalidateUsersCache } from "@/lib/cache";
 import { requireUser } from "@/lib/auth/require-user";
 import { logActivity } from "@/lib/activity-logger";
+import { notifyGroupInvitation } from "@/lib/notificationService";
 import { toIso, uniqueStrings } from "@/lib/firestore/route-helpers";
 import { GROUP_MUTATION_CACHE_SCOPES } from "@/lib/cache-scopes";
 import {
@@ -133,6 +134,17 @@ export async function POST(
         memberName: newMemberName,
       },
     });
+
+    try {
+      await notifyGroupInvitation(
+        id,
+        groupName,
+        { id: currentUserId, name: auth.user.name || "Someone" },
+        newMemberId
+      );
+    } catch (notifError) {
+      console.error("Failed to send group invitation notification:", notifError);
+    }
 
     await invalidateUsersCache(affectedUserIds, [...GROUP_MUTATION_CACHE_SCOPES]);
 

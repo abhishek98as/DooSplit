@@ -397,7 +397,11 @@ class OfflineStore {
     }
   }
 
-  async createExpense(expenseData: Partial<ExpenseRecord>): Promise<ExpenseRecord> {
+  async createExpense(
+    expenseData: Partial<ExpenseRecord>,
+    options?: { waitForServer?: boolean }
+  ): Promise<ExpenseRecord & { _optimistic?: boolean; _pendingSync?: boolean }> {
+    const waitForServer = options?.waitForServer === true;
     const tempId = `temp_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 
     const expense: ExpenseRecord = {
@@ -421,56 +425,108 @@ class OfflineStore {
       updatedAt: new Date().toISOString(),
     };
 
-    if (this.isOnline()) {
-      try {
-        const response = await authFetch('/api/expenses', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(expenseData),
-        });
+    // Always write locally first so UI can navigate instantly
+    try {
+      await this.indexedDB.putExpense(expense);
+    } catch (dbError) {
+      this.logIndexedDbUnavailable("expense local create");
+      // Continue — online path may still succeed without IndexedDB
+    }
 
-        if (response.ok) {
-          const data = await response.json();
-          // Replace temp expense with real one (only if IndexedDB available)
-          try {
-            await this.indexedDB.delete('expenses', tempId);
-            await this.indexedDB.putExpense(data.expense);
-            await this.invalidateEntityCaches("expense");
-          } catch (dbError) {
-            this.logIndexedDbUnavailable("expense cache update");
-          }
-          return data.expense;
-        } else {
-          // Log and throw the actual server error instead of silently falling through
-          const errorData = await response.json().catch(() => ({ error: 'Unknown server error' }));
-          console.error('Expense creation failed on server:', errorData);
-          throw new Error(errorData.error || `Server error: ${response.status}`);
+    const persistServer = async (): Promise<ExpenseRecord | null> => {
+      const response = await authFetch('/api/expenses', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(expenseData),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        try {
+          await this.indexedDB.delete('expenses', tempId);
+          await this.indexedDB.putExpense(data.expense);
+          await this.invalidateEntityCaches("expense");
+        } catch {
+          this.logIndexedDbUnavailable("expense cache update");
         }
+        return data.expense as ExpenseRecord;
+      }
+
+      const errorData = await response.json().catch(() => ({ error: 'Unknown server error' }));
+      throw new Error(errorData.error || `Server error: ${response.status}`);
+    };
+
+    const enqueueOffline = async () => {
+      try {
+        await this.queueForSync({
+          type: 'create',
+          entityType: 'expense',
+          entityId: tempId,
+          data: expenseData,
+        });
+      } catch (dbError) {
+        this.logIndexedDbUnavailable("expense offline create");
+        throw new Error('Cannot create expense offline - IndexedDB not available');
+      }
+    };
+
+    if (this.isOnline() && waitForServer) {
+      try {
+        const serverExpense = await persistServer();
+        if (serverExpense) return serverExpense;
       } catch (error) {
-        // Only queue for sync on network errors, not server validation errors
-        if (error instanceof TypeError && error.message.includes('fetch')) {
+        if (error instanceof TypeError && String(error.message || "").includes('fetch')) {
           console.log('Network error, queuing for sync');
-        } else {
-          throw error;
+          await enqueueOffline();
+          return { ...expense, _optimistic: true, _pendingSync: true };
         }
+        throw error;
       }
     }
 
-    // Offline: store locally and queue for sync (only if IndexedDB available)
-    try {
-      await this.indexedDB.putExpense(expense);
-      await this.queueForSync({
-        type: 'create',
-        entityType: 'expense',
-        entityId: tempId,
-        data: expenseData,
-      });
-    } catch (dbError) {
-      this.logIndexedDbUnavailable("expense offline create");
-      throw new Error('Cannot create expense offline - IndexedDB not available');
+    if (this.isOnline() && !waitForServer) {
+      // Optimistic: return immediately; sync in background. Queue only if POST fails.
+      void persistServer()
+        .then((serverExpense) => {
+          if (!serverExpense) return;
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(
+              new CustomEvent('doosplit:expense-synced', {
+                detail: { tempId, expense: serverExpense },
+              })
+            );
+            window.dispatchEvent(new Event('doosplit:data-updated'));
+          }
+        })
+        .catch(async (err) => {
+          console.warn('Background expense sync failed; queuing:', err);
+          try {
+            await enqueueOffline();
+          } catch {
+            // already logged
+          }
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(
+              new CustomEvent('doosplit:sync-conflict', {
+                detail: {
+                  type: 'expense_create',
+                  message:
+                    err instanceof Error
+                      ? err.message
+                      : 'Expense saved offline — will retry when connected',
+                  tempId,
+                },
+              })
+            );
+          }
+        });
+
+      return { ...expense, _optimistic: true, _pendingSync: true };
     }
 
-    return expense;
+    // Offline
+    await enqueueOffline();
+    return { ...expense, _optimistic: true, _pendingSync: true };
   }
 
   async updateExpense(expenseId: string, updates: Partial<ExpenseRecord>): Promise<ExpenseRecord> {

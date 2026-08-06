@@ -124,19 +124,21 @@ export async function sendPushNotificationToUsers(
   const invalidEntries: Array<{ userId: string; token: string }> = [];
 
   for (const ownerChunk of chunk(tokenOwners, 500)) {
+    const dataPayload = normalizeData({
+      ...payload.data,
+      title: payload.title,
+      body: payload.body,
+      url: payload.url || "/dashboard",
+    });
+
+    // Data-only so the service worker is the single display path (avoids duplicate OS toasts).
     const message = {
-      notification: {
-        title: payload.title,
-        body: payload.body,
-      },
-      data: normalizeData(payload.data),
+      data: dataPayload,
       tokens: ownerChunk.map((owner) => owner.token),
       webpush: {
-        fcmOptions: payload.url ? { link: payload.url } : undefined,
-        notification: {
-          title: payload.title,
-          body: payload.body,
-          icon: "/api/pwa/icon?size=192",
+        fcmOptions: { link: payload.url || "/dashboard" },
+        headers: {
+          Urgency: "high",
         },
       },
     };

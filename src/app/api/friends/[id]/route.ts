@@ -6,7 +6,7 @@ import {
   invalidateUsersCache,
 } from "@/lib/cache";
 import { requireUser } from "@/lib/auth/require-user";
-import { notifyFriendAccepted } from "@/lib/notificationService";
+import { notifyFriendAccepted, notifyFriendRemoved } from "@/lib/notificationService";
 import { logFriendAdded, logFriendRemoved } from "@/lib/activity-logger";
 import {
   deleteBidirectionalFriendship,
@@ -395,6 +395,15 @@ export async function DELETE(
     friendName = f?.name || friendName;
 
     await deleteBidirectionalFriendship(currentUserId, friendId);
+
+    try {
+      await notifyFriendRemoved(
+        { id: currentUserId, name: currentUserName },
+        friendId
+      );
+    } catch (notifError) {
+      console.error("Failed to send friend removed notification:", notifError);
+    }
 
     void logFriendRemoved({
       userId: currentUserId,

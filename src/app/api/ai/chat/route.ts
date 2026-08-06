@@ -50,7 +50,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const usage = await assertAiWeeklyAllowance(userId);
+    const usage = await assertAiWeeklyAllowance(userId, auth.user.email);
     if (usage.exhausted) {
       return NextResponse.json(weeklyLimitResponse(usage), { status: 429 });
     }
@@ -147,7 +147,7 @@ export async function POST(request: NextRequest) {
 
           while (steps < maxSteps) {
             steps += 1;
-            const midUsage = await assertAiWeeklyAllowance(userId);
+            const midUsage = await assertAiWeeklyAllowance(userId, auth.user.email);
             if (midUsage.exhausted) {
               send({
                 type: "limit",
@@ -279,7 +279,7 @@ export async function POST(request: NextRequest) {
           }
 
           if (sessionTokens > 0) {
-            const finalUsage = await recordAiTokenUsage(userId, sessionTokens);
+            const finalUsage = await recordAiTokenUsage(userId, sessionTokens, auth.user.email);
             send({ type: "usage", usage: finalUsage });
             if (finalUsage.exhausted) {
               send({

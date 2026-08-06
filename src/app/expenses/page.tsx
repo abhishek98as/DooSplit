@@ -604,21 +604,52 @@ export default function ExpensesPage() {
     const userParticipant = expense.participants?.find(
       (p) => p.userId?._id === session?.user?.id
     );
-    
-    const isPayer = expense.createdBy?._id === session?.user?.id;
+
+    const payers = (expense.participants || []).filter(
+      (p) => Number(p.paidAmount || 0) > 0.009
+    );
     const totalPaid = userParticipant?.paidAmount || 0;
     const totalOwed = userParticipant?.owedAmount || 0;
     const balance = totalPaid - totalOwed;
 
-    if (balance > 0) {
-      return { text: `you lent ${formatCurrency(balance, expense.currency)}`, color: "text-green-600 dark:text-green-400" };
-    } else if (balance < 0) {
-      return { text: `you borrowed ${formatCurrency(Math.abs(balance), expense.currency)}`, color: "text-red-600 dark:text-red-400" };
-    } else if (isPayer) {
-      return { text: "you paid and split equally", color: "text-gray-600 dark:text-gray-400" };
-    } else {
-      return { text: "split equally", color: "text-gray-600 dark:text-gray-400" };
+    let payerLabel = "";
+    if (payers.length > 1) {
+      const names = payers
+        .map((p) => {
+          if (p.userId?._id === session?.user?.id) return "you";
+          return p.userId?.name || "Someone";
+        })
+        .slice(0, 3);
+      const extra = payers.length > 3 ? ` +${payers.length - 3}` : "";
+      payerLabel = `paid by ${names.join(", ")}${extra}`;
+    } else if (payers.length === 1) {
+      const only = payers[0];
+      payerLabel =
+        only.userId?._id === session?.user?.id
+          ? "you paid"
+          : `${only.userId?.name || "Someone"} paid`;
     }
+
+    if (balance > 0.01) {
+      return {
+        text: payerLabel
+          ? `${payerLabel} · you lent ${formatCurrency(balance, expense.currency)}`
+          : `you lent ${formatCurrency(balance, expense.currency)}`,
+        color: "text-green-600 dark:text-green-400",
+      };
+    }
+    if (balance < -0.01) {
+      return {
+        text: payerLabel
+          ? `${payerLabel} · you borrowed ${formatCurrency(Math.abs(balance), expense.currency)}`
+          : `you borrowed ${formatCurrency(Math.abs(balance), expense.currency)}`,
+        color: "text-red-600 dark:text-red-400",
+      };
+    }
+    if (payerLabel) {
+      return { text: payerLabel, color: "text-gray-600 dark:text-gray-400" };
+    }
+    return { text: "split equally", color: "text-gray-600 dark:text-gray-400" };
   };
 
   const filteredExpenses = (Array.isArray(expenses) ? expenses : []).filter((expense) => {

@@ -1,8 +1,8 @@
 // Enhanced Service Worker for DooSplit PWA
-const CACHE_NAME = 'doosplit-v6';
-const STATIC_CACHE = 'doosplit-static-v6';
-const API_CACHE = 'doosplit-api-v6';
-const IMAGE_CACHE = 'doosplit-images-v6';
+const CACHE_NAME = 'doosplit-v7';
+const STATIC_CACHE = 'doosplit-static-v7';
+const API_CACHE = 'doosplit-api-v7';
+const IMAGE_CACHE = 'doosplit-images-v7';
 
 // Cache strategies
 const CACHE_STRATEGIES = {
@@ -294,20 +294,36 @@ self.addEventListener('push', (event) => {
     }
   }
 
-  const notificationPayload = data.notification || data.data || data;
-  const title = notificationPayload.title || data.title || 'DooSplit';
-  const body = notificationPayload.body || data.body || 'You have a new notification';
-  const targetUrl = notificationPayload.url || data.url || '/dashboard';
+  const notificationPayload = data.notification || {};
+  const dataPayload = data.data || data;
+  const title =
+    notificationPayload.title ||
+    dataPayload.title ||
+    data.title ||
+    'DooSplit';
+  const body =
+    notificationPayload.body ||
+    dataPayload.body ||
+    data.body ||
+    'You have a new notification';
+  const targetUrl =
+    dataPayload.url ||
+    notificationPayload.url ||
+    data.url ||
+    '/dashboard';
 
   const options = {
     body,
     icon: '/api/pwa/icon?size=192',
     badge: '/api/pwa/icon?size=96',
     vibrate: [100, 50, 100],
+    tag: dataPayload.type || 'doosplit',
+    renotify: true,
     data: {
       dateOfArrival: Date.now(),
       primaryKey: notificationPayload.primaryKey || 1,
-      url: targetUrl
+      url: targetUrl,
+      type: dataPayload.type || ''
     },
     actions: [
       {
@@ -323,10 +339,7 @@ self.addEventListener('push', (event) => {
   };
 
   event.waitUntil(
-    self.registration.showNotification(
-      title,
-      options
-    )
+    self.registration.showNotification(title, options)
   );
 });
 
@@ -340,22 +353,27 @@ self.addEventListener('notificationclick', (event) => {
     return;
   }
 
-  const urlToOpen = event.notification.data?.url || '/dashboard';
+  const rawUrl = event.notification.data?.url || '/dashboard';
+  const urlToOpen = rawUrl.startsWith('http')
+    ? rawUrl
+    : new URL(rawUrl, self.location.origin).href;
 
   event.waitUntil(
-    clients.matchAll({ type: 'window', includeUncontrolled: true })
-      .then((windowClients) => {
-        // Check if there's already a window/tab open with the target URL
-        for (let client of windowClients) {
-          if (client.url === urlToOpen && 'focus' in client) {
-            return client.focus();
-          }
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
+      for (const client of windowClients) {
+        if ('focus' in client) {
+          return client.focus().then((focused) => {
+            if (focused && 'navigate' in focused) {
+              return focused.navigate(urlToOpen);
+            }
+            return focused;
+          });
         }
-        // If no suitable window is found, open a new one
-        if (clients.openWindow) {
-          return clients.openWindow(urlToOpen);
-        }
-      })
+      }
+      if (clients.openWindow) {
+        return clients.openWindow(urlToOpen);
+      }
+    })
   );
 });
 
