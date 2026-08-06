@@ -546,7 +546,7 @@ export default function DashboardPage() {
             <p className="text-sm">{error}</p>
             <Button
               variant="secondary"
-              className="ml-auto !px-3 !py-1 text-xs"
+              className="ml-auto"
               onClick={() => {
                 void fetchDashboardData();
               }}
@@ -770,7 +770,7 @@ export default function DashboardPage() {
                                 console.error("Reminder send failed:", e);
                               }
                             }}
-                            className="text-xs font-semibold bg-primary text-white px-2.5 py-1 rounded-lg hover:bg-primary-dark transition-colors"
+                            className="text-sm font-semibold bg-primary text-white min-h-10 px-3.5 py-2 rounded-xl hover:bg-primary-dark transition-colors"
                           >
                             🔔 Send Reminder
                           </button>

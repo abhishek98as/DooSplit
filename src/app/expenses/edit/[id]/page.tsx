@@ -646,7 +646,7 @@ export default function EditExpensePage() {
                   <button
                     type="button"
                     onClick={() => setPayerMode("single")}
-                    className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all ${
+                    className={`min-h-10 px-3.5 py-2 text-sm font-medium rounded-xl transition-all ${
                       payerMode === "single"
                         ? "bg-primary text-white"
                         : "text-neutral-600 dark:text-dark-text-secondary"
@@ -663,7 +663,7 @@ export default function EditExpensePage() {
                         setPayerAmounts({ [paidBy]: total.toFixed(2) });
                       }
                     }}
-                    className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all ${
+                    className={`min-h-10 px-3.5 py-2 text-sm font-medium rounded-xl transition-all ${
                       payerMode === "multiple"
                         ? "bg-primary text-white"
                         : "text-neutral-600 dark:text-dark-text-secondary"
@@ -809,7 +809,7 @@ export default function EditExpensePage() {
                       key={candidate.id}
                       type="button"
                       onClick={() => appendMentionToComment(candidate.name)}
-                      className="px-2 py-1 text-xs rounded-full border border-neutral-200 dark:border-dark-border text-neutral-700 dark:text-dark-text hover:border-primary hover:text-primary"
+                      className="min-h-10 px-3.5 py-2 text-sm rounded-full border border-neutral-200 dark:border-dark-border text-neutral-700 dark:text-dark-text hover:border-primary hover:text-primary"
                     >
                       @{candidate.name.replace(/\s+/g, "")}
                     </button>

@@ -815,14 +815,16 @@ export default function FriendsPage() {
                       <Button
                         onClick={() => handleRequest(request.id, "accept")}
                         variant="primary"
-                        className="!px-3 !py-1"
+                        size="sm"
+                        aria-label="Accept request"
                       >
                         <Check className="h-4 w-4" />
                       </Button>
                       <Button
                         onClick={() => handleRequest(request.id, "reject")}
                         variant="destructive"
-                        className="!px-3 !py-1"
+                        size="sm"
+                        aria-label="Reject request"
                       >
                         <X className="h-4 w-4" />
                       </Button>
@@ -871,7 +873,7 @@ export default function FriendsPage() {
                         type="button"
                         onClick={() => handleReinvite(inv._id)}
                         disabled={processingInviteId === inv._id}
-                        className="p-1.5 rounded-md text-neutral-500 hover:text-primary hover:bg-primary/10 transition-colors"
+                        className="touch-target p-3 rounded-xl text-neutral-500 hover:text-primary hover:bg-primary/10 transition-colors"
                         title="Reinvite"
                       >
                         {processingInviteId === inv._id ? (
@@ -884,7 +886,7 @@ export default function FriendsPage() {
                         type="button"
                         onClick={() => handleCancelInvite(inv._id)}
                         disabled={processingInviteId === inv._id}
-                        className="p-1.5 rounded-md text-neutral-500 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-50/10 transition-colors"
+                        className="touch-target p-3 rounded-xl text-neutral-500 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-50/10 transition-colors"
                         title="Cancel invite"
                       >
                         <Trash2 className="h-4 w-4" />
@@ -1006,7 +1008,7 @@ export default function FriendsPage() {
                           void removeFriend(item.id);
                         }}
                         disabled={removingId === item.id}
-                        className="relative z-10 p-1.5 rounded-md text-neutral-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-50/10 transition-colors"
+                        className="relative z-10 touch-target p-3 rounded-xl text-neutral-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-50/10 transition-colors"
                         title="Remove friend"
                       >
                         {removingId === item.id ? (

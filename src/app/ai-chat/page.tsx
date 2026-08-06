@@ -416,7 +416,7 @@ export default function AiChatPage() {
                     type="button"
                     disabled={isLoading}
                     onClick={() => handleOption(opt)}
-                    className="px-3 py-1.5 rounded-xl text-xs font-semibold border border-primary/30 text-primary hover:bg-primary/10 disabled:opacity-50"
+                    className="min-h-10 px-3.5 py-2 rounded-xl text-sm font-semibold border border-primary/30 text-primary hover:bg-primary/10 disabled:opacity-50"
                   >
                     {opt}
                   </button>
@@ -435,7 +435,7 @@ export default function AiChatPage() {
                   type="button"
                   disabled={isLoading}
                   onClick={() => handleConfirm(true)}
-                  className="flex-1 py-2 rounded-xl bg-primary text-white text-xs font-semibold flex items-center justify-center gap-1 disabled:opacity-50"
+                  className="flex-1 min-h-11 py-2.5 rounded-xl bg-primary text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50"
                 >
                   <Check className="h-3.5 w-3.5" /> Confirm
                 </button>
@@ -443,7 +443,7 @@ export default function AiChatPage() {
                   type="button"
                   disabled={isLoading}
                   onClick={() => handleConfirm(false)}
-                  className="flex-1 py-2 rounded-xl border border-neutral-200 dark:border-dark-border text-xs font-semibold flex items-center justify-center gap-1 disabled:opacity-50"
+                  className="flex-1 min-h-11 py-2.5 rounded-xl border border-neutral-200 dark:border-dark-border text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50"
                 >
                   <X className="h-3.5 w-3.5" /> Cancel
                 </button>

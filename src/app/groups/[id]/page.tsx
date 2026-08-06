@@ -610,7 +610,7 @@ export default function GroupDetailPage() {
         <div className="flex gap-2 overflow-x-auto px-4 pb-2 scrollbar-none">
           <button
             onClick={() => setShowDatePickerModal(true)}
-            className="flex items-center gap-1.5 shrink-0 rounded-full bg-neutral-100 dark:bg-dark-bg-tertiary px-3 py-1.5 text-xs font-semibold text-neutral-600 dark:text-dark-text-secondary hover:bg-neutral-200 dark:hover:bg-dark-bg-secondary transition-colors"
+            className="flex items-center gap-1.5 shrink-0 min-h-10 rounded-full bg-neutral-100 dark:bg-dark-bg-tertiary px-3.5 py-2 text-sm font-semibold text-neutral-600 dark:text-dark-text-secondary hover:bg-neutral-200 dark:hover:bg-dark-bg-secondary transition-colors"
           >
             <Calendar className="h-3.5 w-3.5" />
             {group.settleUpDate
@@ -623,7 +623,7 @@ export default function GroupDetailPage() {
           
           <button
             onClick={() => setShowMembersModal(true)}
-            className="flex items-center gap-1.5 shrink-0 rounded-full bg-neutral-100 dark:bg-dark-bg-tertiary px-3 py-1.5 text-xs font-semibold text-neutral-600 dark:text-dark-text-secondary hover:bg-neutral-200 dark:hover:bg-dark-bg-secondary transition-colors"
+            className="flex items-center gap-1.5 shrink-0 min-h-10 rounded-full bg-neutral-100 dark:bg-dark-bg-tertiary px-3.5 py-2 text-sm font-semibold text-neutral-600 dark:text-dark-text-secondary hover:bg-neutral-200 dark:hover:bg-dark-bg-secondary transition-colors"
           >
             <Users className="h-3.5 w-3.5" />
             {group.memberCount} people
@@ -631,7 +631,7 @@ export default function GroupDetailPage() {
 
           <button
             onClick={() => setShowNotesModal(true)}
-            className="flex items-center gap-1.5 shrink-0 rounded-full bg-neutral-100 dark:bg-dark-bg-tertiary px-3 py-1.5 text-xs font-semibold text-neutral-600 dark:text-dark-text-secondary hover:bg-neutral-200 dark:hover:bg-dark-bg-secondary transition-colors"
+            className="flex items-center gap-1.5 shrink-0 min-h-10 rounded-full bg-neutral-100 dark:bg-dark-bg-tertiary px-3.5 py-2 text-sm font-semibold text-neutral-600 dark:text-dark-text-secondary hover:bg-neutral-200 dark:hover:bg-dark-bg-secondary transition-colors"
           >
             <FileText className="h-3.5 w-3.5" />
             {group.notes ? "View notes" : "Add group notes..."}
@@ -665,7 +665,7 @@ export default function GroupDetailPage() {
           <div className="flex flex-wrap gap-1.5">
             <button
               onClick={() => setPresetFilter("all")}
-              className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+              className={`min-h-10 px-3.5 py-2 rounded-full text-sm font-medium transition-colors ${
                 !dateFilter
                   ? "bg-primary text-white"
                   : "bg-neutral-100 dark:bg-dark-bg-tertiary text-neutral-600 dark:text-dark-text-secondary"
@@ -675,7 +675,7 @@ export default function GroupDetailPage() {
             </button>
             <button
               onClick={() => setPresetFilter("week")}
-              className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+              className={`min-h-10 px-3.5 py-2 rounded-full text-sm font-medium transition-colors ${
                 dateFilter &&
                 Math.abs(new Date(dateFilter.start).getDate() - (new Date().getDate() - new Date().getDay())) <= 1 &&
                 Math.abs(new Date(dateFilter.end).getDate() - (new Date().getDate() + (6 - new Date().getDay()))) <= 1
@@ -687,7 +687,7 @@ export default function GroupDetailPage() {
             </button>
             <button
               onClick={() => setPresetFilter("lastweek")}
-              className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+              className={`min-h-10 px-3.5 py-2 rounded-full text-sm font-medium transition-colors ${
                 dateFilter &&
                 Math.abs(new Date(dateFilter.start).getDate() - (new Date().getDate() - new Date().getDay() - 7)) <= 1
                   ? "bg-primary text-white"
@@ -698,7 +698,7 @@ export default function GroupDetailPage() {
             </button>
             <button
               onClick={() => setPresetFilter("month")}
-              className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+              className={`min-h-10 px-3.5 py-2 rounded-full text-sm font-medium transition-colors ${
                 dateFilter &&
                 new Date(dateFilter.start).getDate() === 1 &&
                 new Date(dateFilter.start).getMonth() === new Date().getMonth()
@@ -724,7 +724,7 @@ export default function GroupDetailPage() {
                   });
                 }
               }}
-              className="flex-1 px-2.5 py-1 text-xs rounded-lg border border-neutral-300 dark:border-dark-border bg-white dark:bg-dark-bg-secondary text-neutral-900 dark:text-dark-text"
+              className="flex-1 min-h-11 px-3 py-2 text-sm rounded-xl border border-neutral-300 dark:border-dark-border bg-white dark:bg-dark-bg-secondary text-neutral-900 dark:text-dark-text"
             />
             <span className="text-xs text-neutral-400">to</span>
             <input
@@ -739,7 +739,7 @@ export default function GroupDetailPage() {
                   });
                 }
               }}
-              className="flex-1 px-2.5 py-1 text-xs rounded-lg border border-neutral-300 dark:border-dark-border bg-white dark:bg-dark-bg-secondary text-neutral-900 dark:text-dark-text"
+              className="flex-1 min-h-11 px-3 py-2 text-sm rounded-xl border border-neutral-300 dark:border-dark-border bg-white dark:bg-dark-bg-secondary text-neutral-900 dark:text-dark-text"
             />
           </div>
         </div>

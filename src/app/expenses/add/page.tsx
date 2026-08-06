@@ -1060,7 +1060,7 @@ export default function AddExpensePage() {
                   <button
                     type="button"
                     onClick={() => setPayerMode("single")}
-                    className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all ${
+                    className={`min-h-10 px-3.5 py-2 text-sm font-medium rounded-xl transition-all ${
                       payerMode === "single"
                         ? "bg-primary text-white"
                         : "text-neutral-600 dark:text-dark-text-secondary"
@@ -1083,7 +1083,7 @@ export default function AddExpensePage() {
                         });
                       }
                     }}
-                    className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all ${
+                    className={`min-h-10 px-3.5 py-2 text-sm font-medium rounded-xl transition-all ${
                       payerMode === "multiple"
                         ? "bg-primary text-white"
                         : "text-neutral-600 dark:text-dark-text-secondary"
@@ -1397,7 +1397,7 @@ export default function AddExpensePage() {
                               [person.id]: e.target.value,
                             }))
                           }
-                          className="flex-1 px-2 py-1 text-xs border border-neutral-300 dark:border-dark-border rounded bg-white dark:bg-dark-bg-secondary text-neutral-900 dark:text-dark-text"
+                          className="flex-1 min-h-10 px-3 py-2 text-sm border border-neutral-300 dark:border-dark-border rounded-xl bg-white dark:bg-dark-bg-secondary text-neutral-900 dark:text-dark-text"
                         />
                         <span className="text-xs text-neutral-500 dark:text-dark-text-secondary">%</span>
                       </div>
@@ -1424,7 +1424,7 @@ export default function AddExpensePage() {
                               [person.id]: e.target.value,
                             }))
                           }
-                          className="flex-1 px-2 py-1 text-xs border border-neutral-300 dark:border-dark-border rounded bg-white dark:bg-dark-bg-secondary text-neutral-900 dark:text-dark-text"
+                          className="flex-1 min-h-10 px-3 py-2 text-sm border border-neutral-300 dark:border-dark-border rounded-xl bg-white dark:bg-dark-bg-secondary text-neutral-900 dark:text-dark-text"
                         />
                       </div>
                     ))}

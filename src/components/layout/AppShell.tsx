@@ -2,10 +2,10 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import Link from "next/link";
-import { Settings, Moon, Sun, Search, X, UsersRound, Sparkles, RefreshCw, Activity, UserPlus, Menu, ArrowRightLeft, BarChart3 } from "lucide-react";
+import { Settings, Moon, Sun, Search, X, Sparkles, RefreshCw, Activity, UserPlus, Menu, ArrowRightLeft, BarChart3, Notebook } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import Sidebar from "./Sidebar";
-import MobileNav from "./MobileNav";
+import MobileNav, { OPEN_MENU_EVENT } from "./MobileNav";
 import NotificationDropdown from "./NotificationDropdown";
 import { useTheme } from "@/contexts/ThemeContext";
 import OfflineIndicator from "@/components/pwa/OfflineIndicator";
@@ -64,6 +64,12 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
 
   useEffect(() => { setMounted(true); }, []);
 
+  useEffect(() => {
+    const openMenu = () => setIsMobileMenuOpen(true);
+    window.addEventListener(OPEN_MENU_EVENT, openMenu);
+    return () => window.removeEventListener(OPEN_MENU_EVENT, openMenu);
+  }, []);
+
   const pageMeta = getPageMeta(pathname);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
@@ -80,17 +86,17 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
         <Sidebar />
         <div className="md:pl-64">
           {/* Mobile Header */}
-          <header className="md:hidden sticky top-0 z-30 min-h-14 bg-white border-b border-neutral-200 py-2">
+          <header className="md:hidden sticky top-0 z-30 min-h-16 bg-white border-b border-neutral-200 py-2">
             <div className="flex items-center justify-between h-full px-4 gap-2">
               <Link href="/dashboard" className="flex items-center gap-2 min-w-0 flex-1">
                 <BrandLogo size={32} className="h-8 w-8 rounded-lg" priority />
                 <span className="text-h4 font-bold font-display text-neutral-900 truncate">DooSplit</span>
               </Link>
-              <div className="flex items-center space-x-1 shrink-0">
-                <Link href="/expenses?focus=search" className="p-2 rounded-lg text-neutral-500" aria-label="Search">
+              <div className="flex items-center gap-0.5 shrink-0">
+                <Link href="/expenses?focus=search" className="touch-target p-3 rounded-xl text-neutral-500" aria-label="Search">
                   <Search className="h-5 w-5" />
                 </Link>
-                <Link href="/settings" className="p-2 rounded-lg text-neutral-500">
+                <Link href="/settings" className="touch-target p-3 rounded-xl text-neutral-500" aria-label="Settings">
                   <Settings className="h-5 w-5" />
                 </Link>
                 <NotificationDropdown />
@@ -114,7 +120,7 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
             </div>
           </header>
 
-          <main className="pb-20 md:pb-6">{children}</main>
+          <main className="pb-24 md:pb-6">{children}</main>
         </div>
         <MobileNav />
       </div>
@@ -129,15 +135,16 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
       {/* Main Content Area */}
       <div className="md:pl-64 overflow-x-hidden">
         {/* ── Mobile Header (hidden on desktop) ──────────────────────────── */}
-        <header className="md:hidden sticky top-0 z-30 min-h-14 bg-white dark:bg-dark-bg-secondary border-b border-neutral-200 dark:border-dark-border py-2">
+        <header className="md:hidden sticky top-0 z-30 min-h-16 bg-white dark:bg-dark-bg-secondary border-b border-neutral-200 dark:border-dark-border py-2">
           <div className="flex items-center justify-between h-full px-4 gap-2">
             <div className="flex items-center gap-2 min-w-0 flex-1">
               <button
                 type="button"
                 onClick={() => setIsMobileMenuOpen(true)}
-                className="flex items-center shrink-0 focus:outline-none"
+                className="touch-target flex items-center shrink-0 focus:outline-none rounded-full"
+                aria-label="Open menu"
               >
-                <div className="h-9 w-9 rounded-full overflow-hidden flex items-center justify-center bg-primary text-white text-xs font-bold shadow-sm border border-neutral-200 dark:border-dark-border active:scale-95 transition-transform">
+                <div className="h-11 w-11 rounded-full overflow-hidden flex items-center justify-center bg-primary text-white text-sm font-bold shadow-sm border border-neutral-200 dark:border-dark-border active:scale-95 transition-transform">
                   {session?.user?.image ? (
                     <img
                       src={session.user.image}
@@ -155,37 +162,26 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
                   DooSplit
                 </span>
                 {firstName ? (
-                  <span className="text-xs text-neutral-500 dark:text-dark-text-tertiary truncate">
+                  <span className="text-caption text-neutral-500 dark:text-dark-text-tertiary truncate">
                     Hi, {firstName}
                   </span>
                 ) : null}
               </Link>
             </div>
-            <div className="flex items-center space-x-1 shrink-0">
+            <div className="flex items-center gap-0.5 shrink-0">
               <button
                 onClick={toggleTheme}
-                className="p-2 rounded-lg transition-colors text-neutral-500 hover:text-neutral-700 hover:bg-neutral-100 dark:hover:bg-dark-bg-tertiary"
+                className="touch-target p-3 rounded-xl transition-colors text-neutral-500 hover:text-neutral-700 hover:bg-neutral-100 dark:hover:bg-dark-bg-tertiary"
                 title={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
                 type="button"
               >
                 {theme === "light" ? <Moon className="h-5 w-5" /> : <Sun className="h-5 w-5" />}
               </button>
-              <Link
-                href="/groups"
-                className={`p-2 rounded-lg transition-colors ${
-                  pathname === "/groups"
-                    ? "text-primary bg-primary/10"
-                    : "text-neutral-500 hover:text-neutral-700 hover:bg-neutral-100 dark:hover:bg-dark-bg-tertiary"
-                }`}
-                title="Groups"
-              >
-                <UsersRound className="h-5 w-5" />
-              </Link>
               <NotificationDropdown />
               <button
                 type="button"
                 onClick={() => setIsMobileMenuOpen(true)}
-                className={`p-2 rounded-lg transition-colors ${
+                className={`touch-target p-3 rounded-xl transition-colors ${
                   isMobileMenuOpen
                     ? "text-primary bg-primary/10"
                     : "text-neutral-500 hover:text-neutral-700 hover:bg-neutral-100 dark:hover:bg-dark-bg-tertiary"
@@ -272,7 +268,7 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
         </header>
 
         {/* Page Content */}
-        <main className="pb-20 md:pb-6 min-w-0">
+        <main className="pb-24 md:pb-6 min-w-0">
           {children}
         </main>
       </div>
@@ -331,7 +327,8 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
               <button
                 type="button"
                 onClick={() => setIsMobileMenuOpen(false)}
-                className="p-1 rounded-lg text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-dark-bg-tertiary"
+                className="touch-target p-3 rounded-xl text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-dark-bg-tertiary"
+                aria-label="Close menu"
               >
                 <X className="h-5 w-5" />
               </button>
@@ -340,11 +337,12 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
             {/* Menu Links */}
             <div className="flex-1 overflow-y-auto space-y-1">
               {[
-                { href: "/ai-chat", label: "AI Chats", icon: Sparkles },
+                { href: "/notes", label: "Notes", icon: Notebook },
+                { href: "/ai-chat", label: "AI Chat", icon: Sparkles },
                 { href: "/settlements", label: "Settlements", icon: ArrowRightLeft },
                 { href: "/recurring-expenses", label: "Recurring Expenses", icon: RefreshCw },
                 { href: "/analytics", label: "Analytics", icon: BarChart3 },
-                { href: "/activity", label: "Activity Logs", icon: Activity },
+                { href: "/activity", label: "Activity", icon: Activity },
                 { href: "/invite", label: "Invite Friends", icon: UserPlus },
                 { href: "/settings", label: "Settings", icon: Settings },
               ].map((item) => {
@@ -355,14 +353,14 @@ const AppShell: React.FC<AppShellProps> = ({ children }) => {
                     key={item.href}
                     href={item.href}
                     onClick={() => setIsMobileMenuOpen(false)}
-                    className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${
+                    className={`flex items-center gap-3 px-4 py-3.5 rounded-xl transition-all min-h-12 ${
                       active
                         ? "bg-primary text-white font-medium shadow-md shadow-primary/10"
                         : "text-neutral-700 dark:text-dark-text-secondary hover:bg-neutral-50 dark:hover:bg-dark-bg-tertiary"
                     }`}
                   >
                     <Icon className="h-5 w-5 shrink-0" />
-                    <span className="text-sm">{item.label}</span>
+                    <span className="text-body font-medium">{item.label}</span>
                   </Link>
                 );
               })}

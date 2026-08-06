@@ -478,7 +478,6 @@ export default function InvitePage() {
                           variant="secondary"
                           onClick={() => handleReinvite(inv._id)}
                           disabled={processingInviteId === inv._id}
-                          className="!px-2.5 !py-1.5"
                         >
                           {processingInviteId === inv._id ? (
                             <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -491,7 +490,6 @@ export default function InvitePage() {
                           variant="secondary"
                           onClick={() => handleCancelInvite(inv._id)}
                           disabled={processingInviteId === inv._id}
-                          className="!px-2.5 !py-1.5"
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </Button>

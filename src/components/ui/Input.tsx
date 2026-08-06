@@ -12,22 +12,22 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
     return (
       <div className="w-full">
         {label && (
-          <label className="block text-sm font-medium text-neutral-700 dark:text-dark-text-secondary mb-2">
+          <label className="block text-body-sm font-medium text-neutral-700 dark:text-dark-text-secondary mb-2">
             {label}
           </label>
         )}
         <div className="relative">
           {icon && (
-            <div className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400">
+            <div className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400 pointer-events-none">
               {icon}
             </div>
           )}
           <input
             ref={ref}
             className={`
-              w-full h-11 px-4 
-              ${icon ? "pl-10" : ""} 
-              border-2 rounded-md text-body
+              w-full h-12 min-h-[48px] px-4
+              ${icon ? "pl-10" : ""}
+              border-2 rounded-xl text-body
               transition-all duration-200
               ${
                 error
@@ -42,11 +42,9 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
             {...props}
           />
         </div>
-        {error && (
-          <p className="mt-1 text-sm text-error">{error}</p>
-        )}
+        {error && <p className="mt-1 text-body-sm text-error">{error}</p>}
         {helperText && !error && (
-          <p className="mt-1 text-sm text-neutral-500">{helperText}</p>
+          <p className="mt-1 text-body-sm text-neutral-500">{helperText}</p>
         )}
       </div>
     );

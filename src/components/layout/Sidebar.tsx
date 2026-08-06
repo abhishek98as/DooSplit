@@ -94,7 +94,7 @@ const Sidebar: React.FC = () => {
       <div className="px-4 pt-4 pb-2 flex-shrink-0">
         <Link
           href="/expenses/add"
-          className="ds-sidebar-cta group flex items-center justify-center gap-2 w-full py-[11px] text-white font-display font-bold text-sm"
+          className="ds-sidebar-cta group flex items-center justify-center gap-2 w-full min-h-12 py-3 text-white font-display font-bold text-button"
         >
           <Plus className="h-4 w-4 flex-shrink-0 transition-transform duration-200 group-hover:rotate-45" />
           Add Expense
@@ -114,7 +114,7 @@ const Sidebar: React.FC = () => {
                 <Link
                   key={item.href}
                   href={item.href}
-                  className={`ds-nav-item relative flex items-center gap-[11px] w-full px-3 py-[10px] mb-0.5 font-sans ${
+                  className={`ds-nav-item relative flex items-center gap-[11px] w-full px-3 py-3 mb-0.5 font-sans min-h-11 ${
                     active ? "ds-nav-item--active" : ""
                   }`}
                 >
@@ -122,7 +122,7 @@ const Sidebar: React.FC = () => {
                   <Icon className="h-[18px] w-[18px] flex-shrink-0" />
                   <span className="flex-1 truncate">{item.label}</span>
                   {"badge" in item && (item as any).badge > 0 && (
-                    <span className="ml-auto bg-coral text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none">
+                    <span className="ml-auto bg-coral text-white text-caption font-bold px-2 py-0.5 rounded-full leading-none">
                       {(item as any).badge}
                     </span>
                   )}
@@ -145,7 +145,7 @@ const Sidebar: React.FC = () => {
           <p className="font-sans font-semibold truncate text-[13px]" style={{ color: "rgba(255,255,255,0.85)" }}>
             {displayName}
           </p>
-          <p className="font-sans font-normal truncate text-[11px]" style={{ color: "rgba(255,255,255,0.35)" }}>
+          <p className="font-sans font-normal truncate text-caption" style={{ color: "rgba(255,255,255,0.35)" }}>
             {email || "View profile"}
           </p>
         </div>

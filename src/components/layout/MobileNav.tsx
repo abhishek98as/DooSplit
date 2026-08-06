@@ -6,12 +6,10 @@ import { usePathname } from "next/navigation";
 import {
   Home,
   Users,
-  Activity,
   Plus,
   Receipt,
   UsersRound,
-  Notebook,
-  Sparkles,
+  Menu,
 } from "lucide-react";
 
 const TABS = [
@@ -19,10 +17,9 @@ const TABS = [
   { href: "/expenses", icon: Receipt, label: "Expenses" },
   { href: "/friends", icon: Users, label: "Friends" },
   { href: "/groups", icon: UsersRound, label: "Groups" },
-  { href: "/ai-chat", icon: Sparkles, label: "AI Chat" },
-  { href: "/activity", icon: Activity, label: "Activity" },
-  { href: "/notes", icon: Notebook, label: "Notes" },
-];
+] as const;
+
+const OPEN_MENU_EVENT = "doosplit:open-mobile-menu";
 
 const MobileNav: React.FC = () => {
   const pathname = usePathname();
@@ -38,22 +35,24 @@ const MobileNav: React.FC = () => {
     !isActive("/groups") &&
     !isActive("/ai-chat");
 
+  const openMore = () => {
+    window.dispatchEvent(new CustomEvent(OPEN_MENU_EVENT));
+  };
+
   return (
     <>
-      {/* ── Floating Action Button (Add Expense) — hidden on specific pages ──── */}
       {showFab && (
         <Link
           href="/expenses/add"
-          className="md:hidden fixed bottom-20 right-4 h-14 w-14 bg-primary text-white rounded-full flex items-center justify-center shadow-xl hover:scale-105 active:scale-95 transition-transform z-35"
+          className="md:hidden fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom,0px))] right-4 h-14 w-14 bg-primary text-white rounded-full flex items-center justify-center shadow-xl hover:scale-105 active:scale-95 transition-transform z-35"
           aria-label="Add expense"
         >
           <Plus className="h-6 w-6" />
         </Link>
       )}
 
-      {/* ── Bottom Navigation Bar ──────────────────────────────────────── */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white dark:bg-dark-bg-secondary border-t border-neutral-200 dark:border-dark-border shadow-lg z-40 safe-area-inset-bottom overflow-x-auto">
-        <div className="flex items-center justify-around h-16 min-w-max px-2">
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white dark:bg-dark-bg-secondary border-t border-neutral-200 dark:border-dark-border shadow-lg z-40 safe-area-inset-bottom">
+        <div className="flex items-center justify-around h-16 px-1">
           {TABS.map((item) => {
             const Icon = item.icon;
             const active = isActive(item.href);
@@ -61,17 +60,28 @@ const MobileNav: React.FC = () => {
               <Link
                 key={item.href}
                 href={item.href}
-                className={`flex flex-col items-center justify-center flex-1 h-full space-y-1 transition-colors px-1 min-w-[52px] ${
+                className={`flex flex-col items-center justify-center flex-1 h-full gap-1 transition-colors px-1 min-w-0 touch-target ${
                   active
                     ? "text-primary font-semibold"
                     : "text-neutral-500 dark:text-dark-text-tertiary hover:text-neutral-700 dark:hover:text-dark-text"
                 }`}
               >
-                <Icon className="h-5 w-5" />
-                <span className="text-[9px] font-medium leading-none whitespace-nowrap">{item.label}</span>
+                <Icon className="h-6 w-6 shrink-0" />
+                <span className="text-xs font-medium leading-none truncate max-w-full">
+                  {item.label}
+                </span>
               </Link>
             );
           })}
+          <button
+            type="button"
+            onClick={openMore}
+            className="flex flex-col items-center justify-center flex-1 h-full gap-1 transition-colors px-1 min-w-0 touch-target text-neutral-500 dark:text-dark-text-tertiary hover:text-neutral-700 dark:hover:text-dark-text"
+            aria-label="More menu"
+          >
+            <Menu className="h-6 w-6 shrink-0" />
+            <span className="text-xs font-medium leading-none">More</span>
+          </button>
         </div>
       </nav>
     </>
@@ -79,3 +89,4 @@ const MobileNav: React.FC = () => {
 };
 
 export default MobileNav;
+export { OPEN_MENU_EVENT };
