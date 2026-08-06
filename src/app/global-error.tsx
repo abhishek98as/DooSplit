@@ -31,9 +31,20 @@ export default function GlobalError({
           <img
             src="/illustrations/error-state.svg"
             alt=""
-            width={180}
-            height={180}
-            style={{ display: "block", margin: "0 auto 24px" }}
+            aria-hidden
+            width={144}
+            height={144}
+            draggable={false}
+            style={{
+              display: "block",
+              width: "clamp(96px, 22vw, 144px)",
+              height: "clamp(96px, 22vw, 144px)",
+              margin: "0 auto 20px",
+              objectFit: "contain",
+              background: "transparent",
+              pointerEvents: "none",
+              userSelect: "none",
+            }}
           />
           <p style={{ fontSize: 15, fontWeight: 500, lineHeight: 1.5, margin: 0 }}>
             Something went wrong. Please try again.

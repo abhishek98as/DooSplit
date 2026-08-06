@@ -14,17 +14,17 @@ export function AppErrorState({
   homeHref?: string;
 }) {
   return (
-    <div className="min-h-[60vh] w-full flex flex-col items-center justify-center px-6 py-12 text-center">
-      <div className="relative h-40 w-40 sm:h-48 sm:w-48 mb-6">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src="/illustrations/error-state.svg"
-          alt=""
-          className="h-full w-full object-contain"
-          width={192}
-          height={192}
-        />
-      </div>
+    <div className="min-h-[50vh] w-full flex flex-col items-center justify-center px-4 py-10 text-center bg-transparent">
+      {/* eslint-disable-next-line @next/next/no-img-element -- decorative transparent SVG icon */}
+      <img
+        src="/illustrations/error-state.svg"
+        alt=""
+        aria-hidden
+        draggable={false}
+        width={160}
+        height={160}
+        className="h-24 w-24 sm:h-28 sm:w-28 md:h-32 md:w-32 lg:h-36 lg:w-36 object-contain select-none pointer-events-none mb-5 bg-transparent"
+      />
       <p className="text-sm sm:text-base font-medium text-neutral-800 dark:text-dark-text max-w-sm leading-relaxed">
         {message}
       </p>
