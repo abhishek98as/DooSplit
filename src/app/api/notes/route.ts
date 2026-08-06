@@ -33,17 +33,17 @@ export async function GET(request: NextRequest) {
     const sharedResolved = await Promise.all(
       accepted.map(async (share) => {
         const note = await getNoteById(share.ownerId, share.noteId);
-        return note
-          ? serializeNoteForClient(note, {
-              isOwner: false,
-              sharedBy: {
-                id: share.ownerId,
-                name: ownerNameById.get(share.ownerId) || share.invitedByName || "Someone",
-              },
-              permissions: share.permissions,
-              shareStatus: share.status,
-            })
-          : null;
+        // Never expose deleted (trashed) or archived notes to collaborators
+        if (!note || note.trashed || note.archived) return null;
+        return serializeNoteForClient(note, {
+          isOwner: false,
+          sharedBy: {
+            id: share.ownerId,
+            name: ownerNameById.get(share.ownerId) || share.invitedByName || "Someone",
+          },
+          permissions: share.permissions,
+          shareStatus: share.status,
+        });
       })
     );
 

@@ -624,7 +624,19 @@ export default function SettingsPage() {
         <Card>
           <CardContent className="py-2">
             <button
-              onClick={() => signOut({ callbackUrl: "/auth/login" })}
+              onClick={async () => {
+                try {
+                  // Clear local IndexedDB cache before signing out so that
+                  // the next user who logs in on this device does not see
+                  // stale data from the previous account.
+                  const { default: getOfflineStore } = await import("@/lib/offline-store");
+                  await getOfflineStore().clearCache();
+                } catch {
+                  // Ignore — still sign out even if cache clear fails
+                } finally {
+                  signOut({ callbackUrl: "/auth/login" });
+                }
+              }}
               className="flex items-center w-full p-3 rounded-md hover:bg-red-50 dark:hover:bg-red-900/10 transition-colors text-red-600 dark:text-red-400"
             >
               <LogOut className="h-5 w-5 mr-3" />

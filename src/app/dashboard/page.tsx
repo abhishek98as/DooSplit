@@ -15,7 +15,7 @@ import {
 import Link from "next/link";
 import getOfflineStore from "@/lib/offline-store";
 import QuickAdd from "@/components/dashboard/QuickAdd";
-import BudgetWidget from "@/components/dashboard/BudgetWidget";
+
 
 interface BalanceData {
   total: number;
@@ -337,7 +337,12 @@ export default function DashboardPage() {
 
     const groupsTask = (async (): Promise<Group[]> => {
       try {
-        const groupsData = (await offlineStore.getGroups()) || [];
+        // Fetch from the server API to get an always-accurate, user-scoped
+        // group list. The offline store may contain stale or unscoped data.
+        const data = await fetchJsonWithTimeout<{ groups?: Group[] }>(
+          `/api/groups?refresh=${Date.now()}`
+        );
+        const groupsData: Group[] = data?.groups || [];
         setGroups(groupsData);
         return groupsData;
       } catch (taskError) {
@@ -743,9 +748,6 @@ export default function DashboardPage() {
             </Card>
           </Link>
         </div>
-
-        {/* Budget Widget */}
-        <BudgetWidget />
 
         {isNudgesLoading ? (
           <Card>

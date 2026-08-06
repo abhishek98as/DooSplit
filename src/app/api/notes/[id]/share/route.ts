@@ -117,7 +117,9 @@ export async function POST(
         noteId,
         ownerId: auth.user.id,
         userId: friendId,
-        status: "pending",
+        // Auto-accept: the owner explicitly chose to share, no separate acceptance needed.
+        // This makes the note visible immediately in the friend's notes list.
+        status: "accepted",
         permissions: { ...DEFAULT_SHARE_PERMISSIONS },
         invitedByName: inviterName,
         noteTitle: note.title || "Untitled note",

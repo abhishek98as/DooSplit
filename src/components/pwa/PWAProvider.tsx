@@ -146,6 +146,18 @@ export function PWAProvider({ children }: PWAProviderProps) {
     };
   }, []);
 
+  // ── Auto-sync every 5 minutes when authenticated and online ───────────────
+  useEffect(() => {
+    if (status !== "authenticated") return;
+    const interval = setInterval(() => {
+      if (navigator.onLine) {
+        void syncNow();
+      }
+    }, 5 * 60 * 1000);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status]);
+
   useEffect(() => {
     void bindForegroundMessagingListener((payload) => {
       const notification = payload?.notification || {};
@@ -415,6 +427,19 @@ export function PWAProvider({ children }: PWAProviderProps) {
       if (result.success) {
         setLastSyncTime(new Date().toISOString());
         await initializeSyncStatus();
+        // ✅ Notify all listening pages to re-fetch fresh data from the server.
+        // Without this, the sync button updates IndexedDB but the React UI
+        // stays stale until a manual page refresh.
+        // NOTE: all pages listen for "doosplit:data-updated" (not "data-refresh")
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(
+            new CustomEvent('doosplit:data-updated', {
+              detail: {
+                domains: ['expenses', 'groups', 'friends', 'activity', 'notes', 'settlements'],
+              },
+            })
+          );
+        }
       }
 
       return result;
