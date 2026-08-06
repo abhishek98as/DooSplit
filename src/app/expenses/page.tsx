@@ -670,6 +670,14 @@ export default function ExpensesPage() {
     fetchExpenses();
   };
 
+  // Hooks must run unconditionally (before any early return)
+  const applyUrlFilter = useCallback((filter: string | null) => {
+    if (filter === "non-group") {
+      setSelectedGroup("non-group");
+      setShowFilters(true);
+    }
+  }, []);
+
   if (status === "loading" || loading) {
     return (
       <AppShell>
@@ -679,13 +687,6 @@ export default function ExpensesPage() {
       </AppShell>
     );
   }
-
-  const applyUrlFilter = useCallback((filter: string | null) => {
-    if (filter === "non-group") {
-      setSelectedGroup("non-group");
-      setShowFilters(true);
-    }
-  }, []);
 
   return (
     <AppShell>
