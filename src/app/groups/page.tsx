@@ -850,89 +850,90 @@ export default function GroupsPage() {
           )}
         </div>
 
-        {/* Search & Sort Panel */}
-        <div className="flex flex-col sm:flex-row gap-3">
-          <div className="relative flex-1">
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-neutral-400" />
-            <input
-              type="text"
-              placeholder="Search groups..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-neutral-200 dark:border-dark-border bg-white dark:bg-dark-bg-secondary text-sm text-neutral-900 dark:text-dark-text placeholder-neutral-400 focus:outline-none focus:border-primary focus:ring-4 focus:ring-primary/10"
-            />
-          </div>
-          <div className="relative">
-            <select
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value as any)}
-              className="w-full sm:w-auto appearance-none pl-10 pr-8 py-2.5 rounded-xl border border-neutral-200 dark:border-dark-border bg-white dark:bg-dark-bg-secondary text-sm font-medium text-neutral-700 dark:text-dark-text-secondary focus:outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 cursor-pointer"
-            >
-              <option value="recent">Recent activity</option>
-              <option value="name">Group name</option>
-              <option value="balance">Net balance</option>
-            </select>
-            <ArrowUpDown className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-neutral-400 pointer-events-none" />
-          </div>
-        </div>
-
-        {/* Non-Group Expenses Pinned Card */}
-        <Link href="/expenses?filter=non-group">
-          <div
-            className={`rounded-2xl border border-neutral-200 bg-white p-4 transition-all duration-300 hover:shadow-md hover:-translate-y-0.5 dark:border-dark-border dark:bg-dark-bg-secondary ${
-              isReady ? "opacity-100 translate-y-0" : "opacity-0 translate-y-1"
-            }`}
-          >
-            <div className="flex items-center gap-4">
-              <div className="h-14 w-14 shrink-0 rounded-xl bg-neutral-100 text-2xl flex items-center justify-center dark:bg-dark-bg-tertiary">
-                💼
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="font-semibold text-neutral-900 dark:text-dark-text">
-                  Non-Group Expenses
-                </p>
-                <p
-                  className={`text-sm font-medium ${
-                    nonGroupBalanceError
-                      ? "text-amber-600 dark:text-amber-400"
-                      : nonGroupBalance < 0
-                      ? "text-coral"
-                      : nonGroupBalance > 0
-                      ? "text-primary"
-                      : "text-neutral-500 dark:text-dark-text-secondary"
-                  }`}
-                >
-                  {nonGroupBalanceError
-                    ? "Balance unavailable"
-                    : nonGroupBalance < -0.01
-                    ? `you owe ${formatCurrency(Math.abs(nonGroupBalance))}`
-                    : nonGroupBalance > 0.01
-                    ? `you are owed ${formatCurrency(nonGroupBalance)}`
-                    : "you are settled"}
-                </p>
-                {nonGroupFriendDebts.length > 0 && (
-                  <div className="mt-1.5 space-y-0.5">
-                    {nonGroupFriendDebts.map((friend) => (
-                      <p
-                        key={friend._id}
-                        className={`text-xs font-medium ${
-                          friend.balance > 0 ? "text-primary/90" : "text-coral/90"
-                        }`}
-                      >
-                        {friend.balance > 0
-                          ? `${friend.name} owes you ${formatCurrency(friend.balance)}`
-                          : `You owe ${friend.name} ${formatCurrency(Math.abs(friend.balance))}`}
-                      </p>
-                    ))}
-                  </div>
-                )}
-              </div>
-              <ChevronRight className="h-4 w-4 shrink-0 text-neutral-400" />
+        {/* Search, Non-Group Expenses & Groups List Container */}
+        <div className="space-y-3">
+          {/* Search & Sort Panel */}
+          <div className="flex flex-col sm:flex-row gap-3">
+            <div className="relative flex-1">
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-neutral-400" />
+              <input
+                type="text"
+                placeholder="Search groups..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-neutral-200 dark:border-dark-border bg-white dark:bg-dark-bg-secondary text-sm text-neutral-900 dark:text-dark-text placeholder-neutral-400 focus:outline-none focus:border-primary focus:ring-4 focus:ring-primary/10"
+              />
+            </div>
+            <div className="relative">
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as any)}
+                className="w-full sm:w-auto appearance-none pl-10 pr-8 py-2.5 rounded-xl border border-neutral-200 dark:border-dark-border bg-white dark:bg-dark-bg-secondary text-sm font-medium text-neutral-700 dark:text-dark-text-secondary focus:outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 cursor-pointer"
+              >
+                <option value="recent">Recent activity</option>
+                <option value="name">Group name</option>
+                <option value="balance">Net balance</option>
+              </select>
+              <ArrowUpDown className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-neutral-400 pointer-events-none" />
             </div>
           </div>
-        </Link>
 
-        <div className="space-y-3">
+          {/* Non-Group Expenses Pinned Card */}
+          <Link href="/expenses?filter=non-group">
+            <div
+              className={`rounded-2xl border border-neutral-200 bg-white p-4 transition-all duration-300 hover:shadow-md hover:-translate-y-0.5 dark:border-dark-border dark:bg-dark-bg-secondary ${
+                isReady ? "opacity-100 translate-y-0" : "opacity-0 translate-y-1"
+              }`}
+            >
+              <div className="flex items-center gap-4">
+                <div className="h-14 w-14 shrink-0 rounded-xl bg-neutral-100 text-2xl flex items-center justify-center dark:bg-dark-bg-tertiary">
+                  💼
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="font-semibold text-neutral-900 dark:text-dark-text">
+                    Non-Group Expenses
+                  </p>
+                  <p
+                    className={`text-sm font-medium ${
+                      nonGroupBalanceError
+                        ? "text-amber-600 dark:text-amber-400"
+                        : nonGroupBalance < 0
+                        ? "text-coral"
+                        : nonGroupBalance > 0
+                        ? "text-primary"
+                        : "text-neutral-500 dark:text-dark-text-secondary"
+                    }`}
+                  >
+                    {nonGroupBalanceError
+                      ? "Balance unavailable"
+                      : nonGroupBalance < -0.01
+                      ? `you owe ${formatCurrency(Math.abs(nonGroupBalance))}`
+                      : nonGroupBalance > 0.01
+                      ? `you are owed ${formatCurrency(nonGroupBalance)}`
+                      : "you are settled"}
+                  </p>
+                  {nonGroupFriendDebts.length > 0 && (
+                    <div className="mt-1.5 space-y-0.5">
+                      {nonGroupFriendDebts.map((friend) => (
+                        <p
+                          key={friend._id}
+                          className={`text-xs font-medium ${
+                            friend.balance > 0 ? "text-primary/90" : "text-coral/90"
+                          }`}
+                        >
+                          {friend.balance > 0
+                            ? `${friend.name} owes you ${formatCurrency(friend.balance)}`
+                            : `You owe ${friend.name} ${formatCurrency(Math.abs(friend.balance))}`}
+                        </p>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <ChevronRight className="h-4 w-4 shrink-0 text-neutral-400" />
+              </div>
+            </div>
+          </Link>
+
           {groups.length === 0 ? (
             <Card>
               <CardContent>
