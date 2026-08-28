@@ -12,17 +12,36 @@ const firebaseJWKS = createRemoteJWKSet(
   )
 );
 
+function normalizeEnvValue(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  const hasDoubleQuotes = trimmed.startsWith('"') && trimmed.endsWith('"');
+  const hasSingleQuotes = trimmed.startsWith("'") && trimmed.endsWith("'");
+  const unwrapped =
+    hasDoubleQuotes || hasSingleQuotes ? trimmed.slice(1, -1).trim() : trimmed;
+  const withoutTrailingEscapedNewlines = unwrapped.replace(
+    /(\\r\\n|\\n|\\r)+$/g,
+    ""
+  );
+  const normalized = withoutTrailingEscapedNewlines.trim();
+  return normalized || undefined;
+}
+
 function getFirebaseProjectId(): string {
   return (
-    process.env.FIREBASE_PROJECT_ID?.trim() ||
-    process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID?.trim() ||
+    normalizeEnvValue(process.env.FIREBASE_PROJECT_ID) ||
+    normalizeEnvValue(process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID) ||
     ""
   );
 }
 
 function getSessionSecret(): Uint8Array {
-  const secret = process.env.SESSION_SECRET || "";
-  return new TextEncoder().encode(secret || "no-secret-configured-please-set-SESSION_SECRET");
+  const secret = normalizeEnvValue(process.env.SESSION_SECRET);
+  if (!secret) {
+    throw new Error("SESSION_SECRET environment variable is not configured");
+  }
+  return new TextEncoder().encode(secret);
 }
 
 export type SessionSource = "firebase";

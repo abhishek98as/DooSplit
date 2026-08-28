@@ -65,7 +65,17 @@ try {
 }
 
 export function getFirebaseAuth(): Auth {
-  if (!adminAuth) adminAuth = getAuth(adminApp!);
+  if (!adminAuth) {
+    if (!adminApp) {
+      adminApp = initFirebaseAdminApp();
+    }
+    if (adminApp) {
+      adminAuth = getAuth(adminApp);
+    }
+  }
+  if (!adminAuth) {
+    throw new Error("Firebase Admin SDK is not initialized");
+  }
   return adminAuth;
 }
 

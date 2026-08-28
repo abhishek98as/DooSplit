@@ -226,23 +226,31 @@ function toErrorMessage(error: unknown): string {
   }
 
   const code = (error as { code?: string }).code || "";
-  if (code === "auth/invalid-credential") {
-    return "Invalid email or password";
-  }
-  if (code === "auth/invalid-login-credentials") {
-    return "Invalid email or password";
-  }
-  if (code === "auth/user-not-found") {
-    return "Invalid email or password";
-  }
-  if (code === "auth/wrong-password") {
+  if (
+    code === "auth/invalid-credential" ||
+    code === "auth/invalid-login-credentials" ||
+    code === "auth/user-not-found" ||
+    code === "auth/wrong-password"
+  ) {
     return "Invalid email or password";
   }
   if (code === "auth/popup-closed-by-user") {
     return "Sign-in cancelled";
   }
+  if (code === "auth/popup-blocked") {
+    return "Sign-in popup was blocked by your browser. Please allow popups for this site.";
+  }
+  if (code === "auth/unauthorized-domain") {
+    return "This domain is not authorized for Google sign-in in Firebase Console.";
+  }
+  if (code === "auth/cancelled-popup-request") {
+    return "Sign-in was cancelled due to another popup request.";
+  }
+  if (code === "auth/network-request-failed") {
+    return "Network error. Please check your internet connection.";
+  }
   if (code === "auth/operation-not-allowed") {
-    return "Email/password sign-in is not enabled in Firebase Authentication settings.";
+    return "Sign-in with this provider is not enabled in Firebase Authentication settings.";
   }
   if (code === "auth/invalid-email") {
     return "Please enter a valid email address.";

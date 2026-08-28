@@ -44,6 +44,22 @@ const nextConfig = {
           key: 'Cross-Origin-Opener-Policy',
           value: 'same-origin-allow-popups',
         },
+        {
+          key: 'Strict-Transport-Security',
+          value: 'max-age=63072000; includeSubDomains; preload',
+        },
+        {
+          key: 'Referrer-Policy',
+          value: 'strict-origin-when-cross-origin',
+        },
+        {
+          key: 'Permissions-Policy',
+          value: 'camera=(), microphone=(), geolocation=()',
+        },
+        {
+          key: 'Content-Security-Policy',
+          value: "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://apis.google.com https://www.googletagmanager.com https://www.google-analytics.com https://*.firebaseio.com https://*.firebaseapp.com https://www.gstatic.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: https://storage.googleapis.com https://firebasestorage.googleapis.com https://*.googleusercontent.com https://lh3.googleusercontent.com https://www.googletagmanager.com https://www.google-analytics.com https://*.gstatic.com; connect-src 'self' https://*.firebaseio.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://*.googleapis.com https://www.google-analytics.com https://analytics.google.com https://www.googletagmanager.com https://accounts.google.com https://firebaseinstallations.googleapis.com https://fcmregistrations.googleapis.com; frame-src 'self' https://*.firebaseapp.com https://accounts.google.com https://doosplit.firebaseapp.com; child-src 'self' https://*.firebaseapp.com https://accounts.google.com blob:;",
+        },
       ],
     },
   ],
